@@ -1379,3 +1379,120 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .ai-network-panel .ai-stage.ready{
   color:var(--text-dim, #888); border-style:dashed;
 }
+
+/* ==================== 新卡片界面：叙事引擎与中间件面板 ==================== */
+
+/* 叙事引擎抽屉 */
+#narrativeEnginePanel{ right:10px; max-height:calc(100vh - 70px); overflow-y:auto; }
+.ne-panel-body{ display:flex; flex-direction:column; gap:6px; }
+.ne-menu-item{
+  display:flex; align-items:center; gap:10px;
+  width:100%; text-align:left;
+  background:var(--panel2); border:1px solid var(--line); border-radius:12px;
+  padding:10px 12px; color:var(--txt); font-size:14px; cursor:pointer;
+}
+.ne-menu-item:hover{ background:var(--panel); border-color:var(--accent2); }
+.ne-menu-item .ne-ico{ font-size:18px; flex:0 0 auto; }
+.ne-menu-item .ne-lbl{ flex:1; font-weight:600; }
+.ne-menu-item .ne-badge{
+  flex:0 0 auto; min-width:22px; text-align:center;
+  font-size:11px; padding:2px 8px; border-radius:20px;
+  background:var(--warn); color:#000; font-weight:700;
+}
+.ne-menu-item .ne-badge.ok{ background:var(--ok); color:#000; }
+.ne-menu-item .ne-badge.info{ background:var(--accent2); color:#fff; }
+.ne-menu-hint{ font-size:12px; color:var(--muted); margin:-2px 4px 6px; }
+
+/* 状态徽章增强 */
+.ch-status-badges{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-left:auto; }
+.pill.is-busy{
+  background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);
+  border-color:transparent; color:#fff;
+}
+.pill.is-busy .spinner{ width:10px; height:10px; border-width:1.5px; margin:0 4px 0 0; vertical-align:middle; }
+.pill.tag-draft{ color:var(--accent2); border-color:var(--accent2); }
+.pill.tag-persona{ color:#c084fc; border-color:#c084fc; }
+.pill.tag-fs{ color:#60a5fa; border-color:#60a5fa; }
+.pill.tag-tension{ color:#f472b6; border-color:#f472b6; }
+
+/* 通用中间件面板 body 内的卡片布局 */
+.ne-body{ display:flex; flex-direction:column; gap:12px; }
+.ne-body .card{ margin-bottom:0; }
+.ne-body h4{ margin:0 0 8px; font-size:14px; color:var(--txt); }
+.ne-body .empty{ color:var(--muted); text-align:center; padding:24px 10px; font-size:13px; }
+
+/* 候选方案对比 */
+.ne-candidates{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+@media(max-width:560px){ .ne-candidates{ grid-template-columns:1fr; } }
+.ne-candidate{
+  background:var(--panel2); border:1px solid var(--line); border-radius:12px;
+  padding:12px; display:flex; flex-direction:column; gap:8px;
+}
+.ne-candidate:hover{ border-color:var(--accent2); }
+.ne-candidate .ne-cand-head{ font-size:13px; font-weight:700; color:var(--accent2); }
+.ne-candidate .ne-cand-meta{ font-size:11px; color:var(--muted); }
+.ne-candidate .ne-cand-list{ font-size:12px; line-height:1.6; color:var(--txt); white-space:pre-wrap; word-break:break-word; max-height:220px; overflow-y:auto; }
+.ne-candidate .ne-cand-actions{ margin-top:auto; }
+
+/* 伏笔看板三栏 */
+.ne-fs-board{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; }
+@media(max-width:560px){ .ne-fs-board{ grid-template-columns:1fr; } }
+.ne-fs-col{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:10px; min-height:120px; }
+.ne-fs-col h5{ margin:0 0 8px; font-size:13px; color:var(--sub); }
+.ne-fs-col.overdue{ border-color:var(--warn); background:color-mix(in srgb, var(--warn) 8%, var(--panel2)); }
+.ne-fs-item{ font-size:12px; line-height:1.5; padding:8px; border-radius:8px; background:var(--panel); margin-bottom:6px; }
+.ne-fs-item b{ color:var(--accent); }
+.ne-fs-item .ne-fs-ops{ display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
+.ne-fs-item .ne-fs-ops button{ font-size:11px; padding:3px 8px; border-radius:6px; }
+
+/* 人设防火墙 */
+.ne-persona-card{ margin-bottom:10px; }
+.ne-persona-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.ne-persona-head b{ font-size:15px; }
+.ne-violation{ background:color-mix(in srgb, var(--warn) 12%, var(--panel)); border:1px solid var(--warn); border-radius:8px; padding:8px; margin-top:6px; font-size:12px; }
+.ne-violation b{ color:var(--warn); }
+
+/* 张力曲线图 */
+.tension-chart{ width:100%; height:220px; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:10px; }
+.tension-chart svg{ width:100%; height:100%; overflow:visible; }
+.tension-axis{ stroke:var(--line); stroke-width:1; }
+.tension-grid{ stroke:var(--line); stroke-width:0.5; stroke-dasharray:3,3; opacity:0.5; }
+.tension-line-external{ fill:none; stroke:#f87171; stroke-width:2.5; }
+.tension-line-internal{ fill:none; stroke:#60a5fa; stroke-width:2.5; }
+.tension-line-mystery{ fill:none; stroke:#a78bfa; stroke-width:2.5; }
+.tension-dot{ r:4; fill:var(--panel); stroke-width:2; cursor:pointer; }
+.tension-dot:hover{ r:6; }
+.tension-label{ font-size:10px; fill:var(--sub); }
+.tension-legend{ display:flex; gap:12px; justify-content:center; margin-top:8px; font-size:12px; }
+.tension-legend span{ display:inline-flex; align-items:center; gap:4px; }
+.tension-legend i{ width:12px; height:3px; border-radius:2px; }
+
+/* 风格 DNA */
+.ne-style-input{ min-height:120px; }
+.ne-style-fingerprint{ display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+.ne-style-fingerprint .kv{ font-size:12px; }
+.ne-exemplars{ display:flex; flex-direction:column; gap:6px; }
+.ne-exemplar{ font-size:12px; line-height:1.6; padding:8px; border-radius:8px; background:var(--panel); border-left:3px solid var(--accent2); }
+
+/* 分支沙盘 */
+.ne-sandbox-input{ display:flex; flex-direction:column; gap:10px; }
+.ne-sandbox-options{ display:flex; flex-direction:column; gap:6px; }
+.ne-sandbox-options input{ margin-bottom:0; }
+.ne-branch-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
+.ne-branch-card{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:8px; }
+.ne-branch-card.best{ border-color:var(--ok); background:color-mix(in srgb, var(--ok) 8%, var(--panel2)); }
+.ne-branch-card .ne-branch-score{ font-size:20px; font-weight:800; color:var(--ok); }
+.ne-branch-card ul{ margin:0; padding-left:16px; font-size:12px; color:var(--txt); }
+.ne-branch-card li{ margin-bottom:3px; }
+.ne-branch-card .ne-branch-actions{ margin-top:auto; }
+
+/* 中间件提示条 */
+.ne-banner{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 12px; border-radius:10px; margin-bottom:10px;
+  background:color-mix(in srgb, var(--accent2) 12%, var(--panel2));
+  border:1px solid color-mix(in srgb, var(--accent2) 40%, var(--line));
+  font-size:13px; color:var(--txt);
+}
+.ne-banner.warn{ background:color-mix(in srgb, var(--warn) 12%, var(--panel2)); border-color:color-mix(in srgb, var(--warn) 40%, var(--line)); }
+.ne-banner b{ font-weight:700; }
