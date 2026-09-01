@@ -712,7 +712,7 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
       const reader = res.body && res.body.getReader ? res.body.getReader() : null;
       if(!reader) throw new Error('当前浏览器不支持流式响应');
       const decoder = new TextDecoder();
-      let buf = '', full = '';
+      let buf = '', full = '', finishReason = 'stop';
       const feed = (chunk)=>{
         buf += chunk;
         let nl;
@@ -726,6 +726,9 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
           try{ j = JSON.parse(payload); }catch(e){ continue; }
           const delta = (j.choices && j.choices[0] && j.choices[0].delta && j.choices[0].delta.content) || '';
           if(delta){ full += delta; onStream(delta); }
+          // 4.9 加固：捕获流式末尾真实 finish_reason（'length' = 被 max_tokens 截断），不再一律硬编码 'stop'
+          const fr = j.choices && j.choices[0] && j.choices[0].finish_reason;
+          if(fr) finishReason = fr;
         }
       };
       while(true){
@@ -736,8 +739,8 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
       feed(decoder.decode());
       _rec.resp = String(full).slice(0,50000); _rec.respLen = String(full).length; _rec.ms = Date.now()-_t0; _rec.ok = true;
       aiLogPush(_rec);
-      // 4.5 P0：流式最后也返回 {text, finishReason:'stop', usage:null}
-      return { text: full, finishReason: 'stop', usage: null };
+      // 4.5 P0：流式最后也返回 {text, finishReason, usage:null}（4.9 起 finishReason 为真实结束原因，供上层识别截断）
+      return { text: full, finishReason, usage: null };
     }catch(e){
       lastErr = e;
       if(attempt >= retry) break;
@@ -1073,7 +1076,8 @@ async function polishIdea(btn, force){
   if(btn) busy(btn,true, multi ? '生成多方案构想中…' : '优化构想中…');
   try{
     // 4.8（4.4）：统一经 callAIGuarded('idea')——system=IDEA_POLISH_SYS(PRO)、user=buildIdeaPolishUser(ctx)、校验=validateIdeaProOutput
-    const txt = await callAIGuarded('idea', null, {temperature: resolveActiveSpec().ideaTemp});
+    // 4.9 加固：把 multi 透传给 getSystemPrompt，按「多方案/单稿」拼接输出模式后缀，让多方案开关真正生效
+    const txt = await callAIGuarded('idea', { multi }, {temperature: resolveActiveSpec().ideaTemp});
     const out = String(txt||'').trim();
     if(!out){ toast('优化失败，请重试'); return; }
 
@@ -2866,6 +2870,7 @@ const AIValidators = {
 function validateIdeaProOutput(j){
   if(!j || typeof j !== 'object') return {ok:false, code:'EMPTY'};
   if(j.brief && typeof j.brief === 'object') return {ok:true};   // 4.7 Pro 结构（brief 存在即通过）
+  if(Array.isArray(j.options) && j.options.length) return {ok:true};   // 4.9 加固：多方案载体（{options:[...]}）放行，展示层已有兼容解析
   const err = validatePolishOutput(j);                            // 4.5 结构（字符串约定）
   return err ? {ok:false, code:'SCHEMA', details:err} : {ok:true};
 }
@@ -2889,9 +2894,19 @@ function validateAIOutput(kind, raw, ctx){
 // 4.8 旗舰版（第 4 章 4.4）：新形态 callAIGuarded(kind, extra, opts)——system / user / ctx 全部由 AIBus 派生；
 // 兼容旧形态 callAIGuarded(kind, system, user, ctx, opts)（第二参为字符串时按 4.7 逻辑执行）。
 async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
+  // 4.9 修复：callDeepSeek 已改为返回 {text, finishReason, usage} 对象，必须经 unwrapAIResult 解包为纯文本后再校验/回传；
+  // 否则对象被 String() 转成 "[object Object]"，JSON 解析必然失败（大纲误报「SCHEMA 返回不是对象」、构想误报「EMPTY」），
+  // 且回传给调用方的也是对象导致结果永远无法落盘展示。此处同时检测 finishReason==='length'（输出被 max_tokens 截断）并抛出明确错误。
+  const _unwrap = (res) => {
+    const txt = unwrapAIResult(res);
+    if(res && res.finishReason === 'length'){
+      throw new Error(`${kind} AI 输出被截断，请增大输出上限或减少篇幅后重试`);
+    }
+    return txt;
+  };
   if(typeof systemOrExtra === 'string'){
     // 4.7 旧形态：callAIGuarded(kind, system, user, ctx, opts)
-    const txt = await callDeepSeek(systemOrExtra, userOrOpts, opts);
+    const txt = _unwrap(await callDeepSeek(systemOrExtra, userOrOpts, opts));
     const report = validateAIOutput(kind, txt, ctx);
     if(!report.ok){
       throw new Error(`${kind} AI 输出校验失败：${report.code} ${report.details || ''}`);
@@ -2904,7 +2919,7 @@ async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
   const system = getSystemPrompt(kind, extra);
   const user = buildAIPrompt(kind, extra);
   const busCtx = AIBus.get(kind, extra);
-  const txt = await callDeepSeek(system, user, callOpts);
+  const txt = _unwrap(await callDeepSeek(system, user, callOpts));
   const report = validateAIOutput(kind, txt, busCtx);
   if(!report.ok){
     throw new Error(`${kind} AI 输出校验失败：${report.code} ${report.details || ''}`);
@@ -2971,7 +2986,7 @@ const AIBus = {
 // 4.8 旗舰版（第 4 章 4.4）：根据 kind 返回 *_PRO 系统提示词（outline/chapter 为组装函数，strip 注入目标字数）
 function getSystemPrompt(kind, extra){
   switch(kind){
-    case 'idea': return IDEA_POLISH_SYS;
+    case 'idea': return IDEA_POLISH_SYS + (extra && extra.multi ? POLISH_MULTI_MODE : '');   // 4.9 加固：多方案开关接线（此前 POLISH_MULTI_MODE 只定义从未拼入，勾选「多方案」实际不生效）
     case 'recipe': return AI_RECIPE_SYS_PRO;
     case 'outline': return buildOutlineSys();
     case 'titles': return REGEN_TITLES_SYS;
@@ -8692,7 +8707,8 @@ async function genOutline(){
   showStopBtn(stopParent);
   try{
     // 4.8（4.4）：统一经 callAIGuarded('outline')——system=buildOutlineSys()、user=buildOutlineUser(ctx)、校验=validateOutlineOutput
-    const txt = await callAIGuarded('outline', null, {temperature: resolveActiveSpec().outlineTemp, signal: _abortCtl?.signal});
+    // 4.9 加固：大纲 JSON 体量大（含 chapterPlan 全章节覆盖），显式放宽输出上限到 8192，避免服务商默认上限把 JSON 截断成非法结构
+    const txt = await callAIGuarded('outline', null, {temperature: resolveActiveSpec().outlineTemp, maxTokens: 8192, signal: _abortCtl?.signal});
     const o = extractJsonObject(txt);
     if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()) throw new Error('未解析到书名/简介');
     // 4.7 Pro（3.2）：校验 chapterPlan 覆盖（数量不符将被程序拒绝）
