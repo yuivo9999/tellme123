@@ -8,7 +8,7 @@
 <title>影视前期提示词生成器</title>
 <meta name="app-version" content="1.0.128">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="assets/style.css?v=143">
+<link rel="stylesheet" href="assets/style.css?v=144">
 <link rel="stylesheet" href="assets/vendor/nouislider/nouislider.min.css">
   <link rel="stylesheet" href="assets/vendor/tom-select/tom-select.css">
 <link rel="stylesheet" href="assets/theme-light.css?v=3">
@@ -30,6 +30,7 @@
         <button id="btnHist" class="icon-btn" title="历史作品"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span class="tb-lab">历史</span></button>
       </div>
       <div class="tb-right">
+        <button id="btnNarrativeEngine" class="icon-btn" title="叙事引擎"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg><span class="tb-lab">叙事</span></button>
         <button id="btnAiLog" class="icon-btn" title="AI 请求日志"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg><span class="tb-lab">日志</span></button>
         <button id="btnTheme" class="icon-btn" title="切换界面主题"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.26-.29-.44-.66-.44-1.06A1.68 1.68 0 0 1 14.45 16.5h2.06A5.5 5.5 0 0 0 22 11c0-5-4.5-9-10-9z"/></svg><span class="tb-lab">主题</span></button>
         <button id="btnSettings" class="icon-btn" title="设置"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span class="tb-lab">选项</span></button>
@@ -114,6 +115,15 @@
     <p class="hint">「默认」三组无色，仅文字区分。其余 11 套与「我的自定义」按 上·标题 / 中·梗概 / 下·章节 上色；每套右上方 ✕ 可删除、↩ 撤销上一步、↺ 恢复全部（仅内置配色）＋ 新建三色配色。</p>
   </div>
 
+  <!-- 叙事引擎抽屉：汇总改良.md 全部中间件入口 -->
+  <div id="narrativeEnginePanel" class="spec-panel hidden">
+    <div class="spec-head">
+      <span>🧠 叙事引擎</span>
+      <span class="spec-note">AI 中间件状态总览</span>
+    </div>
+    <div id="nePanelBody" class="ne-panel-body"></div>
+  </div>
+
   <!-- 步骤指示 -->
   <nav id="stepper" class="stepper"></nav>
 
@@ -187,6 +197,19 @@
   </div>
 </div>
 
+<!-- 叙事引擎通用弹窗：由各中间件面板复用 -->
+<div id="neModal" class="modal hidden">
+  <div class="modal-mask" data-ne-close></div>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h3 id="neModalTitle">叙事引擎</h3>
+      <button class="icon-btn" data-ne-close>✕</button>
+    </div>
+    <div class="modal-body" id="neModalBody"></div>
+    <div class="modal-actions hidden" id="neModalActions"></div>
+  </div>
+</div>
+
 <!-- 轻提示 -->
 <div id="toast" class="toast hidden"></div>
 
@@ -227,6 +250,6 @@
   <script src="assets/vendor/tom-select/tom-select.complete.min.js"></script>
 <script src="assets/vendor/jszip.min.js"></script>
 <script src="assets/idb.js?v=3"></script>
-  <script src="assets/app.js?v=207"></script>
+  <script src="assets/app.js?v=208"></script>
   </body>
 </html>
