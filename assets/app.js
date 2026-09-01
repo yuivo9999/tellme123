@@ -1205,14 +1205,11 @@ function showPolishResult(out, multi){
   renderPolishCards(cards);
 }
 
-// 4.5「导入设定」：把方案的结构化设定写入 state——navBeacon→state.outline.navBeacon；
-// seedCharacters/seedPlaces 合并进 state.outline.glossary；suggestedChapterCount→state.chapterCount（需用户确认）；
-// tone 映射到默认写作风格标签（如"冷峻"→minimal/cutting）。
-function importPolishToState(o){
-  const d = (o && o._v45) || {};
-  if(!state.outline) state.outline = { chapters:[], chapterPlans:[], glossary:{characters:[],places:[],propernouns:[]} };
-  if(!state.outline.glossary || typeof state.outline.glossary!=='object') state.outline.glossary = {characters:[],places:[],propernouns:[]};
-  const g = state.outline.glossary;
+// 4.9 修复：把「导入设定」的 _v45 结构化设定写入一个真实存在的 outline（词典幂等合并 + navBeacon）。
+function applyV45ToOutline(o, d){
+  if(!o || !d) return { nC:0, nP:0 };
+  if(!o.glossary || typeof o.glossary!=='object') o.glossary = {characters:[],places:[],propernouns:[]};
+  const g = o.glossary;
   ['characters','places','propernouns'].forEach(k=>{ if(!Array.isArray(g[k])) g[k]=[]; });
   let nC=0, nP=0;
   (d.seedCharacters||[]).forEach(c=>{
@@ -1227,17 +1224,24 @@ function importPolishToState(o){
     g.places.push({ name:nm, type:p.type||'', note:p.note||'' });
     nP++;
   });
-  // navBeacon 写入 state.outline.navBeacon
   if(d.navBeacon && typeof d.navBeacon==='object'){
-    state.outline.navBeacon = d.navBeacon;
+    o.navBeacon = d.navBeacon;
   }
-  // suggestedChapterCount 写入 state.chapterCount（需用户确认）
+  return { nC, nP };
+}
+
+// 4.5「导入设定」：把方案的结构化设定写入 state——navBeacon→state.outline.navBeacon；
+// seedCharacters/seedPlaces 合并进 state.outline.glossary；suggestedChapterCount→state.chapterCount（需用户确认）；
+// tone 映射到默认写作风格标签（如"冷峻"→minimal/cutting）。
+function importPolishToState(o){
+  const d = (o && o._v45) || {};
+  // suggestedChapterCount 写入 state.chapterCount（需用户确认；独立于大纲，可即时生效）
   const n = +d.suggestedChapterCount;
   let nCh = 0;
   if(Number.isFinite(n) && n>=5 && n<=200 && state.chapterCount !== n){
     if(confirm(`该方案建议全书 ${n} 章，是否采纳为本书章节数？（当前：${state.chapterCount||'未设'}）`)){ state.chapterCount = n; nCh = 1; }
   }
-  // tone 映射到默认写作风格标签（4.5：如"冷峻"→minimal/cutting）
+  // tone 映射到默认写作风格标签（4.5：如"冷峻"→minimal/cutting）；写作风格独立于大纲，即时生效
   const tone = String((d.navBeacon&&d.navBeacon.tone)||'');
   const TONE_TAGS = [['冷峻','minimal'],['克制','minimal'],['冷冽','cutting'],['锋利','cutting'],['热血','flame'],['燃','flame'],['温情','warmth'],['治愈','warmth'],['温柔','warmth'],['悬疑','suspense2'],['黑暗','suspense2']];
   let toneHit = null;
@@ -1248,8 +1252,20 @@ function importPolishToState(o){
     const ws = writeStyleState();
     if(!ws.tags.includes(toneHit)) ws.tags.push(toneHit);
   }
+  // 4.9 修复：没有真实大纲时绝不创建空的 state.outline——否则 viewStory 会误判「已有大纲」而切到故事完整界面，
+  // 出现无书名/无简介/无章节的全乱状态。改为把结构化设定暂存到 state.pendingV45，待 genOutline 生成真实大纲后自动应用。
+  if(!state.outline){
+    if(d && (d.navBeacon || (d.seedCharacters&&d.seedCharacters.length) || (d.seedPlaces&&d.seedPlaces.length))){
+      state.pendingV45 = JSON.parse(JSON.stringify(d));
+    }
+    persist(); render();
+    toast(`设定已暂存${nCh?(' · 章节数已设为 '+n):''}${toneHit?' · 风格标签已加':''}：导航灯塔/种子人物/种子地点将在生成大纲后自动应用`);
+    return;
+  }
+  // 已有真实大纲：直接写入大纲/词典/风格标签
+  const r = applyV45ToOutline(state.outline, d);
   persist(); render();
-  toast(`已导入设定：导航灯塔${d.navBeacon?1:0} · 种子人物 ${nC} · 种子地点 ${nP}${nCh?(' · 章节数已设为 '+n):''}${toneHit?' · 风格标签已加':''}`);
+  toast(`已导入设定：导航灯塔${d.navBeacon?1:0} · 种子人物 ${r.nC} · 种子地点 ${r.nP}${nCh?(' · 章节数已设为 '+n):''}${toneHit?' · 风格标签已加':''}`);
 }
 
 // v10.16 用缓存方案重新展开优化区（零请求）：竖向卡片
@@ -8740,6 +8756,12 @@ async function genOutline(){
     if(_ll < _lo || _ll > _hi){ toast(`提示：简介当前 ${_ll} 字，目标 ${_lo}—${_hi} 字，未落在区间内。`); }
     if(prevGloss) o.glossary = prevGloss;
     else if(!o.glossary) o.glossary = {characters:[], places:[], propernouns:[]};
+    // 4.9 修复：应用「导入设定」暂存的结构化设定（生成大纲前点击导入设定时暂存于 state.pendingV45），
+    // 使导航灯塔/种子人物/种子地点自动落到这份真实大纲上，然后清空待应用槽位。
+    if(state.pendingV45){
+      applyV45ToOutline(o, state.pendingV45);
+      state.pendingV45 = null;
+    }
     o.userIdea = state.idea;
     if(!Array.isArray(o.chapterPlans)) o.chapterPlans = [];
     // 如果 chapters 已重建，同步 state.chapters
