@@ -591,8 +591,85 @@ async function loadState(){
     if(cur) applyProject(cur);
     return;
   }
-  // 4) 全新无索引：尝试迁移旧版单项目 fyp_state
+  // 4) 全新无索引：先尝试一次性迁移旧版多项目库（fyp_lib / 旧 IDB 全库），再尝试旧版单项目 fyp_state
+  if(await migrateLegacyLibrary()) return;
   migrateOldState();
+}
+// v1.0.130 一次性迁移旧版多项目数据到新通道（仅当新索引为空时触发；成功后正式关闭旧通道）。
+// 迁移源：A) localStorage 旧键 fyp_lib（旧版多项目快照数组）; B) 旧 IDB 全库 projects store（idbList）。
+// 目标：写入新索引 fyp_index + 每项目单条 fyp_proj_<id>（超限项目复用 st=idb 单条）。
+// 返回 true 表示已迁移到至少一个项目并加载；调用方凭此短路后续逻辑。
+async function migrateLegacyLibrary(){
+  let legacy = [];
+  // A) localStorage 旧键 fyp_lib：旧版为 {items:[], curId} 或直接数组，逐个取其（含每个项目自身 id）
+  try{
+    const raw = localStorage.getItem('fyp_lib');
+    if(raw){
+      const parsed = JSON.parse(raw);
+      const arr = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items)) ? parsed.items : null;
+      const curId = (!Array.isArray(parsed) && parsed && parsed.curId) ? parsed.curId : null;
+      if(Array.isArray(arr)) legacy = legacy.concat(arr.filter(x=> x && typeof x === 'object' && x.id));
+      if(curId && !legacy.some(x=> x.id === curId)){ /* 找不到 curId 归属，忽略 */ }
+    }
+  }catch(e){}
+  // B) 旧 IDB 全库 projects store：idbList 返回整库快照数组
+  try{
+    if(idbAvailable() && typeof idbList === 'function'){
+      const list = await idbList();
+      if(Array.isArray(list)) legacy = legacy.concat(list.filter(x=> x && typeof x === 'object' && x.id));
+    }
+  }catch(e){}
+  if(!legacy.length) return false;
+  // 按 id 去重（IDB 源优先级高、本地 fyp_lib 兜底），并补必填字段
+  const byId = {};
+  legacy.forEach(x=>{ if(x && x.id) byId[x.id] = x; });
+  const merged = Object.keys(byId).map(id=>{
+    const p = byId[id];
+    const snap = normalizeLegacyProject(p);
+    return { ...snap, id: id, updatedAt: p.updatedAt || Date.now() };
+  });
+  if(!merged.length) return false;
+  const prevCur = lib && lib.curId;
+  lib = { curId: prevCur || merged[0].id, items: merged };
+  idbSaveLib();   // 写新索引 + 逐项目（localStorage 单条，超限自动降级）
+  // 迁移成功后加载当前项目
+  const cur = lib.items.find(i=> i.id === lib.curId) || lib.items[0];
+  if(cur){ lib.curId = cur.id; applyProject(cur); }
+  try{ localStorage.removeItem('fyp_lib'); }catch(e){}   // 一次性：迁移完成即清空旧键，正式关闭旧通道
+  return true;
+}
+// 把任意旧版项目快照规范化为新形状（兼容字段缺省/旧字段名），保证 applyProject 可读。
+function normalizeLegacyProject(p){
+  const s = p && typeof p === 'object' ? p : {};
+  const out = {};
+  out.mode = (s.mode === 'longnovel' || s.mode === 'long') ? 'longnovel' : (s.mode || 'shortfilm');
+  out.mode = (out.mode === 'long') ? 'longnovel' : out.mode;
+  out.mode = (out.mode === 'short' || out.mode === 'shortfilm') ? 'shortfilm' : out.mode;
+  out.recipe = s.recipe || 'mesh';
+  out.idea = s.idea != null ? s.idea : '';
+  out.outline = s.outline || null;
+  out.outlineConfirmed = !!s.outlineConfirmed;
+  out.chapters = Array.isArray(s.chapters) ? s.chapters : [];
+  out.characters = Array.isArray(s.characters) ? s.characters : [];
+  out.scenes = Array.isArray(s.scenes) ? s.scenes : [];
+  out.storyboard = Array.isArray(s.storyboard) ? s.storyboard : [];
+  out.qcRecord = undefined;   // 无残留
+  if(out.outline) delete out.outline.titleQC;
+  out.chapterStyle = (s.chapterStyle && typeof s.chapterStyle === 'object')
+    ? { tags: Array.isArray(s.chapterStyle.tags)?s.chapterStyle.tags:[], intensity:(s.chapterStyle.intensity===1||s.chapterStyle.intensity===3)?s.chapterStyle.intensity:2, collapsed:!!s.chapterStyle.collapsed }
+    : { tags:[], intensity:2, collapsed:false };
+  out.styleContract = (s.styleContract && typeof s.styleContract === 'object') ? s.styleContract : null;
+  out._styleHistory = Array.isArray(s._styleHistory) ? s._styleHistory : [];
+  out.glossAdherence = (typeof s.glossAdherence === 'number') ? s.glossAdherence : 60;
+  out.glossAutoFill = (s.glossAutoFill === undefined) ? true : !!s.glossAutoFill;
+  out.langLayer = (s.langLayer === undefined) ? true : !!s.langLayer;
+  out.ctAdviceHist = Array.isArray(s.ctAdviceHist) ? s.ctAdviceHist : [];
+  out.contentAdviceHist = Array.isArray(s.contentAdviceHist) ? s.contentAdviceHist : [];
+  out.hist = (s.hist && typeof s.hist === 'object') ? s.hist : { characters:[], scenes:[], cover:[], storyboard:[] };
+  out.title = s.title || (s.outline && s.outline.title) || '';
+  out.logline = s.logline || (s.outline && s.outline.logline) || '';
+  out.step = (s.step && s.step >= 1) ? s.step : (out.outlineConfirmed ? 4 : (out.outline ? 2 : 1));
+  return out;
 }
 function migrateOldState(){
   try{
@@ -2818,12 +2895,22 @@ const OUTLINE_GEN_SYS = OUTLINE_GEN_SYS_PRO;
 const NM_SURNAME_1 = new Set('赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田胡凌霍虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴陆荣翁荀羊於惠甄曲家封芮羿储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴鬱胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍郤璩桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公'.split(''));
 const NM_SURNAME_2 = new Set(['万俟','司马','上官','欧阳','夏侯','诸葛','闻人','东方','赫连','皇甫','尉迟','公羊','澹台','公冶','宗政','濮阳','淳于','单于','太叔','申屠','公孙','仲孙','轩辕','令狐','钟离','宇文','长孙','慕容','鲜于','闾丘','司徒','司空','亓官','司寇','仉督','子车','颛孙','端木','巫马','公西','漆雕','乐正','壤驷','公良','拓跋','夹谷','宰父','谷梁','段干','百里','东郭','南门','呼延','归海','羊舌','微生','梁丘','左丘','东门','西门']);
 const NM_WEB_BLACKLIST = ['林晚','苏晚','顾沉','云深','顾言','江晚','许墨','陆离','沈舟','苏念','林陌'];
-const NM_NAME_RULE_TEXT = '\n【人名规范（硬约束，仅限中国角色）】凡姓名首字（或首两字）属《百家姓》者视为中国角色：必须为「百家姓姓氏 + 两字名」——单姓全名恰为 3 个汉字、复姓全名恰为 4 个汉字；名字不得使用叠字（如"琳琳""小雨"）；不得使用网文高频名（如林晚/苏晚/顾沉/云深/顾言之类），宜用职业特征/意象组合造名且风格与世界观一致。姓名首字不在百家姓者视为外国角色，不适用本条约束。';
+// v1.0.130 用户指定禁用字与禁用人名（软硬约束均须遵守）：先保留原网文高频名单，再叠加以下两条从严。
+const NM_BANNED_CHARS = ['晚','砚','秋','檐'];   // 姓名中禁止出现这四个汉字（任何位置）
+const NM_BANNED_NAMES = [   // 逐字精确禁用名单（含去空格），命中即判违规
+  '林辰','苏辰','顾夜寒','陆泽','墨渊','叶辰','江亦琛','傅景深','沈辞','萧景琰','凌夜','顾言','裴衍','楚慕言','厉承勋','谢珩','温景然','云烬','宋砚','慕云凡',
+  '苏清月','晚卿','沈知予','顾晚柠','林晚星','慕晚晴','苏沐瑶','温妤','夏晚璃','楚清鸢','叶轻寒','姜知微','云舒','苏念汐','洛清欢','白若曦','顾绾绾','江晚渔','宋知晚','宁疏影'
+];
+const NM_NAME_RULE_TEXT = '\n【人名规范（硬约束，仅限中国角色）】凡姓名首字（或首两字）属《百家姓》者视为中国角色：必须为「百家姓姓氏 + 两字名」——单姓全名恰为 3 个汉字、复姓全名恰为 4 个汉字；名字不得使用叠字（如"琳琳""小雨"）。【用户禁则（软硬均须遵守）】全姓名中禁止出现汉字「晚」「砚」「秋」「檐」中任意一个（任何位置都算）；禁止使用以下指定人名（不得逐字符原样使用，也不得把其中某个人名作为现成名字选用）：男生——林辰、苏辰、顾夜寒、陆泽、墨渊、叶辰、江亦琛、傅景深、沈辞、萧景琰、凌夜、顾言、裴衍、楚慕言、厉承勋、谢珩、温景然、云烬、宋砚、慕云凡；女生——苏清月、晚卿、沈知予、顾晚柠、林晚星、慕晚晴、苏沐瑶、温妤、夏晚璃、楚清鸢、叶轻寒、姜知微、云舒、苏念汐、洛清欢、白若曦、顾绾绾、江晚渔、宋知晚、宁疏影。宜用职业特征/意象组合造名且风格与世界观一致。姓名首字不在百家姓者视为外国角色，不适用本条约束（但禁用字与禁用名清单仍应规避）。';
 // 返回违规原因字符串；合规返回 ''。首字非百家姓（外国角色/外文名）一律放行。
 function nmNameRuleViolation(nm){
   const s = String(nm||'').trim();
   if(!s) return '';
   if(!/^[\u4e00-\u9fa5]+$/.test(s)) return '';           // 含非汉字（外文名）不约束
+  // 用户禁则优先（全姓名判定，不分国籍）：禁用字 / 禁用名单
+  const hitChar = NM_BANNED_CHARS.find(ch => s.indexOf(ch) >= 0);
+  if(hitChar) return `名字含禁用字「${hitChar}」（用户禁则，全姓名任位置）`;
+  if(NM_BANNED_NAMES.includes(s)) return `命中用户禁用名单「${s}」`;
   let surLen = 0;
   if(NM_SURNAME_2.has(s.slice(0,2))) surLen = 2;
   else if(NM_SURNAME_1.has(s.charAt(0))) surLen = 1;
@@ -3341,7 +3428,7 @@ function addToFixQueue(entry){
 // 独立注入块而非改写各结构常量：一处定义，经组装函数自动覆盖全部结构范式与默认路径。
 const ORIGINALITY_OUTLINE_SYS = `【原创性要求（防雷同）】本作追求独特设定，避免与常见网络作品雷同：
 1. 拒绝套路模板：不开局退婚/系统提示音/赘婿打脸/主角降智等烂大街桥段；情节逻辑优先从本作独有设定推导，而非套用通用模板。
-2. 人名规避（硬约束·中国角色）：人物姓名必须为《百家姓》姓氏+两字名——单姓全名恰 3 个汉字、复姓恰 4 个汉字；名字不叠字；避开网文高频名（如林晚/苏晚/顾沉/云深/顾言之类）。首字不在百家姓者视为外国角色，不受长度约束。可采用职业特征/意象组合造名，姓名风格与世界观一致。
+2. 人名规避（硬约束·中国角色）：人物姓名必须为《百家姓》姓氏+两字名——单姓全名恰 3 个汉字、复姓恰 4 个汉字；名字不叠字；避开网文高频名（如林晚/苏晚/顾沉/云深/顾言之类）。【用户禁则（软硬均须遵守）】全姓名禁止出现汉字「晚」「砚」「秋」「檐」任意一个（任何位置都算）；禁止使用指定名单人名（林辰、苏辰、顾夜寒、陆泽、墨渊、叶辰、江亦琛、傅景深、沈辞、萧景琰、凌夜、顾言、裴衍、楚慕言、厉承勋、谢珩、温景然、云烬、宋砚、慕云凡；苏清月、晚卿、沈知予、顾晚柠、林晚星、慕晚晴、苏沐瑶、温妤、夏晚璃、楚清鸢、叶轻寒、姜知微、云舒、苏念汐、洛清欢、白若曦、顾绾绾、江晚渔、宋知晚、宁疏影）。首字不在百家姓者视为外国角色，不受长度约束，但仍须规避禁用字与禁用名单。可采用职业特征/意象组合造名，姓名风格与世界观一致。
 3. 章节标题同理：标题立意避免"xx之怒/惊变/震惊"式流水线命名。`;
 
 // v10.12 原创性要求（防雷同）· 章节侧：防桥段套路 + 高频句式 + 无关套路元素。
