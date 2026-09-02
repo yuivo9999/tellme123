@@ -33,8 +33,13 @@ window.addEventListener('beforeunload', e => {
   }
 });
 const KEY_STATE = 'fyp_state';   // 旧版单项目 key（仅用于首次迁移）
-const KEY_LIB = 'fyp_lib';       // 新版多项目历史库
+const KEY_INDEX = 'fyp_index';   // v12 多项目历史库索引：轻量 {curId, ids, st}，驱动历史列表与恢复
+const KEY_PROJ_PREFIX = 'fyp_proj_'; // v12 每个项目单独一条 localStorage 记录的前缀（fyp_proj_<id>）
 const KEY_GLIB = 'fyp_glib';     // v8 词典库（跨作品的多套可复用词典，独立于项目轨道）
+// v12 存储层：单条 localStorage 安全上限（浏览器约 5MB=5242880 字符，留出 key/索引余量）。
+// 单部小说快照超过此阈值（约 150-200 万汉字）才自动降级 IndexedDB 单条存储。
+const LS_SINGLE_SAFE = 4.5 * 1024 * 1024;
+function lsKeyFor(id){ return KEY_PROJ_PREFIX + id; }
 const MAX_PROJECTS = 500;         // 历史项目上限
 let lib = { curId: null, items: [] }; // {curId, items:[{id, idea, outline, ..., step, title, logline, updatedAt}]}
 let gglib = [];                  // v8 词典库：[{id, name, note, savedAt, g:{characters,places,propernouns}}]
@@ -65,6 +70,7 @@ const state = {
   subAutoFill: true,    // v1.0.113 副线追踪开关（默认开）：每章生成后自动吸收章节正文推进到副线进度；独立于 glossAutoFill
   subRecallRatio: 0.4,  // v1.0.113 副线消失超全书比例阈值（超过则回归须 ≤20 字轻提前情）
   titleWriteBack: true, // v1.0.114 章节标题回填开关（默认开）：正文 AI 写完本章后为本章定稿标题；只定本章，相邻章标题仅作防重名护栏
+  langLayer: true,   // v1.0.129 语言分层自动调节（仅长篇生效，默认开）：书面语造氛围、口语推剧情；按题材自动定语言底色。关则不注入任何语言分层约束
   useChapterPlans: true,  // v10.29：主线简述本稿是否参与正文生成（默认开）；关则保留内容与历史、仅不注入 AI
   plannerFinalized: false,  // v11：全书规划师是否已定稿全书章节标题（未定稿时正文任务行轻提示「沿用参考稿」）
   chapters: [],         // [{title, content, confirmed, editHistory:[]}]
@@ -88,6 +94,7 @@ state.scCollapsed = state.scCollapsed || false;
 state.fcCollapsed = state.fcCollapsed || false;
 state.rsCollapsed = state.rsCollapsed || false;
 state.styleContract = state.styleContract || null;
+state._scFallbackOff = !!state._scFallbackOff;   // 显式回退开关：true=清除契约后不自动回退（契约卡显示「未设定」）
 state._fixQueue = state._fixQueue || [];
 state._chapterPartial = state._chapterPartial || {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存
 // 4.8 旗舰版（板块三）：创新核弹中间件状态
@@ -316,6 +323,7 @@ function projectSnapshot(){
     glossAdherence: state.glossAdherence,
     glossAllowFill: state.glossAllowFill,
     glossAutoFill: state.glossAutoFill,
+    langLayer: (typeof state.langLayer === 'boolean') ? state.langLayer : true,   // v1.0.129 语言分层开关随项目持久化
     gsCollapsed: state.gsCollapsed,
     stCollapsed: state.stCollapsed,
     cpCollapsed: state.cpCollapsed,   // v10.14 梗概卡折叠透传
@@ -336,6 +344,7 @@ function projectSnapshot(){
     chapterStyle: state.chapterStyle || { tags: [], intensity: 2, collapsed: false },
     styleContract: state.styleContract || null,   // 4.5 风格契约（配方助手/风格指纹产出，正文 L0 注入）
     scCollapsed: !!state.scCollapsed,   // 4.6 Plus 风格契约卡折叠
+    scFallbackOff: !!state._scFallbackOff,   // 显式回退开关持久化
     fcCollapsed: !!state.fcCollapsed,   // 4.6 Plus 事实看板卡折叠
     rsCollapsed: !!state.rsCollapsed,   // 4.6 Plus 滚动摘要卡折叠
     _fixQueue: Array.isArray(state._fixQueue) ? state._fixQueue : [],   // 4.6 Plus 正文修复队列
@@ -377,6 +386,7 @@ function applyProject(p){
   state.glossAdherence = (typeof p.glossAdherence === 'number') ? p.glossAdherence : 60;
   state.glossAllowFill = !!p.glossAllowFill;
   state.glossAutoFill = (typeof p.glossAutoFill === 'boolean') ? p.glossAutoFill : true;
+  state.langLayer = (typeof p.langLayer === 'boolean') ? p.langLayer : true;   // v1.0.129 语言分层开关恢复（旧项目缺省开）
   state.gsCollapsed = (typeof p.gsCollapsed === 'boolean') ? p.gsCollapsed : true;
   state.stCollapsed = !!p.stCollapsed;
   state.cpCollapsed = (typeof p.cpCollapsed === 'boolean') ? p.cpCollapsed : true;   // v10.14 梗概卡默认折叠
@@ -396,6 +406,7 @@ function applyProject(p){
   (state.chapters||[]).forEach(c=>{ if(c){ delete c.volume; delete c.volumeTheme; } });
   if(state.outline){ delete state.outline.volumes; delete state.outline._volumes; }
   state.styleContract = (p.styleContract && typeof p.styleContract === 'object') ? p.styleContract : null;   // 4.5 风格契约恢复
+  state._scFallbackOff = !!p.scFallbackOff;   // 显式回退开关恢复
   state.characters = p.characters || [];
   state.ctAdviceHist = Array.isArray(p.ctAdviceHist) ? p.ctAdviceHist : [];   // v10.59 老项目缺省空
   state.contentAdviceHist = Array.isArray(p.contentAdviceHist) ? p.contentAdviceHist : [];   // v10.59 老项目缺省空
@@ -443,6 +454,7 @@ function clearState(){
   state.wordRange = null; state.chapterRange = null; state.totalWords = null; state.chapterCount = null;
   state.idea = ''; state.outline = null; state.coverPrompt = ''; state.coverWithTitle = false; state.outlineConfirmed = false;
   state.glossAdherence = 60; state.glossAllowFill = false; state.glossAutoFill = true; state.gsCollapsed = true;
+  state.langLayer = true;   // v1.0.129 语言分层开关：新建作品默认开（仅长篇生效）
   state.useChapterPlans = true;  // v10.29 新建作品默认参与生成
   state.chapters = []; state.characters = []; state.scenes = []; state.storyboard = []; state.boardConcepts = []; state.titleHistory = []; state.raw = {};
   state.ctAdviceHist = []; state.contentAdviceHist = [];   // v10.59 随项目的 AI 建议快照（章节标题 / 章节内容）
@@ -480,71 +492,106 @@ function migrateRecipeSet(set, legacyRecipe){
   const legacyMap = { web:{rhythm:'web'}, web100:{rhythm:'web'} };
   return legacyMap[legacyRecipe] || { rhythm:null };
 }
-// 落盘：优先写 IndexedDB（突破 5MB）；IDB 不可用或写入失败时回退 localStorage 双写，保证不丢。
-// 注意：保持内存模型 lib 不变，仅替换"落盘通道"。调用方（persist/开关项目/新建/删除）无需改动。
-function idbSaveLib(){
-  if(!idbAvailable()){
-    // IDB 不可用：直接写回 localStorage 旧库路径（仅作回退，避免数据丢失）
-    try{ localStorage.setItem(KEY_LIB, JSON.stringify(lib)); }catch(e){}
-    return;
+// ============ 存储层 v12：每项目一条 localStorage，超限单条自动降级 IndexedDB ============
+// 设计（保持内存模型 lib={curId,items} 不变，仅换落盘/加载通道，调用方无需改动）：
+//   - 索引 KEY_INDEX：轻量 {curId, ids, st}，驱动历史列表与恢复，始终写 localStorage
+//   - 每项目单独一条 localStorage：fyp_proj_<id> = 项目完整快照（快、同步、无 IDB 后台开销）
+//   - 单条超限（QuotaExceededError / >LS_SINGLE_SAFE）时该项目自动降级为 IDB 单条（idbPut），索引标 st=idb
+//   - 不再使用旧版"全库 clear + 全量重写"（idbPutAll），只写变更项目，避免后台慢与关窗丢写
+//   - 不再兼容/读取旧版 fyp_lib 与旧 IDB 全库数据（按需求，全新存储层开始）
+// 写入单个项目记录：优先 localStorage 单条；失败则降级 IDB 单条，并移除可能残留的 localStorage 旧版
+function writeOneProjectRecord(p){
+  if(!p || !p.id) return 'ls';
+  try{
+    const s = JSON.stringify(p);
+    if(s && s.length > LS_SINGLE_SAFE) throw new Error('over-ls-limit');
+    localStorage.setItem(lsKeyFor(p.id), s);
+    return 'ls';
+  }catch(e){
+    // localStorage 放不下（单条超限或配额满）：降级写 IDB 单条
+    try{ idbPut(p).catch(function(){}); }catch(e2){}
+    try{ localStorage.removeItem(lsKeyFor(p.id)); }catch(e3){}   // 清掉旧的 localStorage 版，避免读到旧数据
+    return 'idb';
   }
-  idbPutAll(lib.items, lib.curId).catch(function(){
-    // IDB 写入失败：回退 localStorage，保证本次改动不丢
-    try{ localStorage.setItem(KEY_LIB, JSON.stringify(lib)); }catch(e2){}
-  });
+}
+// 删除单个项目记录（localStorage + 可能的 IDB 降级副本）
+function removeOneProjectRecord(id, wasSt){
+  try{ localStorage.removeItem(lsKeyFor(id)); }catch(e){}
+  if(wasSt === 'idb' || wasSt == null){ try{ idbDelete(id).catch(function(){}); }catch(e){} }
+}
+// 落盘：同步写索引 + 只写「当前项目 / 新增项目」，历史未变更项目不动；清理已删除项目。
+function idbSaveLib(){
+  const ids = new Set(lib.items.map(i=> i.id));
+  // 读取旧索引，复用已有项目的存储位置（避免重写历史项目）
+  let oldIdx = null;
+  try{ oldIdx = JSON.parse(localStorage.getItem(KEY_INDEX)); }catch(e){}
+  const oldSt = (oldIdx && oldIdx.st && typeof oldIdx.st === 'object') ? oldIdx.st : {};
+  const oldIds = (oldIdx && Array.isArray(oldIdx.ids)) ? oldIdx.ids : [];
+  // 1) 写当前项目 + 新增项目；历史未变更项目沿用原存储位置
+  const st = {};
+  for(const p of lib.items){
+    const isNew = !oldIds.includes(p.id);
+    if(p.id === lib.curId || isNew){
+      st[p.id] = writeOneProjectRecord(p);
+    }else{
+      st[p.id] = oldSt[p.id] || 'ls';
+    }
+  }
+  // 2) 清理已删除/被淘汰项目（索引存在、内存已无 → 删除存储记录）
+  for(const oldId of oldIds){
+    if(!ids.has(oldId)) removeOneProjectRecord(oldId, oldSt[oldId]);
+  }
+  // 3) 写索引
+  const idx = { curId: lib.curId, ids: lib.items.map(i=> i.id), st };
+  try{ localStorage.setItem(KEY_INDEX, JSON.stringify(idx)); }catch(e){}
 }
 function saveLib(){
-  idbSaveLib();   // 原同步落盘改为异步走 IDB（fire-and-forget）
+  idbSaveLib();   // 同步写 localStorage（降级项目异步写 IDB）
 }
 function robustSaveLib(){
-  // 超过上限则淘汰最旧非当前项目（保持内存模型整洁，并清理 IDB 中孤儿记录）
+  // 超过上限则淘汰最旧非当前项目；已删除项的存储记录由 idbSaveLib 按索引统一清理
   while(lib.items.length > MAX_PROJECTS){
     const others = lib.items.filter(i=> i.id !== lib.curId);
     if(!others.length) break;
     others.sort((a,b)=> (a.updatedAt||0) - (b.updatedAt||0));
-    const victim = others[0];
-    lib.items = lib.items.filter(i=> i.id !== victim.id);
-    idbDelete(victim.id).catch(function(){}); // 清理 IDB 孤儿，避免重复
+    lib.items = lib.items.filter(i=> i.id !== others[0].id);
   }
   idbSaveLib();
 }
-// 把现有 localStorage 旧库一次性灌入 IDB（双写一版，不删 localStorage 旧数据，零丢失）
-function idbMigrateFromLib(libObj){
-  if(!idbAvailable()) return;
-  idbPutAll(libObj.items, libObj.curId).catch(function(){});
-}
-// 首次加载（异步）：优先读 IndexedDB 全量项目；IDB 为空/不可用→回退旧 localStorage fyp_lib（双写迁移进 IDB）；再无→迁移旧单项目 fyp_state
+// 首次加载（异步）：读索引 fyp_index → 逐项目读取（localStorage 单条 / 降级 IDB 单条）。
+// 忽略旧版 fyp_lib 与旧 IDB 全库数据（存储层 v12 全新开始，按需求不兼容旧 IDB）。
 async function loadState(){
   clearState();
-  // 1) 优先读 IndexedDB
-  try{
-    if(idbAvailable()){
-      const items = await idbList();
-      if(items && items.length){
-        const curId = (await idbGetMeta()) || (items[0] && items[0].id);
-        lib = { curId: curId, items: items };
-        // 保持 curId 有效
-        if(!lib.items.some(i=> i.id === lib.curId)) lib.curId = lib.items[0] && lib.items[0].id;
-        if(lib.curId){ const cur = lib.items.find(i=> i.id === lib.curId); if(cur) applyProject(cur); }
-        return;
+  // 1) 读索引
+  let idx = null;
+  try{ idx = JSON.parse(localStorage.getItem(KEY_INDEX)); }catch(e){}
+  const ids = (idx && Array.isArray(idx.ids)) ? idx.ids : [];
+  const stMap = (idx && idx.st && typeof idx.st === 'object') ? idx.st : {};
+  const curId = (idx && idx.curId) || null;
+  // 2) 逐项目读取
+  const items = [];
+  for(const id of ids){
+    try{
+      let p = null;
+      if(stMap[id] === 'idb'){
+        if(idbAvailable()) p = await idbGet(id);   // 降级项目从 IDB 单条读
+      }else{
+        const raw = localStorage.getItem(lsKeyFor(id));
+        if(raw){ try{ p = JSON.parse(raw); }catch(e){ p = null; } }
       }
-    }
-  }catch(e){ /* IDB 读取失败，继续回退 localStorage */ }
-  // 2) IDB 空或不可用：回退旧 localStorage fyp_lib（并双写迁移进 IDB，不删旧数据）
-  try{
-    const raw = localStorage.getItem(KEY_LIB);
-    if(raw){
-      const parsed = JSON.parse(raw);
-      if(parsed && Array.isArray(parsed.items)){
-        lib = parsed;
-        if(!lib.items.some(i=> i.id === lib.curId)) lib.curId = lib.items[0] && lib.items[0].id;
-        if(lib.curId){ const cur = lib.items.find(i=> i.id === lib.curId); if(cur) applyProject(cur); }
-        idbMigrateFromLib(lib); // 双写进 IDB（fire-and-forget），旧 localStorage 保留作回退
-        return;
-      }
-    }
-  }catch(e){}
-  // 3) 无新库：尝试迁移旧版单项目 fyp_state
+      if(p && typeof p === 'object' && p.id) items.push(p);
+    }catch(e){ /* 单条损坏/缺失则跳过，不影响其余项目 */ }
+  }
+  // 3) 恢复
+  if(items.length){
+    lib = { curId: curId, items: items };
+    // 保持 curId 有效
+    if(!lib.items.some(i=> i.id === lib.curId)) lib.curId = lib.items[0].id;
+    const cur = lib.items.find(i=> i.id === lib.curId);
+    if(cur) applyProject(cur);
+    return;
+  }
+  // 4) 全新无索引：尝试迁移旧版单项目 fyp_state
   migrateOldState();
 }
 function migrateOldState(){
@@ -2294,10 +2341,10 @@ function applyChosenCandidate(c, opts){
   // C②：配方无合格契约时，若已有确认章节则自动回退到「从确认章节提取」
   let sc = validateStyleContract(c.styleContract);
   let scMsg = '';
-  if(sc){ state.styleContract = sc; pushStyleHistory('配方选用：「'+stored.name+'」'); }
+  if(sc){ state.styleContract = sc; state._scFallbackOff = false; pushStyleHistory('配方选用：「'+stored.name+'」'); }
   else {
     const fp = buildStyleFingerprintFromConfirmed();
-    if(fp){ state.styleContract = fp; sc = fp; pushStyleHistory('配方「'+stored.name+'」无合格契约，已回退到已确认章节提取'); scMsg = '该配方无合格风格契约，已从已确认章节回退提取风格契约'; }
+    if(fp){ state.styleContract = fp; state._scFallbackOff = false; sc = fp; pushStyleHistory('配方「'+stored.name+'」无合格契约，已回退到已确认章节提取'); scMsg = '该配方无合格风格契约，已从已确认章节回退提取风格契约'; }
   }
   persist();
   wsDraft = null;                                 // 草稿与生效合一 -> 卡片显示「✔已生效」
@@ -3303,6 +3350,27 @@ const ORIGINALITY_CHAPTER_SYS = `【原创性要求（防雷同）】本章内�
 2. 句式防高频：避免网文高频表达（"嘴角勾起一抹冷笑""眼神一凛"等），对话与描写尽量具体、贴合本作人物。
 3. 不硬塞元素：不引入与既有设定无关的常见套路元素（金手指/系统/穿越梗等），除非本作设定明确包含。`;
 
+// v1.0.129 语言分层硬约束（仅长篇生效，开关 langLayer 默认开）：书面语造氛围、口语推剧情。
+// 源自「写网文要不要用书面语」核心结论——必须会书面语、但绝不滥用；对话说人话、书面语只用于情绪峰值提咖。
+const LANG_LAYER_SYS = `【语言分层（硬约束）】
+1. 对白一律口语化：台词必须贴合人物身份与说话习惯，像"人话"，禁止"端着"的书面腔（如"此举甚妥""在下以为"）；古风题材也用现代人能听懂的古风（"我瞧着这事不妥"优于"吾观此事实为不妥"）。旁白可文艺，台词必须自然。
+2. 书面语只用于"提咖"：大高潮、深情告白、终极顿悟等情绪峰值可用书面语加重分量；日常赶路、打斗过招、系统提示、对白推进一律大白话短句。原则：书面语造氛围，口语推剧情。
+3. 可读性自检（不写入输出）：逐句自问"读者需要动脑子拐个弯才能懂吗？"需要即改为大白话，目标是让读者"忘记自己在看字"。
+4. 一句话口诀：书面语是你藏起来的底牌，别一上来就全甩桌上。`;
+
+// v1.0.129 语言底色软约束（仅长篇生效）：随题材自动判定语言底色并稳定贯穿全书。开关 langLayer 开启时注入。
+function langLayerNote(){
+  return `【语言底色（随题材自动调节）】依据本作题材（navBeacon.genre / genreTags / 简介）自动判定语言底色，并稳定贯穿全书：
+- 都市 / 网游 / 系统 / 轻松沙雕类：整体贴近生活口语，叙述短句直白，对话大白话，避免咬文嚼字；
+- 仙侠 / 科幻史诗 / 红楼风等古雅题材：旁白与叙述可适度用书面语撑起世界观高级感，但对白仍须贴合人设口语化（服从【语言分层】第 1 条）；
+- 全书底色一经判定即保持一致，不得在后续章节漂移或推翻。`;
+}
+// 仅长篇 + 开关开时，返回语言分层提示词（硬约束 + 软约束）；否则返回空串。
+function langLayerInjection(){
+  if(!isLong() || !state.langLayer) return '';
+  return '\n\n' + LANG_LAYER_SYS + '\n\n' + langLayerNote();
+}
+
 // v10.15 重生成全部章节标题：保留大纲骨架，只重出标题；服从既有设定 + 用户建议 + 防套路第一优先。
 // 4.5：标题 AI 必须参考 structure.acts 的 mustHappen，保证标题能反映结构节点；数量契约由调用点 assertCount 校验。
 // 4.7 Pro（3.3/第7章指令2）：旧常量改名 REGEN_TITLES_SYS_LEGACY 保留回退，新常量用旧名指向 REGEN_TITLES_SYS_PRO。
@@ -4269,6 +4337,8 @@ function buildChapterSys(styleOverride){
   // 注入风格契约 L0
   const sc = state.styleContract;
   if(sc) parts.unshift(buildStyleContractBlock(sc));
+  const langLayer = langLayerInjection();   // v1.0.129 语言分层（仅长篇+开关开时注入）
+  if(langLayer) parts.push(langLayer);
   parts.push('\n【篇幅体量】\n'+sizeChapterInjection());
   parts.push('\n\n'+ORIGINALITY_CHAPTER_SYS);
   return parts.join('\n\n');
@@ -4295,6 +4365,8 @@ const longChapterSys = (styleOverride) => {
   if(styleNote) parts.unshift(styleNote);          // 风格契约必须置顶
   const sc = state.styleContract;
   if(sc) parts.unshift(buildStyleContractBlock(sc));
+  const langLayer = langLayerInjection();   // v1.0.129 语言分层（仅长篇+开关开时注入）
+  if(langLayer) parts.push(langLayer);
   parts.push('\n【篇幅体量】\n'+sizeChapterInjection());
   parts.push('\n\n'+ORIGINALITY_CHAPTER_SYS);
   return parts.join('\n\n');
@@ -4650,6 +4722,14 @@ function writeStyleCard(){
         <button type="button" class="btn small ghost" data-ws-fold-all title="展开全部词条类别">⤵ 全部展开</button>
         <button type="button" class="btn small ghost" data-ws-fold-none title="收起全部词条类别">⤴ 全部收起</button>
       </div>
+      ${ isLong() ? `
+      <div class="ws-lang-layer" title="开启：正文按题材自动调节语言底色，对白口语化、书面语只用于情绪峰值；关闭：不注入任何语言分层约束">
+        <label class="gs-autofill" style="display:inline-flex;align-items:center;gap:6px">
+          <input type="checkbox" data-lang-layer ${state.langLayer?'checked':''} />
+          <b>语言分层自动调节</b>
+        </label>
+        <span class="muted" style="font-size:11px">书面语造氛围、口语推剧情；随题材自动定底色。仅长篇生效</span>
+      </div>` : '' }
       ${writeStyleChipsHtml(draft, 'ws', { plus:false, cardFold:true, showTip:false })}
       <div class="ws-tools">
         <button type="button" class="ws-chip ws-chip-plus" data-ws-add="element" title="点击新建文风词条">＋</button>
@@ -4761,6 +4841,15 @@ function bindWriteStyle(){
   // v10.22 五大类分类折叠（主卡，事件委托处理动态渲染）：点类标题展开/收起，偏好持久化到 state.chapterStyle.catOpen
   // 兼容重生成面板（.ws-subcat-t 无 role，不响应）；render 重建后 .ws-card 为新节点，dataset 为空会重新绑定一次
   const wsCard = $('.ws-card');
+  // v1.0.129 语言分层开关（仅长篇显示；事件冒泡导致重复绑定，先清理旧监听）
+  const langToggle = $('[data-lang-layer]');
+  if(langToggle){
+    langToggle.onchange = ()=>{
+      state.langLayer = langToggle.checked;
+      persist();
+      toast(state.langLayer ? '已开启语言分层自动调节（正文按题材自动定语言底色，书面语造氛围、口语推剧情）' : '已关闭语言分层自动调节（正文不再注入语言分层约束）');
+    };
+  }
   // v10.51 一键全部展开/收起（仅作用于词条五大类 data-ws-catfold；组合配方 data-ws-combofold 不动）
   const fa = wsCard && wsCard.querySelector('[data-ws-fold-all]');
   if(fa) fa.onclick = ()=>{ const st=writeStyleState(); st.catOpen=st.catOpen||{};
@@ -5327,7 +5416,8 @@ function bindStructureCard(){
 
 // —— 2.3 风格契约卡 ——
 function styleContractCardHtml(){
-  const sc = state.styleContract || buildStyleFingerprintFromConfirmed();
+  // 显式回退开关：用户「清除契约」后关闭自动回退，使契约卡真实显示「未设定」；重新提取/确认风格时恢复
+  const sc = state.styleContract || (state._scFallbackOff ? null : buildStyleFingerprintFromConfirmed());
   const hasConfirmed = state.chapters.some(c => c && c._styleConfirmed);
   const stats = sc ? computeCurrentStyleStats() : null;
   return `<div class="card sc-card${state.scCollapsed?' sc-collapsed':''}">
@@ -5379,12 +5469,16 @@ function bindStyleContractCard(){
   if(ext) ext.onclick = ()=>{
     const fp = buildStyleFingerprintFromConfirmed();
     if(!fp){ toast('没有已确认风格的章节，无法提取'); return; }
-    state.styleContract = fp; pushStyleHistory('从确认章节提取风格契约'); persist(); render(); toast('已从确认章节提取风格契约');
+    state.styleContract = fp; state._scFallbackOff = false; pushStyleHistory('从确认章节提取风格契约'); persist(); render(); toast('已从确认章节提取风格契约');
   };
   const clr = $('[data-sc-clear]');
   if(clr) clr.onclick = ()=>{
-    if(!confirm('清除风格契约后，正文 AI 不再受量化约束，是否继续？')) return;
-    state.styleContract = null; pushStyleHistory('清除风格契约'); persist(); render(); toast('已清除风格契约');
+    if(!confirm('清除风格契约后，正文 AI 不再受量化约束。清除后契约卡将显示「未设定」，不再自动回退提取，是否继续？')) return;
+    state.styleContract = null;
+    state._scFallbackOff = true;               // 关闭自动回退，使契约卡真实显示「未设定」
+    (state.chapters||[]).forEach(c => { if(c) c._styleConfirmed = false; });   // 同步清空确认来源
+    pushStyleHistory('清除风格契约（含确认来源，关闭自动回退）');
+    persist(); render(); toast('已清除风格契约（不再自动回退）');
   };
 }
 
@@ -7615,6 +7709,7 @@ function renderChapters(){
             <button class="btn ghost" data-regen="${i}" ${state.generating?'disabled':''}>🔄 重生成</button>
             <button class="btn ghost" data-read="${i}">📖 阅读</button>
             <button class="btn ghost" data-style-ok="${i}" ${hasC?'':'disabled'} title="确认本章风格良好：后续生成将自动提取风格指纹，作为 L0 风格契约">${c._styleConfirmed?'🎨 风格已确认':'🎨 确认风格'}</button>
+            ${c._styleConfirmed?`<button class="btn ghost" data-style-unok="${i}" title="取消本章的风格确认：该章将从风格指纹提取来源中移除">↺ 取消确认</button>`:''}
             <button class="btn ghost" data-ch-raw="${i}" title="手动提取 AI 原始响应数据，当自动更新失败时使用">🔧</button>
             <button class="btn ghost" data-ch-sum="${i}" title="生成本章速读梗概（本章正文压缩至约 1/3，省时阅读）" ${hasC?'':'disabled'}>🏮 本章梗概</button>
             ${chapterExtraButtonsHtml(i)}
@@ -8667,6 +8762,7 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
     else if(t.hasAttribute('data-ch-raw')){ openChRawPanel(+t.dataset.chRaw); }
     else if(t.hasAttribute('data-ch-sum')){ openChapterSummaryPanel(+t.dataset.chSum); }
     else if(t.hasAttribute('data-style-ok')){ confirmChapterStyle(+t.dataset.styleOk); }   // 4.5 确认风格 → 风格指纹来源
+    else if(t.hasAttribute('data-style-unok')){ unconfirmChapterStyle(+t.dataset.styleUnok); }   // 取消确认风格 → 移出指纹来源
     else if(t.hasAttribute('data-toggle')){ const i=+t.dataset.toggle; state.chapters[i].confirmed=!state.chapters[i].confirmed; persist(); render(); }
     else if(t.hasAttribute('data-read')){ openReader(+t.dataset.read); }
     else if(t.hasAttribute('data-ne-resume-ch')){ const i=+t.dataset.neResumeCh; continueAndFinalizeChapter(i, '继续生成'); }
@@ -10171,10 +10267,26 @@ async function extractStyleDNA(text){
     return state._styleDNA;
   }catch(e){ return null; }
 }
+// 取消确认风格：把该章移出「风格指纹提取来源」。安全，不改动已生成正文；仅影响后续指纹重建/契约卡 hasConfirmed。
+function unconfirmChapterStyle(i){
+  const c = state.chapters[i]; if(!c) return;
+  c._styleConfirmed = false;
+  pushStyleHistory('取消章节确认风格：第'+(i+1)+'章');
+  // 取消后若契约正依赖该章，重建一次契约状态；如契约为空则一律回退重建，让契约卡真实反映当前来源
+  if(state.styleContract){
+    const fp = buildStyleFingerprintFromConfirmed();
+    if(fp){ state.styleContract = fp; pushStyleHistory('取消确认后重建风格契约'); }
+    else { state.styleContract = null; pushStyleHistory('已无确认章节，清除风格契约'); }
+  }
+  persist(); render();
+  toast(`已取消第 ${i+1} 章的风格确认`);
+}
+
 // 4.5 用户确认风格：标记本章风格良好，作为风格指纹提取来源（仅功能按钮，不做样式美化）
 function confirmChapterStyle(i){
   const c = state.chapters[i]; if(!c) return;
   c._styleConfirmed = true;
+  state._scFallbackOff = false;   // 有了显式确认来源，恢复自动回退
   // 即时按下反馈：先把按钮切到「确认中…」，杜绝「按了没反应」的观感
   const btn = document.querySelector(`[data-style-ok="${i}"]`);
   if(btn){ btn.textContent = '🎨 确认中…'; btn.disabled = true; }
@@ -11603,7 +11715,7 @@ function importProjectFile(file){
         const others = lib.items.filter(i=> i.id !== lib.curId && i.id !== newId);
         others.sort((a,b)=> (a.updatedAt||0) - (b.updatedAt||0));
         const victim = others[0];
-        if(victim){ lib.items = lib.items.filter(i=> i.id !== victim.id); idbDelete(victim.id).catch(function(){}); }
+        if(victim){ lib.items = lib.items.filter(i=> i.id !== victim.id); }
       }
       lib.curId = newId;
       applyProject(item);
@@ -11934,9 +12046,11 @@ function renderStyleDnaPanel(){
   `);
   setTimeout(()=>{
     const extract=$('#neBtnExtractStyle'); if(extract) extract.onclick=()=>{
+      if(extract.disabled) return;   // 防抖：提取期间连点只发一次，避免重复请求
       const text=(($('#neStyleInput')||{}).value||'').trim();
       if(text.length<50){ toast('范文太短，建议至少 50 字'); return; }
-      extractStyleDNA(text).then(()=>{ toast('风格指纹已提取'); renderStyleDnaPanel(); renderNarrativeEngineMenu(); }).catch(e=>toast('提取失败：'+e.message));
+      extract.disabled=true; extract.textContent='🔍 提取中…';
+      extractStyleDNA(text).then(()=>{ toast('风格指纹已提取'); renderStyleDnaPanel(); renderNarrativeEngineMenu(); }).catch(e=>{ toast('提取失败：'+e.message); if(!extract.parentNode){ /* 面板已换，无需复原 */ } }).finally(()=>{ });
     };
     const clear=$('#neBtnClearStyle'); if(clear) clear.onclick=()=>{ state._styleDNA=null; pushStyleHistory('清除风格 DNA'); toast('已清除风格 DNA'); renderStyleDnaPanel(); renderNarrativeEngineMenu(); };
   },0);
