@@ -2563,7 +2563,7 @@ function chapterMaxTokens(){
 function clampMaxTokens(task){
   const limits = {
     chapter: 12000,     // 正文最大单次输出
-    chapterPlan: 22000, // 全书规划师单批(25章完整节拍表)输出，避免批次 JSON 超出 4096 被截断
+    chapterPlan: 32000, // 全书规划师单批(25章完整节拍表)输出，避免批次 JSON 超出 4096 被截断
     json: 4096,         // JSON 类契约输出
     continue: 8192,     // 续写补充段
     summary: 2048,      // 梗概/摘要
