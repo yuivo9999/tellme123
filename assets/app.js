@@ -2558,11 +2558,12 @@ function chapterMaxTokens(){
 // 4.8 旗舰版（板块二-3）：按任务类型限制 max_tokens，避免 50000 这种远超 API 上限的无效参数触发频繁截断。
 function clampMaxTokens(task){
   const limits = {
-    chapter: 8192,      // 正文最大单次输出
+    chapter: 12000,     // 正文最大单次输出
+    chapterPlan: 22000, // 全书规划师单批(25章完整节拍表)输出，避免批次 JSON 超出 4096 被截断
     json: 4096,         // JSON 类契约输出
-    continue: 4096,     // 续写补充段
+    continue: 8192,     // 续写补充段
     summary: 2048,      // 梗概/摘要
-    strip: 2048         // 速读梗概
+    strip: 5000         // 速读梗概
   };
   return limits[task] || 4096;
 }
@@ -8890,11 +8891,11 @@ async function genChapterPlans(btn){
       // 4.8 旗舰版（板块二-5）：每批次并发 2 候选，本地评分择优，避免单点失败打断流水线
       const candPromises = [
         callAIWithContract(
-          callDeepSeek(CHAPTER_PLAN_SYS, user, {temperature: 0.35, topP: 0.8, maxTokens: clampMaxTokens('json'), onStream: null, signal: _abortCtl?.signal}),
+          callDeepSeek(CHAPTER_PLAN_SYS, user, {temperature: 0.35, topP: 0.8, maxTokens: clampMaxTokens('chapterPlan'), onStream: null, signal: _abortCtl?.signal}),
           { needJson: true, expectedCount: n, countPath: 'chapterPlans', schemaValidator: validateBatchPlanOutput, taskName: `规划师批次 ${bi+1}/${batches.length}-A` }
         ),
         callAIWithContract(
-          callDeepSeek(CHAPTER_PLAN_SYS, user, {temperature: 0.4, topP: 0.85, maxTokens: clampMaxTokens('json'), onStream: null, signal: _abortCtl?.signal}),
+          callDeepSeek(CHAPTER_PLAN_SYS, user, {temperature: 0.4, topP: 0.85, maxTokens: clampMaxTokens('chapterPlan'), onStream: null, signal: _abortCtl?.signal}),
           { needJson: true, expectedCount: n, countPath: 'chapterPlans', schemaValidator: validateBatchPlanOutput, taskName: `规划师批次 ${bi+1}/${batches.length}-B` }
         )
       ];
@@ -10865,7 +10866,7 @@ async function continueTruncatedChapter(i, firstPart, resumeFrom){
   const tail = full.slice(-800);
   const user = `【前文末尾（${resumeFrom ? '已生成但尚未落库的草稿尾部' : '被截断'}）】\n${tail}\n\n【续写要求】\n从上文中断处无缝继续，不要重复任何已有内容，不要重新开头。保持与原文一致的叙事节奏、人物称谓和风格。`;
   let secondPartial = '';
-  const res = await callDeepSeek(longChapterSys(), user, {maxTokens: chapterMaxTokens(), onStream: (delta)=>{
+  const res = await callDeepSeek(longChapterSys(), user, {maxTokens: clampMaxTokens('continue'), onStream: (delta)=>{
     // 4.8 旗舰版（板块一-3）：续写时 partial 应包含前文完整内容 + 新生成内容，避免再次中断后丢失前文
     secondPartial += delta;
     state._chapterPartial[i] = full + secondPartial;
