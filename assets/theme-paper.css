@@ -104,22 +104,22 @@
   background: var(--accent);
 }
 
-/* —— 2. 全书规划师卡：恢复暗底 + 主线简述改蓝字 —— */
-[data-theme="paper"] .cp-card{ background:#0f0e0c; color:#e8e0d2; border:1px solid rgba(255,255,255,.1); }
-[data-theme="paper"] .cp-body{ background:#0f0e0c; color:#e8e0d2; }
-[data-theme="paper"] .cp-item{ background:#15140f; color:#e8e0d2; border-color:rgba(255,255,255,.12); }
-[data-theme="paper"] .cp-no{ background:#241f14; border-color:rgba(255,255,255,.2); color:#e8dfcc; }
+/* —— 2. 全书规划师卡：宣纸米白底（对齐国潮的宣纸视觉，融入暖阳纸面）—— */
+[data-theme="paper"] .cp-card{ background:var(--panel); color:var(--txt); border:1px solid var(--line); }
+[data-theme="paper"] .cp-body{ background:var(--panel); color:var(--txt); }
+[data-theme="paper"] .cp-item{ background:var(--panel2); color:var(--txt); border-color:var(--line); }
+[data-theme="paper"] .cp-no{ background:color-mix(in srgb, var(--accent) 20%, var(--panel2)); border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); color:var(--txt); }
 [data-theme="paper"] .cp-input{
-  background:#15140f;
-  color:#5aa9e6;                       /* 主线简述正文：蓝色（黑底对比度约 7.7:1） */
-  border-color:rgba(255,255,255,.16);
+  background:#fff;
+  color:var(--txt);                    /* 墨字，米底可读 */
+  border-color:var(--line);
 }
 [data-theme="paper"] .cp-input:focus{
-  border-color:rgba(120,180,240,.6);
-  box-shadow:0 0 0 2px rgba(90,169,230,.2);
+  border-color:var(--accent);
+  box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 22%, transparent);
 }
-[data-theme="paper"] .cp-input::placeholder{ color:rgba(140,190,240,.45); }
-[data-theme="paper"] .cp-wc{ color:rgba(150,195,245,.7); }
-[data-theme="paper"] .cp-body .sub{ color:rgba(255,255,255,.55); }
-[data-theme="paper"] .cp-body .muted{ color:rgba(255,255,255,.42); }
-[data-theme="paper"] .cp-stream-preview{ background:#15140f; color:#cfe3f5; border-color:rgba(255,255,255,.12); }
+[data-theme="paper"] .cp-input::placeholder{ color:var(--muted); }
+[data-theme="paper"] .cp-wc{ color:var(--sub); }
+[data-theme="paper"] .cp-body .sub{ color:var(--sub); }
+[data-theme="paper"] .cp-body .muted{ color:var(--muted); }
+[data-theme="paper"] .cp-stream-preview{ background:var(--panel2); color:var(--txt); border-color:var(--line); }

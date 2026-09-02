@@ -6630,7 +6630,7 @@ function chapterPlanBlock(){
     const beats = (p && Array.isArray(p.beats)) ? p.beats : [];
     const beatHtml = beats.map((b, bi)=>`
       <div class="bs-beat" data-bs-beat="${i}:${bi}">
-        <span class="bs-type">${b.type || 'beat'}</span>
+        <span class="bs-type">${({setup:'铺垫',rise:'推进',climax:'燃点',hook:'悬念'})[b.type] || b.type || 'beat'}</span>
         <input type="text" class="bs-event" data-bs-event="${i}:${bi}" value="${esc(b.event||'')}" placeholder="事件">
         <input type="text" class="bs-emo" data-bs-emo="${i}:${bi}" value="${esc(b.emotional||'')}" placeholder="情绪">
         <input type="text" class="bs-ent" data-bs-ent="${i}:${bi}" value="${esc((b.requiredEntities||[]).join('、'))}" placeholder="必须实体（顿号分隔）">
