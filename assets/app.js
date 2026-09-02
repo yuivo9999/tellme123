@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.127';   // 应用版本号（v1.0.127 修复 patchChapter 缺失DOM更新 + 后台任务可见性）：index.html 的 ?v= 资源戳与之同步递增，用于标识产物已更新
+const APP_VERSION = '1.0.132';   // v1.0.132 新增叙事「禁则清单」模块：四路 AI 统一注入可编辑内容型禁则（禁用字/姓名/短语/规则），支持按 AI 生效范围，校验器联动；index.html 的 ?v= 资源戳与之同步递增
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / finalizeChapterTitle 等 fire-and-forget 异步任务
@@ -71,6 +71,7 @@ const state = {
   subRecallRatio: 0.4,  // v1.0.113 副线消失超全书比例阈值（超过则回归须 ≤20 字轻提前情）
   titleWriteBack: true, // v1.0.114 章节标题回填开关（默认开）：正文 AI 写完本章后为本章定稿标题；只定本章，相邻章标题仅作防重名护栏
   langLayer: true,   // v1.0.129 语言分层自动调节（仅长篇生效，默认开）：书面语造氛围、口语推剧情；按题材自动定语言底色。关则不注入任何语言分层约束
+  banList: null,   // v1.0.132 禁则清单（叙事中间件末位入口，默认 null=沿用内置默认清单）：{enabled, chars[], names[], phrases[], rules[], scopeAi[]}；随项目快照持久化
   useChapterPlans: true,  // v10.29：主线简述本稿是否参与正文生成（默认开）；关则保留内容与历史、仅不注入 AI
   plannerFinalized: false,  // v11：全书规划师是否已定稿全书章节标题（未定稿时正文任务行轻提示「沿用参考稿」）
   chapters: [],         // [{title, content, confirmed, editHistory:[]}]
@@ -324,6 +325,7 @@ function projectSnapshot(){
     glossAllowFill: state.glossAllowFill,
     glossAutoFill: state.glossAutoFill,
     langLayer: (typeof state.langLayer === 'boolean') ? state.langLayer : true,   // v1.0.129 语言分层开关随项目持久化
+    banList: (state.banList && typeof state.banList === 'object') ? normalizeBanList(state.banList) : null,   // v1.0.132 禁则清单随项目持久化（null=未自定义）
     gsCollapsed: state.gsCollapsed,
     stCollapsed: state.stCollapsed,
     cpCollapsed: state.cpCollapsed,   // v10.14 梗概卡折叠透传
@@ -387,6 +389,7 @@ function applyProject(p){
   state.glossAllowFill = !!p.glossAllowFill;
   state.glossAutoFill = (typeof p.glossAutoFill === 'boolean') ? p.glossAutoFill : true;
   state.langLayer = (typeof p.langLayer === 'boolean') ? p.langLayer : true;   // v1.0.129 语言分层开关恢复（旧项目缺省开）
+  state.banList = (p.banList && typeof p.banList === 'object') ? normalizeBanList(p.banList) : null;   // v1.0.132 禁则清单恢复（旧项目缺省 null=内置默认）
   state.gsCollapsed = (typeof p.gsCollapsed === 'boolean') ? p.gsCollapsed : true;
   state.stCollapsed = !!p.stCollapsed;
   state.cpCollapsed = (typeof p.cpCollapsed === 'boolean') ? p.cpCollapsed : true;   // v10.14 梗概卡默认折叠
@@ -455,6 +458,7 @@ function clearState(){
   state.idea = ''; state.outline = null; state.coverPrompt = ''; state.coverWithTitle = false; state.outlineConfirmed = false;
   state.glossAdherence = 60; state.glossAllowFill = false; state.glossAutoFill = true; state.gsCollapsed = true;
   state.langLayer = true;   // v1.0.129 语言分层开关：新建作品默认开（仅长篇生效）
+  state.banList = null;   // v1.0.132 禁则清单：新建作品缺省用内置默认（无需修改数据）
   state.useChapterPlans = true;  // v10.29 新建作品默认参与生成
   state.chapters = []; state.characters = []; state.scenes = []; state.storyboard = []; state.boardConcepts = []; state.titleHistory = []; state.raw = {};
   state.ctAdviceHist = []; state.contentAdviceHist = [];   // v10.59 随项目的 AI 建议快照（章节标题 / 章节内容）
@@ -663,6 +667,7 @@ function normalizeLegacyProject(p){
   out.glossAdherence = (typeof s.glossAdherence === 'number') ? s.glossAdherence : 60;
   out.glossAutoFill = (s.glossAutoFill === undefined) ? true : !!s.glossAutoFill;
   out.langLayer = (s.langLayer === undefined) ? true : !!s.langLayer;
+  out.banList = (s.banList && typeof s.banList === 'object') ? normalizeBanList(s.banList) : null;   // v1.0.132 禁则清单随项目持久化（null=未自定义）
   out.ctAdviceHist = Array.isArray(s.ctAdviceHist) ? s.ctAdviceHist : [];
   out.contentAdviceHist = Array.isArray(s.contentAdviceHist) ? s.contentAdviceHist : [];
   out.hist = (s.hist && typeof s.hist === 'object') ? s.hist : { characters:[], scenes:[], cover:[], storyboard:[] };
@@ -2901,16 +2906,26 @@ const NM_BANNED_NAMES = [   // 逐字精确禁用名单（含去空格），命�
   '林辰','苏辰','顾夜寒','陆泽','墨渊','叶辰','江亦琛','傅景深','沈辞','萧景琰','凌夜','顾言','裴衍','楚慕言','厉承勋','谢珩','温景然','云烬','宋砚','慕云凡',
   '苏清月','晚卿','沈知予','顾晚柠','林晚星','慕晚晴','苏沐瑶','温妤','夏晚璃','楚清鸢','叶轻寒','姜知微','云舒','苏念汐','洛清欢','白若曦','顾绾绾','江晚渔','宋知晚','宁疏影'
 ];
+const BANLIST_DEFAULT = {   // v1.0.132 禁则清单内置默认（含既有硬/软约束收敛入口）
+  enabled: true,                            // 总开关（默认开）：清单是否参与注入
+  chars: [],                                // 禁用字/词（人名/专名任何位置命中即拒，由校验器联动）；默认沿用 NM_BANNED_CHARS 读取
+  names: [],                                // 禁用姓名（逐字精确）；默认沿用 NM_BANNED_NAMES
+  phrases: [],                              // 禁用短语/模板词（仅正文注入，控词频）
+  rules: [                                 // 附加规则条目：每条声明生效 AI 范围
+    { text:'禁止直接叙述人物内心情绪，不写"心里感到""心头一颤"，一律用动作、微表情、下意识小动作间接呈现；人物行为须有清晰动机、允许小瑕疵，不美化。', ai:['planner','chapter'] },
+    { text:'规避网文模板词，控制"倏然、眸光、眼底"等高频词密度：同章同类词同一意象不超过 1 次，能避则避。', ai:['chapter'] }
+  ],
+  scopeAi: ['chapter']                       // 缺省生效范围（仅正文）；用户可按 AI 扩展大纲/标题/规划师
+};
 const NM_NAME_RULE_TEXT = '\n【人名规范（硬约束，仅限中国角色）】凡姓名首字（或首两字）属《百家姓》者视为中国角色：必须为「百家姓姓氏 + 两字名」——单姓全名恰为 3 个汉字、复姓全名恰为 4 个汉字；名字不得使用叠字（如"琳琳""小雨"）。【用户禁则（软硬均须遵守）】全姓名中禁止出现汉字「晚」「砚」「秋」「檐」中任意一个（任何位置都算）；禁止使用以下指定人名（不得逐字符原样使用，也不得把其中某个人名作为现成名字选用）：男生——林辰、苏辰、顾夜寒、陆泽、墨渊、叶辰、江亦琛、傅景深、沈辞、萧景琰、凌夜、顾言、裴衍、楚慕言、厉承勋、谢珩、温景然、云烬、宋砚、慕云凡；女生——苏清月、晚卿、沈知予、顾晚柠、林晚星、慕晚晴、苏沐瑶、温妤、夏晚璃、楚清鸢、叶轻寒、姜知微、云舒、苏念汐、洛清欢、白若曦、顾绾绾、江晚渔、宋知晚、宁疏影。宜用职业特征/意象组合造名且风格与世界观一致。姓名首字不在百家姓者视为外国角色，不适用本条约束（但禁用字与禁用名清单仍应规避）。';
 // 返回违规原因字符串；合规返回 ''。首字非百家姓（外国角色/外文名）一律放行。
 function nmNameRuleViolation(nm){
   const s = String(nm||'').trim();
   if(!s) return '';
   if(!/^[\u4e00-\u9fa5]+$/.test(s)) return '';           // 含非汉字（外文名）不约束
-  // 用户禁则优先（全姓名判定，不分国籍）：禁用字 / 禁用名单
-  const hitChar = NM_BANNED_CHARS.find(ch => s.indexOf(ch) >= 0);
-  if(hitChar) return `名字含禁用字「${hitChar}」（用户禁则，全姓名任位置）`;
-  if(NM_BANNED_NAMES.includes(s)) return `命中用户禁用名单「${s}」`;
+  // 用户禁则优先（全姓名判定，不分国籍）：禁用字 / 禁用名单（v1.0.132 与禁则清单数据联动）
+  const bv = banListViolation(s);
+  if(bv) return bv;
   let surLen = 0;
   if(NM_SURNAME_2.has(s.slice(0,2))) surLen = 2;
   else if(NM_SURNAME_1.has(s.charAt(0))) surLen = 1;
@@ -2920,6 +2935,59 @@ function nmNameRuleViolation(nm){
   const given = s.slice(surLen);
   if(/([\u4e00-\u9fa5])\1/.test(given)) return `名字不得叠字（「${s}」）`;
   if(NM_WEB_BLACKLIST.some(w => s.indexOf(w) >= 0)) return `疑似网文高频名（「${s}」）`;
+  return '';
+}
+
+/* v1.0.132 禁则清单：数据归一化 + 按 AI 角色生成注入块（四路 AI 共用同一清单，按生效范围过滤） */
+// 归一化用户禁则清单：补齐缺失数组/字段，防止旧快照脏数据
+function normalizeBanList(b){
+  if(!b || typeof b !== 'object') return null;
+  const out = { enabled: !(b.enabled === false) };
+  out.chars = Array.isArray(b.chars) ? b.chars.filter(x=>x&&String(x).trim()) : [];
+  out.names = Array.isArray(b.names) ? b.names.filter(x=>x&&String(x).trim()) : [];
+  out.phrases = Array.isArray(b.phrases) ? b.phrases.filter(x=>x&&String(x).trim()) : [];
+  out.rules = Array.isArray(b.rules) ? b.rules.filter(r=>r&&r.text).map(r=>({ text:String(r.text), ai:Array.isArray(r.ai)?r.ai:[] })) : [];
+  out.scopeAi = Array.isArray(b.scopeAi) ? b.scopeAi.filter(x=>x) : (Array.isArray(BANLIST_DEFAULT.scopeAi) ? BANLIST_DEFAULT.scopeAi.slice() : []);
+  return out;
+}
+function banListRaw(){ return (state.banList && typeof state.banList === 'object') ? state.banList : BANLIST_DEFAULT; }
+function stateBanEnabled(){ const b = banListRaw(); return !(b && b.enabled === false); }
+function banListChars(){ const c = banListRaw().chars; return (Array.isArray(c) && c.length) ? c : NM_BANNED_CHARS; }
+function banListNames(){ const n = banListRaw().names; return (Array.isArray(n) && n.length) ? n : NM_BANNED_NAMES; }
+// 判断某类 AI 是否在清单生效范围内（scopeAi 为空则视为全生效）
+function banListAiActive(role){
+  const sc = banListRaw().scopeAi;
+  if(!Array.isArray(sc) || !sc.length) return true;
+  return sc.indexOf(role) >= 0;
+}
+// 为指定 AI 角色生成「用户禁则清单」提示词块；无内容或不生效时返回 ''。
+function banListBlockFor(role){
+  if(!isLong()) return '';   // v1.0.132 禁则清单仅长篇生效（与语言分层同属叙事中间件，短片不注入）
+  if(!stateBanEnabled()) return '';
+  const b = banListRaw();
+  const lines = [];
+  const chars = banListChars(), names = banListNames();
+  if(chars.length && banListAiActive(role)) lines.push('人名禁用字：' + chars.join('、') + '（姓名任何位置命中即违规）');
+  if(names.length && banListAiActive(role)) lines.push('禁用姓名（不得逐字原样使用或当作现成名）：' + names.join('、'));
+  // 附加规则按角色生效范围过滤
+  const rules = Array.isArray(b.rules) ? b.rules : [];
+  rules.forEach(r => {
+    if(!r || !r.text) return;
+    const ai = Array.isArray(r.ai) ? r.ai : [];
+    if(ai.indexOf(role) >= 0) lines.push(r.text);
+  });
+  // 禁用短语/模板词：仅正文(chapter)注入，避免污染大纲/标题/规划师
+  const phrases = Array.isArray(b.phrases) ? b.phrases : [];
+  if(role === 'chapter' && phrases.length) lines.push('规避高频模板词/禁用短语：' + phrases.join('、'));
+  if(!lines.length) return '';
+  return '\n\n【用户禁则清单（最高优先）】\n' + lines.join('\n');
+}
+// 后端校验器是否命中用户禁则字符/名单（与 nmNameRuleViolation 的首判逻辑保持一致但始终生效）
+function banListViolation(nm){
+  const s = String(nm||'').trim(); if(!s) return '';
+  const ch = banListChars().find(c => s.indexOf(c) >= 0);
+  if(ch) return `名字含禁用字「${ch}」（禁则清单）`;
+  if(banListNames().indexOf(s) >= 0) return `命中禁则名单「${s}」`;
   return '';
 }
 
@@ -3836,6 +3904,8 @@ function buildOutlineSys(){
   const _lo = Math.min(_m,_x), _hi = Math.max(_m,_x);
   const N = chapterCountVal() || 30;        // 若未填，按默认 30 章
   parts.push(`\n\n【简介字数约束】本作小说简介总字数必须控制在 ${_lo}—${_hi} 字之间，严格遵守区间，不得超出。当前全书预设 ${N} 章，chapterPlan 必须覆盖全部 ${N} 章，数量严格一致。`);
+  const banNote = banListBlockFor('outline');
+  if(banNote) parts.push(banNote);
   return parts.join('\n\n');
 }
 // 遵从度 → 喂给 AI 的要求（v8：与 adherenceHint 的语义一一对应，供模型判断遵循程度）
@@ -4426,6 +4496,8 @@ function buildChapterSys(styleOverride){
   if(sc) parts.unshift(buildStyleContractBlock(sc));
   const langLayer = langLayerInjection();   // v1.0.129 语言分层（仅长篇+开关开时注入）
   if(langLayer) parts.push(langLayer);
+  const banNote = banListBlockFor('chapter');   // v1.0.132 禁则清单（仅长篇，按生效范围）
+  if(banNote) parts.push(banNote);
   parts.push('\n【篇幅体量】\n'+sizeChapterInjection());
   parts.push('\n\n'+ORIGINALITY_CHAPTER_SYS);
   return parts.join('\n\n');
@@ -4454,6 +4526,8 @@ const longChapterSys = (styleOverride) => {
   if(sc) parts.unshift(buildStyleContractBlock(sc));
   const langLayer = langLayerInjection();   // v1.0.129 语言分层（仅长篇+开关开时注入）
   if(langLayer) parts.push(langLayer);
+  const banNote2 = banListBlockFor('chapter');   // v1.0.132 禁则清单（仅长篇，按生效范围）
+  if(banNote2) parts.push(banNote2);
   parts.push('\n【篇幅体量】\n'+sizeChapterInjection());
   parts.push('\n\n'+ORIGINALITY_CHAPTER_SYS);
   return parts.join('\n\n');
@@ -9160,6 +9234,8 @@ async function genChapterPlans(btn){
       parts.push(`【本批次】第 ${b.start+1}—${b.end} 章，共 ${n} 章\n${batchTitles}`);
       if(prevSkeleton) parts.push(prevSkeleton);
       parts.push(chapterGlossaryBlock());
+      const banNote = banListBlockFor('planner');   // v1.0.132 禁则清单（规划师+标题共用本 system，禁用字/名单随本块生效）
+      if(banNote) parts.push(banNote);
       const user = parts.join('\n\n') + '\n\n' + ORIGINALITY_OUTLINE_SYS;
       const onStream = delta => {
         _streamBuf += String(delta||'');
@@ -11987,6 +12063,7 @@ function renderNarrativeEngineMenu(){
     <button class="ne-menu-item" data-ne-panel="style"><span class="ne-ico">🎨</span><span class="ne-lbl">风格 DNA</span>${state._styleDNA?'<span class="ne-badge ok">ON</span>':''}</button>
     <button class="ne-menu-item" data-ne-panel="sandbox"><span class="ne-ico">🌿</span><span class="ne-lbl">分支沙盘推演</span></button>
     <button class="ne-menu-item" data-ne-panel="sandboxHistory"><span class="ne-ico">📜</span><span class="ne-lbl">沙盘历史</span>${branchN?`<span class="ne-badge info">${branchN}</span>`:''}</button>
+    <button class="ne-menu-item" data-ne-panel="banlist"><span class="ne-ico">🚫</span><span class="ne-lbl">禁则清单</span>${stateBanEnabled()?'<span class="ne-badge ok">ON</span>':'<span class="ne-badge">OFF</span>'}</button>
   `;
 }
 
@@ -12004,6 +12081,7 @@ function rebindNarrativeEngine(){
     else if(panel==='style') renderStyleDnaPanel();
     else if(panel==='sandbox') renderBranchSandbox();
     else if(panel==='sandboxHistory') renderSandboxHistory();
+    else if(panel==='banlist') renderBanListPanel();
     // 交互优化：选择某一项后收起抽屉（子面板经 openNeModal 弹窗接管后续交互，抽屉不再需要）
     closeNarrativeEngine();
   };
@@ -12022,6 +12100,8 @@ function rebindNarrativeEngine(){
     const tDot=e.target.closest('[data-ne-tension]'); if(tDot){ const ch=+tDot.dataset.neTension; const c=state._tensionCurve.find(x=>x.ch===ch); if(c) toast(`第 ${ch+1} 章 · 外在 ${c.external||0} · 内心 ${c.internal||0} · 信息差 ${c.mystery||0}`); return; }
     // 分支沙盘选择
     const sbCh=e.target.closest('[data-ne-sb-choose]'); if(sbCh){ const point=+sbCh.dataset.neSbChoose; const id=sbCh.dataset.neSbId||''; applySandboxBranch(point, id); closeNeModal(); toast('已选择分支并注册风险为伏笔'); return; }
+    // v1.0.132 禁则清单面板交互
+    if(handleBanListAction(e)) return;
   };
   // 点击空白处关闭抽屉
   document.addEventListener('click', (e)=>{
@@ -12196,6 +12276,104 @@ function renderSandboxHistory(){
     return `<div class="card"><div class="kv"><span class="k">第 ${(sb.point||0)+1} 章后</span><span class="v">${chosen}</span></div><div class="ne-branch-grid">${cards}</div></div>`;
   }).join('');
   openNeModal('沙盘历史', `<div class="ne-body">${html}</div>`);
+}
+
+// v1.0.132 禁则清单面板：编辑禁用字/姓名/短语/规则与生效范围；保存写回持久化，恢复默认回退内置清单。
+function handleBanListAction(e){
+  const m=$('#neModal'); if(!m || m.style.display==='none' && m.classList&&m.classList.contains('hidden')) return false;
+  if(!m.contains(e.target)) return false;
+  // 总开关即时切换
+  const en=e.target.closest('[data-bl-enabled]'); if(en){ /* 保存时统一读回，此处仅占位避免误关面板 */ return false; }
+  // 新增规则：重新渲染并预置一条空规则
+  const add=e.target.closest('[data-bl-rule-add]'); if(add){
+    const b=banListRaw();
+    const cur=normalizeBanList(b)||{enabled:true,chars:[],names:[],phrases:[],rules:[],scopeAi:[]};
+    cur.rules.push({ text:'', ai:['chapter'] });
+    state.banList=cur; renderBanListPanel(); return true;
+  }
+  // 删除规则
+  const del=e.target.closest('[data-bl-rule-del]'); if(del){
+    const i=+del.dataset.blRuleDel; const cur=normalizeBanList(state.banList)||{enabled:true,chars:[],names:[],phrases:[],rules:[],scopeAi:[]};
+    (cur.rules||[]).splice(i,1); state.banList=cur; renderBanListPanel(); return true;
+  }
+  // 保存
+  const save=e.target.closest('[data-bl-save]'); if(save){
+    const cur=normalizeBanList(state.banList)||{enabled:true,chars:[],names:[],phrases:[],rules:[],scopeAi:BANLIST_DEFAULT.scopeAi.slice()};
+    const gv=el=>m.querySelector(el); const val=el=>{const x=gv(el); return x?x.value.trim():'';};
+    cur.enabled = !!(m.querySelector('[data-bl-enabled]')&&m.querySelector('[data-bl-enabled]').checked);
+    cur.chars = val('[data-bl-chars]').split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+    cur.names = val('[data-bl-names]').split(/[,，\n]/).map(s=>s.trim()).filter(Boolean);
+    cur.phrases = val('[data-bl-phrases]').split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+    // 规则文本回读
+    m.querySelectorAll('[data-bl-rule-text]').forEach(t=>{ const i=+t.dataset.blRuleText; const aiSel=m.querySelector('[data-bl-rule-ai="'+i+'"]'); const ai=aiSel?aiSel.value.split(',') : []; if(cur.rules[i]){ cur.rules[i].text=t.value.trim(); cur.rules[i].ai=ai; } });
+    cur.rules=cur.rules.filter(r=>r&&r.text);
+    // 生效范围
+    const scope=[];
+    if(m.querySelector('[data-bl-scope="chapter"]')&&m.querySelector('[data-bl-scope="chapter"]').checked) scope.push('chapter');
+    if(m.querySelector('[data-bl-scope="planner"]')&&m.querySelector('[data-bl-scope="planner"]').checked) scope.push('planner');
+    if(m.querySelector('[data-bl-scope="outline"]')&&m.querySelector('[data-bl-scope="outline"]').checked) scope.push('outline');
+    if(m.querySelector('[data-bl-scope="title"]')&&m.querySelector('[data-bl-scope="title"]').checked) scope.push('title');
+    cur.scopeAi = scope.length?scope:BANLIST_DEFAULT.scopeAi.slice();
+    state.banList=cur; persist(); renderNarrativeEngineMenu();
+    toast('禁则清单已保存'); return true;
+  }
+  // 恢复默认
+  const reset=e.target.closest('[data-bl-reset]'); if(reset){
+    state.banList=null; persist(); renderNarrativeEngineMenu();
+    toast('已恢复默认禁则清单'); return true;
+  }
+  return false;
+}
+function renderBanListPanel(){
+  const b = banListRaw();
+  const enabled = stateBanEnabled();
+  const chars = banListChars().map(esc).join(', ');
+  const names = banListNames().map(esc).join(', ');
+  const bRaw = banListRaw();
+  const phrases = (Array.isArray(bRaw.phrases)?bRaw.phrases:[]).map(esc).join(', ');
+  const rules = (Array.isArray(bRaw.rules)?bRaw.rules:[]).map((r,i)=>`
+    <div class="ne-bl-rule">
+      <label>生效 AI：<select data-bl-rule-ai="${i}">
+        ${['chapter','planner','outline','title'].map(r2=>`<option value="${r2}" ${(Array.isArray(r.ai)&&r.ai.indexOf(r2)>=0)?'selected':''}>${r2==='chapter'?'正文':r2==='planner'?'规划师':r2==='outline'?'大纲':'标题'}</option>`).join('')}
+      </select></label>
+      <textarea data-bl-rule-text="${i}" rows="2">${esc(r.text||'')}</textarea>
+      <button class="btn small ghost" data-bl-rule-del="${i}">删除</button>
+    </div>`).join('');
+  const aiScope = banListAiScopeLabels();
+  const html = `
+    <div class="ne-body ne-bl-body">
+      <div class="ne-bl-enable">
+        <label class="mini-check"><input type="checkbox" data-bl-enabled ${enabled?'checked':''}> <b>总开关：启用「禁则清单」对四个写作 AI 的注入</b></label>
+      </div>
+      <div class="bl-note muted">清单为「最高优先」约束，但不得超越输出格式红线（禁标题/json/markdown）与人名/专名一致性红线。</div>
+      <label class="kv"><span class="k">禁用字</span>
+        <input data-bl-chars value="${chars}" placeholder="逗号分隔，如：晚,砚,秋,檐"/>
+      </label>
+      <label class="kv"><span class="k">禁用姓名</span>
+        <textarea data-bl-names rows="3">${names}</textarea>
+      </label>
+      <label class="kv"><span class="k">禁用短语/模板词（仅正文）</span>
+        <input data-bl-phrases value="${phrases}" placeholder="逗号分隔，如：倏然,眸光"/>
+      </label>
+      <div class="ne-bl-rules-head">附加规则 <button class="btn small" data-bl-rule-add>＋ 新增规则</button></div>
+      ${rules || '<div class="muted">暂无附加规则。</div>'}
+      <div class="ne-bl-scope-head"><b>生效范围（按 AI）</b></div>
+      <div class="ne-bl-scope">
+        <label class="mini-check"><input type="checkbox" data-bl-scope="chapter" ${aiScope.chapter?'checked':''}> 正文</label>
+        <label class="mini-check"><input type="checkbox" data-bl-scope="planner" ${aiScope.planner?'checked':''}> 规划师</label>
+        <label class="mini-check"><input type="checkbox" data-bl-scope="outline" ${aiScope.outline?'checked':''}> 大纲</label>
+        <label class="mini-check"><input type="checkbox" data-bl-scope="title" ${aiScope.title?'checked':''}> 标题</label>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" data-bl-save>保存</button>
+        <button class="btn ghost" data-bl-reset>恢复默认</button>
+      </div>
+    </div>`;
+  openNeModal('禁则清单', html);
+}
+function banListAiScopeLabels(){
+  const b=banListRaw(); const sc=Array.isArray(b.scopeAi)?b.scopeAi:(BANLIST_DEFAULT.scopeAi||[]);
+  return { chapter: sc.indexOf('chapter')>=0, planner: sc.indexOf('planner')>=0, outline: sc.indexOf('outline')>=0, title: sc.indexOf('title')>=0 };
 }
 
 function renderTitleCandidates(candidates, onSelect){
