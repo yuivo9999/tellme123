@@ -2104,6 +2104,7 @@ function aiRecipeResultHtml(lib){
     <div class="ai-recipe-cand${ ci===aiRp.hi ? ' hi' : '' }">
       <div class="ai-recipe-cand-head">
         <b>${esc(c.name||('候选'+ (ci+1)))}</b>
+        ${ recipeScBadge(c) }
         <span class="muted" style="font-size:11px">${esc(c.desc||'')}</span>
       </div>
       <div class="ai-recipe-tags">${ (c.tags||[]).map(id=>{ const s=writeStyleById(id); return `<span class="ai-recipe-tg">${esc(s?s.name:id)}</span>`; }).join('') }</div>
@@ -2145,6 +2146,49 @@ function gapHtml(c, ci){
     </div>`).join('') }`;
 }
 function libHas(id){ return !!writeStyleById(id); }
+// C①/D2：候选配方预校验风格契约。为每个候选标注 _scValid（是否有合格契约）与 _scCleaned（清洗后的契约）。
+function prepRecipeList(list){
+  if(!Array.isArray(list)) return list;
+  list.forEach(c=>{
+    if(c && typeof c==='object'){
+      const cl = validateStyleContract(c.styleContract);
+      c._scCleaned = cl;
+      c._scValid = !!cl;
+    }
+  });
+  return list;
+}
+// C①：候选卡上的风格契约状态徽标（旧快照无 _scValid 时现场计算）
+function recipeScBadge(c){
+  const v = !!(c && (c._scValid !== undefined ? c._scValid : !!validateStyleContract(c.styleContract)));
+  return `<span class="ai-recipe-sc ${v?'ok':'bad'}" title="带可量化的风格契约（正文按 L0 约束执行）">${v?'✓ 风格契约':'风格契约不足'}</span>`;
+}
+// D2：生成并预校验候选配方；若无任一候选带合格风格契约（强制必备），自动附修正指令重试 1 次。
+async function aiRecipeProduce(system, user){
+  const opt = { maxTokens: clampMaxTokens('json'), temperature:(getCfg().aiRecipeTemp==null?0.9:getCfg().aiRecipeTemp), topP:0.5 };
+  const FIX = `\n\n【上一轮修正：风格契约必须合格】每个配方都必须带可量化的「风格契约」，且字段必须达标，否则该候选会被判为不合格而丢弃：
+- sentenceAvg：平均句长，12-60 的整数；
+- sentenceTolerance：0.1-0.5；
+- dialogueRatio：对白占比，0-1 之间的数字；
+- dialogueTolerance：0.05-0.2；
+- forbiddenPhrases：禁用词，至少 3 条；
+- preferredTransitions：偏好转场，至少 3 条；
+- rhythmNote：节奏说明字符串。
+请务必为每个候选给全、给对上述字段。`;
+  let list = null;
+  for(let attempt=1; attempt<=2; attempt++){
+    const sys = attempt>1 ? String(system)+FIX : system;
+    const raw = unwrapAIResult(await callDeepSeek(sys, user, opt));
+    const cands = prepRecipeList(parseAiJsonList(raw));
+    if(Array.isArray(cands) && cands.length){
+      list = cands;
+      if(cands.some(c=>c && c._scValid)) break;   // 至少一个合格契约 → 接受
+    }
+  }
+  if(!list || !list.length) throw new Error('AI 未返回有效配方，请重试');
+  if(!list.some(c=>c && c._scValid)) throw new Error('候选配方均缺少合格风格契约，已达重试上限，请再试一次');
+  return list;
+}
 // 生成候选配方
 async function aiRecipeGen(){
   const ta = $('#aiReDesc'); if(!ta) return;
@@ -2154,9 +2198,7 @@ async function aiRecipeGen(){
   const gen = $('[data-ai-recipe-gen]'); if(gen){ gen.disabled = true; gen.textContent = '生成中…'; }
   try{
     const {system, user} = aiRecipePrompt(desc);
-    const raw = unwrapAIResult(await callDeepSeek(system, user, {maxTokens: clampMaxTokens('json'), temperature:(getCfg().aiRecipeTemp==null?0.9:getCfg().aiRecipeTemp), topP:0.5}));   // 4.8 旗舰版（板块二-2/3）：JSON 输出窄采样 + 限长
-    const list = parseAiJsonList(raw);
-    if(!list || !list.length) throw new Error('AI 未返回有效配方，请重试');
+    const list = await aiRecipeProduce(system, user);   // D2/C①：生成即预校验风格契约，全缺合格契约自动重试
     aiRp = { list, hi: 0 };
     // v10.57 生成成功即存历史快照（书本图标可回看；outline 由 aiRecipeFromOutline 存）
     if(aiSource !== 'outline') addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'desc', desc: desc, list: JSON.parse(JSON.stringify(list)), applied:[] });
@@ -2175,9 +2217,7 @@ async function aiRecipeFromOutline(text){
   const gen = $('[data-ai-recipe-gen]'); if(gen){ gen.disabled = true; gen.textContent = '通读中…'; }
   try{
     const {system, user} = aiPromptFromOutline(text);
-    const raw = unwrapAIResult(await callDeepSeek(system, user, {maxTokens: clampMaxTokens('json'), temperature:(getCfg().aiRecipeTemp==null?0.9:getCfg().aiRecipeTemp), topP:0.5}));   // 4.8 旗舰版（板块二-2/3）：JSON 输出窄采样 + 限长
-    const list = parseAiJsonList(raw);
-    if(!list || !list.length) throw new Error('AI 未返回有效配方，请重试');
+    const list = await aiRecipeProduce(system, user);   // D2/C①：生成即预校验风格契约
     aiRp = { list, hi: 0 };
     // v10.57 生成成功即存历史快照（以梗概文件名标记来源；不存原文大文本）
     addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'outline', desc: _aiOutlineFname || '主线简述', list: JSON.parse(JSON.stringify(list)), applied:[] });
@@ -2251,13 +2291,19 @@ function applyChosenCandidate(c, opts){
   (c.gap||[]).forEach(g=>{ if(g && g.id && libIds.includes(g.id) && !d2.tags.includes(g.id)) d2.tags.push(g.id); });
   st2.tags = d2.tags.slice(); st2.intensity = d2.intensity||2;
   // 4.5：配方 styleContract 保存到 state.styleContract（正文生成时 buildChapterUser 在 L0 注入）
-  const sc = validateStyleContract(c.styleContract);
+  // C②：配方无合格契约时，若已有确认章节则自动回退到「从确认章节提取」
+  let sc = validateStyleContract(c.styleContract);
+  let scMsg = '';
   if(sc){ state.styleContract = sc; pushStyleHistory('配方选用：「'+stored.name+'」'); }
+  else {
+    const fp = buildStyleFingerprintFromConfirmed();
+    if(fp){ state.styleContract = fp; sc = fp; pushStyleHistory('配方「'+stored.name+'」无合格契约，已回退到已确认章节提取'); scMsg = '该配方无合格风格契约，已从已确认章节回退提取风格契约'; }
+  }
   persist();
   wsDraft = null;                                 // 草稿与生效合一 -> 卡片显示「✔已生效」
   if(!opts || opts.render !== false) aiRp = null;
   if(!opts || opts.render !== false){ render(); refreshWsUI(); }
-  toast('已应用到「写作风格」：'+stored.name+(sc?'（风格契约已存，正文将按 L0 校验）':''));
+  toast('已应用到「写作风格」：'+stored.name+(sc?(scMsg?'（'+scMsg+'）':'（风格契约已存，正文将按 L0 校验）'):'（无风格契约）'));
   return stored;
 }
 function aiRecipePick(ci){
@@ -2717,6 +2763,32 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 // 4.7 Pro（第7章指令2）：新常量用旧名——buildOutlineSys 等既有引用点自动升级为 PRO 提示词
 const OUTLINE_GEN_SYS = OUTLINE_GEN_SYS_PRO;
 
+/* =========================================================
+ * 人名硬约束（中国角色）· 百家姓 + 两字名 + 禁叠字 + 避网文高频名
+ * 判定：姓名首字（单姓）/ 首两字（复姓）属《百家姓》→ 视为中国角色并约束；
+ *       否则视为外国角色不约束。供提示词注入与词典写入口/校验器共用。
+ * ========================================================= */
+const NM_SURNAME_1 = new Set('赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜戚谢邹喻柏水窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳酆鲍史唐费廉岑薛雷贺倪汤滕殷罗毕郝邬安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹姚邵湛汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田胡凌霍虞万支柯昝管卢莫经房裘缪干解应宗丁宣贲邓郁单杭洪包诸左石崔吉钮龚程嵇邢滑裴陆荣翁荀羊於惠甄曲家封芮羿储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯宓蓬全郗班仰秋仲伊宫宁仇栾暴甘钭厉戎祖武符刘景詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰从鄂索咸籍赖卓蔺屠蒙池乔阴鬱胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦雍郤璩桑桂濮牛寿通边扈燕冀郏浦尚农温别庄晏柴瞿阎充慕连茹习宦艾鱼容向古易慎戈廖庾终暨居衡步都耿满弘匡国文寇广禄阙东欧殳沃利蔚越夔隆师巩厍聂晁勾敖融冷訾辛阚那简饶空曾毋沙乜养鞠须丰巢关蒯相查后荆红游竺权逯盖益桓公'.split(''));
+const NM_SURNAME_2 = new Set(['万俟','司马','上官','欧阳','夏侯','诸葛','闻人','东方','赫连','皇甫','尉迟','公羊','澹台','公冶','宗政','濮阳','淳于','单于','太叔','申屠','公孙','仲孙','轩辕','令狐','钟离','宇文','长孙','慕容','鲜于','闾丘','司徒','司空','亓官','司寇','仉督','子车','颛孙','端木','巫马','公西','漆雕','乐正','壤驷','公良','拓跋','夹谷','宰父','谷梁','段干','百里','东郭','南门','呼延','归海','羊舌','微生','梁丘','左丘','东门','西门']);
+const NM_WEB_BLACKLIST = ['林晚','苏晚','顾沉','云深','顾言','江晚','许墨','陆离','沈舟','苏念','林陌'];
+const NM_NAME_RULE_TEXT = '\n【人名规范（硬约束，仅限中国角色）】凡姓名首字（或首两字）属《百家姓》者视为中国角色：必须为「百家姓姓氏 + 两字名」——单姓全名恰为 3 个汉字、复姓全名恰为 4 个汉字；名字不得使用叠字（如"琳琳""小雨"）；不得使用网文高频名（如林晚/苏晚/顾沉/云深/顾言之类），宜用职业特征/意象组合造名且风格与世界观一致。姓名首字不在百家姓者视为外国角色，不适用本条约束。';
+// 返回违规原因字符串；合规返回 ''。首字非百家姓（外国角色/外文名）一律放行。
+function nmNameRuleViolation(nm){
+  const s = String(nm||'').trim();
+  if(!s) return '';
+  if(!/^[\u4e00-\u9fa5]+$/.test(s)) return '';           // 含非汉字（外文名）不约束
+  let surLen = 0;
+  if(NM_SURNAME_2.has(s.slice(0,2))) surLen = 2;
+  else if(NM_SURNAME_1.has(s.charAt(0))) surLen = 1;
+  if(!surLen) return '';                                   // 首字(两字)非百家姓 → 外国角色不约束
+  const exp = surLen + 2;                                  // 姓 + 两字名
+  if(s.length !== exp) return `姓名应为百家姓(${surLen}字姓)+两字名＝${exp}字（当前「${s}」为${s.length}字）`;
+  const given = s.slice(surLen);
+  if(/([\u4e00-\u9fa5])\1/.test(given)) return `名字不得叠字（「${s}」）`;
+  if(NM_WEB_BLACKLIST.some(w => s.indexOf(w) >= 0)) return `疑似网文高频名（「${s}」）`;
+  return '';
+}
+
 const GLOSSARY_SYS = `\n\n【glossary 万物词典（必须一并输出）】请在返回的 JSON 顶层再追加一个 glossary 字段，作为全文保持一致性的权威基准：
 "glossary":{"characters":[{"name":"人物姓名","identity":"身份/职业/社会身份","age":"岁数/年龄","gender":"性别","appearance":"外貌特征","hobby":"爱好/习惯","relation":"与该人的血缘/人际关联（妹妹/姐姐/朋友/仆人等）","trait":"性格要点"}],"places":[{"name":"地名/场景名","type":"类型","note":"设定要点"}],"propernouns":[{"name":"专名/专属设定术语","note":"含义与拼写唯一约定"}]}
 必须列出本故事涉及的全部重要人物（含配角）、关键地域地名与专属设定术语；**全书正文一律只使用本词典中的人名/地名/专名，禁止自造或混用其他拼写**。每名人物**必须**标注 identity（身份/职业/社会身份）、age（岁数/年龄）、gender（性别）、appearance（外貌特征）、hobby（爱好/习惯），正文中人物的身份、年龄、性别、外貌、爱好须与此保持一致。
@@ -2728,7 +2800,7 @@ const GLOSSARY_SYS = `\n\n【glossary 万物词典（必须一并输出）】请
 · 已写明"在此地居住/任职/习武多年"，而 age 却小于该年限——例如"已在此住了30年"却仅23岁；应上调 age 或下调年限，取能自圆其说的一致值；
 · 履历类身份（当官/从军/任职）须让年龄能容纳任职时长——例如18岁却"当官5年"自相矛盾；任职起始须早于当前 age，身份与 age 区间匹配（太后/驸马/童养媳等对 age 亦有隐含约束）；
 · relation 蕴含的年龄轴：子代须小于亲代、兄弟/姐妹年龄差须合理；
-· 特殊预设（转世/穿越/长生/修仙/不老/永生）可豁免数值约束，但必须在 identity 或 relation 中显式标注，不允许无理由的年限冲突。`;
+· 特殊预设（转世/穿越/长生/修仙/不老/永生）可豁免数值约束，但必须在 identity 或 relation 中显式标注，不允许无理由的年限冲突。` + NM_NAME_RULE_TEXT;
 
 // v11 全书规划师：不再生成"节奏/埋点/回收"三段式梗概，改为每章主线简述 + 定稿章节标题 + 初期万物词典。
 // 一套请求三样产出：titles(定稿标题) / chapterPlans(每章主线简述) / glossary(初期词典，写正文的一致性种子)。
@@ -3222,7 +3294,7 @@ function addToFixQueue(entry){
 // 独立注入块而非改写各结构常量：一处定义，经组装函数自动覆盖全部结构范式与默认路径。
 const ORIGINALITY_OUTLINE_SYS = `【原创性要求（防雷同）】本作追求独特设定，避免与常见网络作品雷同：
 1. 拒绝套路模板：不开局退婚/系统提示音/赘婿打脸/主角降智等烂大街桥段；情节逻辑优先从本作独有设定推导，而非套用通用模板。
-2. 人名规避：人物姓名避免网文高频字组合（如林晚/苏晚/顾沉/云深/顾言之类）；可采用职业特征/意象组合造名，姓名风格与世界观一致。
+2. 人名规避（硬约束·中国角色）：人物姓名必须为《百家姓》姓氏+两字名——单姓全名恰 3 个汉字、复姓恰 4 个汉字；名字不叠字；避开网文高频名（如林晚/苏晚/顾沉/云深/顾言之类）。首字不在百家姓者视为外国角色，不受长度约束。可采用职业特征/意象组合造名，姓名风格与世界观一致。
 3. 章节标题同理：标题立意避免"xx之怒/惊变/震惊"式流水线命名。`;
 
 // v10.12 原创性要求（防雷同）· 章节侧：防桥段套路 + 高频句式 + 无关套路元素。
@@ -3425,6 +3497,8 @@ function validateGlossaryExtract(j){
   for(const c of (j.characters || [])){
     const missing = ['name','identity','age','gender','appearance','hobby','relation','trait'].filter(k => !String(c[k]||'').trim());
     if(missing.length) return {ok:false, code:'CHAR_FIELD_MISSING', details: c.name};
+    const nameViol = nmNameRuleViolation(String(c.name||'').trim());
+    if(nameViol) return {ok:false, code:'CHAR_NAME_RULE', details: nameViol};
   }
   return {ok:true};
 }
@@ -3823,15 +3897,16 @@ function mergeExtractedGlossary(ext){
   const o = state.outline; if(!o) return {c:0,p:0,k:0,total:0};
   if(!o.glossary) o.glossary = {characters:[], places:[], propernouns:[]};
   const gl = o.glossary;
-  const n = {c:0, p:0, k:0};
-  const mergeArr = (cur, add, tag) => {
+  const n = {c:0, p:0, k:0, rejected:0};
+  const mergeArr = (cur, add, tag, checkName) => {
     const have = new Set((cur||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
     (add||[]).forEach(it=>{
       const nm = String(it.name||'').trim(); if(!nm || have.has(nm)) return;
+      if(checkName && nmNameRuleViolation(nm)){ n.rejected++; return; }
       cur.push({ ...it, _auto:true }); have.add(nm); n[tag]++;
     });
   };
-  mergeArr(gl.characters, ext.characters, 'c');
+  mergeArr(gl.characters, ext.characters, 'c', true);
   mergeArr(gl.places, ext.places, 'p');
   mergeArr(gl.propernouns, ext.propernouns, 'k');
   n.total = n.c + n.p + n.k;
@@ -3843,17 +3918,19 @@ function mergeSeedGlossary(seed){
   const o = state.outline; if(!o) return 0;
   if(!o.glossary) o.glossary = {characters:[], places:[], propernouns:[]};
   if(!seed || (!Array.isArray(seed.characters) && !Array.isArray(seed.places) && !Array.isArray(seed.propernouns))) return 0;
-  const gl = o.glossary; let added = 0;
-  const mergeArr = (cur, arr)=>{
+  const gl = o.glossary; let added = 0, rejected = 0;
+  const mergeArr = (cur, arr, checkName) => {
     const have = new Set((cur||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
     (arr||[]).forEach(it=>{
       const nm = String(it&&it.name||'').trim(); if(!nm || have.has(nm)) return;
+      if(checkName && nmNameRuleViolation(nm)){ rejected++; return; }
       cur.push(it); have.add(nm); added++;
     });
   };
-  mergeArr(gl.characters, seed.characters);
+  mergeArr(gl.characters, seed.characters, true);
   mergeArr(gl.places, seed.places);
   mergeArr(gl.propernouns, seed.propernouns);
+  if(rejected) console.warn('规划师播种：已拦截 '+rejected+' 个违规人名（需百家姓+两字名、禁叠字）');
   return added;
 }
 // v11 规划师定稿标题应用：长度必须与当前章节数严格一致才应用，否则保留现有标题并提示防错位。
@@ -5915,6 +5992,7 @@ function aiHistCandHtml(c, idx){
   return `<div class="ai-recipe-cand" style="margin-top:6px">
     <div class="ai-recipe-cand-head">
       <b>${esc(c.name||('候选'+(idx+1)))}</b>
+      ${ recipeScBadge(c) }
       <span class="muted" style="font-size:11px">${esc(c.desc||'')}</span>
     </div>
     <div class="ai-recipe-tags">${ (c.tags||[]).map(id=>{ const s=writeStyleById(id); return `<span class="ai-recipe-tg">${esc(s?s.name:id)}</span>`; }).join('') }</div>
@@ -5930,6 +6008,7 @@ function aiHistCandHtml(c, idx){
             </div>`).join('')
         : `<span class="ar-ok">✓ 现有词库即可覆盖，无需新词条</span>` }
     </div>
+    <div style="margin-top:6px"><button type="button" class="btn small primary" data-ah-candpick="${idx}" title="恢复此候选并应用到写作风格">✔ 恢复为此候选</button></div>
   </div>`;
 }
 function openAiHistPanel(){
@@ -5970,6 +6049,8 @@ function openAiHistPanel(){
     if(fold){ const body = fold.closest('.ws-lib-group').querySelector('.ws-lib-fold-body'); if(body){ const open = body.style.display!=='none'; body.style.display = open?'none':'block'; fold.querySelector('.sc-fold-ico').textContent = open?'▸':'▾'; } return; }
     const apply = e.target.closest('[data-ah-apply]');
     if(apply){ const ei=+apply.dataset.ahApply; const entry=hist[ei]; if(entry&&Array.isArray(entry.list)&&entry.list.length){ applyChosenCandidate(entry.list[0], {render:false}); refreshAiHistBadge(); close(); } return; }
+    const candpick = e.target.closest('[data-ah-candpick]');
+    if(candpick){ const ci=+candpick.dataset.ahCandpick; const grp=candpick.closest('.ws-lib-group'); const fold=grp&&grp.querySelector('[data-ah-fold]'); const ei=fold?+fold.dataset.ahFold:-1; const entry=hist[ei]; const c=(entry&&Array.isArray(entry.list))?entry.list[ci]:null; if(c){ applyChosenCandidate(c, {render:true}); refreshAiHistBadge(); close(); } return; }
     const del = e.target.closest('[data-ah-del]');
     if(del){ const ei=+del.dataset.ahDel; const a=getAiHist(); if(a[ei]){ a.splice(ei,1); setAiHist(a); } refreshAiHistBadge(); const p=$('#aiHistPanel'); if(p) p.remove(); openAiHistPanel(); return; }
     const clr = e.target.closest('[data-ah-clear]');
@@ -8588,7 +8669,7 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
     else if(t.hasAttribute('data-style-ok')){ confirmChapterStyle(+t.dataset.styleOk); }   // 4.5 确认风格 → 风格指纹来源
     else if(t.hasAttribute('data-toggle')){ const i=+t.dataset.toggle; state.chapters[i].confirmed=!state.chapters[i].confirmed; persist(); render(); }
     else if(t.hasAttribute('data-read')){ openReader(+t.dataset.read); }
-    else if(t.hasAttribute('data-ne-resume-ch')){ const i=+t.dataset.neResumeCh; continueTruncatedChapter(i, '', state._chapterPartial[i]||''); }
+    else if(t.hasAttribute('data-ne-resume-ch')){ const i=+t.dataset.neResumeCh; continueAndFinalizeChapter(i, '继续生成'); }
     else if(t.hasAttribute('data-ne-sandbox-ch')){ const i=+t.dataset.neSandboxCh; renderBranchSandbox(i); }
     else if(t.hasAttribute('data-fold')){ const i=+t.dataset.fold; const body=t.closest('.ch-card').querySelector('.ch-body'); const ico=t.querySelector('.ch-fold-ico'); const on = body.classList.toggle('folded'); t.setAttribute('aria-expanded', String(!on)); if(ico) ico.textContent = on?'▸':'▾'; }
     else if(t.hasAttribute('data-page')){ chPage = +t.dataset.page; renderChapters(); }
@@ -8835,6 +8916,13 @@ function validateOutlineOutput(o){
       if(!Array.isArray(act.mustHappen) || act.mustHappen.length < 1) return `${a} 的 mustHappen 至少 1 条`;
     }
   }
+  // 人名硬约束：词典初始人名违规即令大纲重试
+  if(o.glossary && Array.isArray(o.glossary.characters)){
+    for(const c of o.glossary.characters){
+      const v = nmNameRuleViolation(String(c&&c.name||'').trim());
+      if(v) return '人名规范：'+v;
+    }
+  }
   return '';
 }
 
@@ -8975,6 +9063,13 @@ function validateBatchPlanOutput(j){
       if(!['setup','rise','climax','hook'].includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
       if(!String(b.event||'').trim()) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 event`;
       if(!Array.isArray(b.requiredEntities)) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 requiredEntities`;
+    }
+  }
+  // 人名硬约束：规划师播种的词典人名违规即令整批重试
+  if(Array.isArray(j.glossary && j.glossary.characters)){
+    for(const c of j.glossary.characters){
+      const v = nmNameRuleViolation(String(c&&c.name||'').trim());
+      if(v) return '人名规范：'+v;
     }
   }
   return '';
@@ -10861,6 +10956,7 @@ async function genNChapters(start, n){
           delete state.chapters[idx]._qualityIssue;
           state.chapters[idx].content = content;
           if(!isLong()) state.chapters[idx].confirmed = false;
+          delete state._chapterPartial[idx];   // A：校验通过即清流式缓存，避免已完成章残留"可续写"态
           state._chapterRetryFix = '';
           persist();
           // 4.6 Plus（2.4）：每章生成成功后自动更新事实卡
@@ -10936,6 +11032,35 @@ async function continueTruncatedChapter(i, firstPart, resumeFrom){
   const lcp = longestCommonPrefix(tail, second);
   if(lcp.length > 20) second = second.slice(lcp.length).trim();
   return resumeFrom ? (full + '\n' + second) : (firstPart + '\n' + second);
+}
+// A：独立入口「继续生成 / 从中断处继续 / 流式续写」的统一交接封装。
+// 之前这些按钮直接调用 continueTruncatedChapter 却丢弃返回值、不落库、无反馈，导致"点了没反应"。
+// 本封装：读取缓存 → 置生成态 → 续写 → 落库/清缓存/收尾清理，失败保留缓存可再次续写。
+async function continueAndFinalizeChapter(i, sourceNote){
+  const partial = (state._chapterPartial && state._chapterPartial[i]) || '';
+  if(!partial || String(partial).trim().length < 50){ toast('没有可续写的缓存内容'); return; }
+  const _w = countWords(String(partial).trim()).total;
+  chState[i] = 'generating';
+  patchChapter(i);
+  toast(`${sourceNote||'续写'}：已缓存 ${_w.toLocaleString()} 字，开始续写…`);
+  try{
+    const txt = await continueTruncatedChapter(i, '', partial);
+    const content = String(txt||'').trim();
+    if(!content) throw new Error('续写结果为空');
+    delete state._chapterPartial[i];
+    snapshotChapterVersion(i);
+    state.chapters[i].content = content;
+    invalidateChapterMemory(i);
+    chState[i] = 'done';
+    persist(); patchChapter(i); renderNarrativeEngineMenu();
+    toast(`第 ${i+1} 章续写完成（${countWords(content).total.toLocaleString()} 字）`);
+    autoExtractGlossary(); autoUpdateSubplots(); finalizeChapterTitle(i);
+    generateRollingSummaries().catch(()=>{});
+  }catch(e){
+    if(!(e && e.name === 'AbortError')) toast('续写失败：' + ((e&&e.message)||'未知错误'));
+    chState[i] = 'error';
+    patchChapter(i); renderNarrativeEngineMenu();
+  }
 }
 
 // v1.0.121 批量生成多章控件：步进器 + 「批量生成多章」；可用态随剩余章数联动，全写完后禁用并切换文案。
@@ -11687,7 +11812,7 @@ function rebindNarrativeEngine(){
   if(m) m.onclick = (e)=>{
     if(e.target.closest('[data-ne-close]')){ closeNeModal(); return; }
     // 流式续写
-    const resume=e.target.closest('[data-ne-resume]'); if(resume){ const i=+resume.dataset.neResume; closeNeModal(); continueTruncatedChapter(i, '', state._chapterPartial[i]||''); return; }
+    const resume=e.target.closest('[data-ne-resume]'); if(resume){ const i=+resume.dataset.neResume; closeNeModal(); continueAndFinalizeChapter(i, '从中断处继续'); return; }
     const discard=e.target.closest('[data-ne-discard]'); if(discard){ const i=+discard.dataset.neDiscard; delete state._chapterPartial[i]; toast('已丢弃第 '+(i+1)+' 章缓存'); renderResumePanel(); renderNarrativeEngineMenu(); return; }
     // 伏笔看板
     const fsRes=e.target.closest('[data-ne-fs-resolve]'); if(fsRes){ const idx=+fsRes.dataset.neFsResolve; resolveForeshadow(idx, state.chapters.length-1); renderForeshadowLedger(); renderNarrativeEngineMenu(); return; }
