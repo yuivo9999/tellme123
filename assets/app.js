@@ -94,6 +94,7 @@ state._chapterPartial = state._chapterPartial || {};   // 4.8 旗舰版（板块
 state._tensionCurve = state._tensionCurve || [];
 state._personaCards = state._personaCards || {};
 state._styleDNA = state._styleDNA || null;
+state._styleHistory = state._styleHistory || [];   // 风格历史：每次契约/指纹变更留档
 state._branchSandboxes = state._branchSandboxes || [];
 
 /* ---------- 4.8 旗舰版：AI 协作网络状态（第 6 章 6.1） ---------- */
@@ -344,6 +345,7 @@ function projectSnapshot(){
     _tensionCurve: state._tensionCurve || [],   // 4.8 旗舰版（板块三-3）：张力曲线
     _personaCards: state._personaCards || {},   // 4.8 旗舰版（板块三-2）：人设一致性防火墙
     _styleDNA: state._styleDNA || null,   // 4.8 旗舰版（板块三-4）：风格 DNA
+    _styleHistory: Array.isArray(state._styleHistory) ? state._styleHistory : [],   // 风格历史快照
     _branchSandboxes: state._branchSandboxes || [],   // 4.8 旗舰版（板块三-5）：分支沙盘
     scenes: state.scenes,
     storyboard: state.storyboard,
@@ -430,6 +432,7 @@ function applyProject(p){
   state._tensionCurve = Array.isArray(p._tensionCurve) ? p._tensionCurve : [];
   state._personaCards = (p._personaCards && typeof p._personaCards === 'object') ? p._personaCards : {};
   state._styleDNA = (p._styleDNA && typeof p._styleDNA === 'object') ? p._styleDNA : null;
+  state._styleHistory = Array.isArray(p._styleHistory) ? p._styleHistory : [];   // 风格历史恢复
   state._branchSandboxes = Array.isArray(p._branchSandboxes) ? p._branchSandboxes : [];
   normalizeOutline(state.outline);
 }
@@ -456,6 +459,7 @@ function clearState(){
   state._tensionCurve = [];
   state._personaCards = {};
   state._styleDNA = null;
+  state._styleHistory = [];   // 风格历史重置
   state._branchSandboxes = [];
   state._lastCpRaw = '';
   state._lastTitlesRaw = '';
@@ -2248,7 +2252,7 @@ function applyChosenCandidate(c, opts){
   st2.tags = d2.tags.slice(); st2.intensity = d2.intensity||2;
   // 4.5：配方 styleContract 保存到 state.styleContract（正文生成时 buildChapterUser 在 L0 注入）
   const sc = validateStyleContract(c.styleContract);
-  if(sc){ state.styleContract = sc; }
+  if(sc){ state.styleContract = sc; pushStyleHistory('配方选用：「'+stored.name+'」'); }
   persist();
   wsDraft = null;                                 // 草稿与生效合一 -> 卡片显示「✔已生效」
   if(!opts || opts.render !== false) aiRp = null;
@@ -5253,6 +5257,7 @@ function styleContractCardHtml(){
     <div class="sc-head" data-sc-fold role="button" tabindex="0" title="展开/收起">
       <h3 style="margin:0">🎨 风格契约</h3>
       <span class="pill ${sc?'tag-ok':'tag-warn'}">${sc?'已生效':'未设定'}</span>
+      <button type="button" class="btn small ghost" data-sc-hist style="margin-left:auto" ${(state._styleHistory||[]).length?'':'disabled'} title="查看风格契约 / 风格指纹变更历史（每次确认、提取、设定、清除自动留档）">🕘 历史</button>
       <span class="sc-fold-ico">${state.scCollapsed?'▸':'▾'}</span>
     </div>
     <div class="sc-body" ${state.scCollapsed?'hidden':''}>
@@ -5291,16 +5296,18 @@ function bindStyleContractCard(){
     const body = $('.sc-body'); if(body) body.hidden = state.scCollapsed;
     const ico = head.querySelector('.sc-fold-ico'); if(ico) ico.textContent = state.scCollapsed?'▸':'▾';
   };
+  const hist = $('[data-sc-hist]');
+  if(hist) hist.onclick = (e)=>{ e.stopPropagation(); e.preventDefault(); openStyleHistoryPanel(); };
   const ext = $('[data-sc-extract]');
   if(ext) ext.onclick = ()=>{
     const fp = buildStyleFingerprintFromConfirmed();
     if(!fp){ toast('没有已确认风格的章节，无法提取'); return; }
-    state.styleContract = fp; persist(); render(); toast('已从确认章节提取风格契约');
+    state.styleContract = fp; pushStyleHistory('从确认章节提取风格契约'); persist(); render(); toast('已从确认章节提取风格契约');
   };
   const clr = $('[data-sc-clear]');
   if(clr) clr.onclick = ()=>{
     if(!confirm('清除风格契约后，正文 AI 不再受量化约束，是否继续？')) return;
-    state.styleContract = null; persist(); render(); toast('已清除风格契约');
+    state.styleContract = null; pushStyleHistory('清除风格契约'); persist(); render(); toast('已清除风格契约');
   };
 }
 
@@ -10064,6 +10071,7 @@ async function extractStyleDNA(text){
     };
     const exemplars = (Array.isArray(j.exemplars)?j.exemplars:[]).map(s=>String(s).trim()).filter(Boolean).slice(0,5);
     state._styleDNA = { fingerprint: fp, exemplars };
+    pushStyleHistory('风格指纹提取');
     persist();
     return state._styleDNA;
   }catch(e){ return null; }
@@ -10072,11 +10080,63 @@ async function extractStyleDNA(text){
 function confirmChapterStyle(i){
   const c = state.chapters[i]; if(!c) return;
   c._styleConfirmed = true;
-  // 4.8 旗舰版（板块三-4）：确认风格时自动提取风格 DNA（静默）
+  // 即时按下反馈：先把按钮切到「确认中…」，杜绝「按了没反应」的观感
+  const btn = document.querySelector(`[data-style-ok="${i}"]`);
+  if(btn){ btn.textContent = '🎨 确认中…'; btn.disabled = true; }
   extractStyleDNA(c.content).then(()=>{
-    persist(); patchChapter(i);
+    pushStyleHistory('章节确认风格：第'+(i+1)+'章');
+    persist(); render();   // 强制全量渲染：按钮→「风格已确认」，风格契约卡「从已确认章节提取」同步亮起
     toast(`第 ${i+1} 章风格已确认：后续生成将自动提取风格指纹作为 L0 契约`);
+  }).catch(()=>{
+    pushStyleHistory('章节确认风格：第'+(i+1)+'章（指纹提取失败）');
+    persist(); render();
+    toast(`第 ${i+1} 章风格已确认（指纹提取失败，仍作为 L0 来源）`);
   });
+}
+
+// 风格历史：每次风格契约 / 风格指纹变更时留档快照（时间戳 + 触发来源 + 生效快照）
+function pushStyleHistory(label, detail){
+  state._styleHistory = state._styleHistory || [];
+  state._styleHistory.push({
+    ts: Date.now(),
+    label: String(label || '风格变更'),
+    detail: detail || null,
+    styleContract: state.styleContract ? JSON.parse(JSON.stringify(state.styleContract)) : null,
+    styleDNA: state._styleDNA ? JSON.parse(JSON.stringify(state._styleDNA)) : null
+  });
+  if(state._styleHistory.length > 30) state._styleHistory = state._styleHistory.slice(-30);
+}
+
+function openStyleHistoryPanel(){
+  const hist = state._styleHistory || [];
+  if(!hist.length){ toast('暂无风格历史'); return; }
+  const rows = hist.slice().reverse().map((h, ri)=>{
+    const ridx = hist.length - 1 - ri;
+    const sc = h.styleContract;
+    const dna = h.styleDNA;
+    const meta = [];
+    if(sc) meta.push(`契约 · 句长${sc.sentenceAvg} / 对话${Math.round((sc.dialogueRatio||0)*100)}% / 禁用词${(sc.forbiddenPhrases||[]).length||0} / 转场${(sc.preferredTransitions||[]).length||0}`);
+    if(dna && dna.fingerprint) meta.push(`指纹 · 句长${dna.fingerprint.sentenceAvg} / 对话${Math.round((dna.fingerprint.dialogueRatio||0)*100)}%`);
+    if(h.detail) meta.push(h.detail);
+    return `<div class="hist-item" style="padding:10px;border:1px solid var(--line);border-radius:10px;margin-bottom:8px;background:var(--panel)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><b>${esc(h.label)}</b><span class="muted" style="font-size:11px">${fmtTs(h.ts)}</span></div>
+      <div class="muted" style="font-size:12px;margin-top:4px">${meta.join('<br>') || '<span>无量化字段</span>'}</div>
+      <button type="button" class="btn small ghost" data-sthist-snap="${ridx}" style="margin-top:6px">📥 应用到当前</button>
+    </div>`;
+  }).join('');
+  openNeModal('🎨 风格历史', `<div class="hist-list">${rows}</div><p class="hint">每次「确认风格 / 提取指纹 / 设定契约 / 清除」都会自动留档。「应用到当前」会把该版契约与指纹覆盖为当前生效值（覆盖前会先把当前值自动留档）。</p>`);
+  setTimeout(()=>{
+    document.querySelectorAll('[data-sthist-snap]').forEach(b=>{
+      b.onclick = ()=>{
+        const h = state._styleHistory && state._styleHistory[+b.dataset.sthistSnap];
+        if(!h) return;
+        pushStyleHistory('恢复历史：'+h.label);
+        if(h.styleContract) state.styleContract = JSON.parse(JSON.stringify(h.styleContract));
+        if(h.styleDNA) state._styleDNA = JSON.parse(JSON.stringify(h.styleDNA));
+        persist(); closeNeModal(); render(); toast('已应用历史版风格');
+      };
+    });
+  }, 0);
 }
 
 // 4.5 风格指纹提取：从已确认章节自动提取风格契约（句长/对话比/禁用词/转场词）
@@ -11753,7 +11813,7 @@ function renderStyleDnaPanel(){
       if(text.length<50){ toast('范文太短，建议至少 50 字'); return; }
       extractStyleDNA(text).then(()=>{ toast('风格指纹已提取'); renderStyleDnaPanel(); renderNarrativeEngineMenu(); }).catch(e=>toast('提取失败：'+e.message));
     };
-    const clear=$('#neBtnClearStyle'); if(clear) clear.onclick=()=>{ state._styleDNA=null; toast('已清除风格 DNA'); renderStyleDnaPanel(); renderNarrativeEngineMenu(); };
+    const clear=$('#neBtnClearStyle'); if(clear) clear.onclick=()=>{ state._styleDNA=null; pushStyleHistory('清除风格 DNA'); toast('已清除风格 DNA'); renderStyleDnaPanel(); renderNarrativeEngineMenu(); };
   },0);
 }
 
