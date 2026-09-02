@@ -2664,6 +2664,8 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 {
   "title": "小说名（≤12字，有记忆点，不套路）",
   "logline": "小说简介：必须包含 题材+主角+核心冲突+深层命题，控制在【简介字数约束】区间内",
+  "anchor": "核心一句话定位：题材+主角+核心冲突，≤50字",
+  "thesis": "深层主题命题，≤80字，点出作品要探讨的核心主题/情感内核",
   "structure": {
     "mainLine": "全书唯一主线/核心走向（必有，≤60字）",
     "subLines": ["副线1（有才填）", "副线2（有才填）"],
@@ -2675,8 +2677,7 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
     }
   },
   "genreTags": ["题材标签1", "题材标签2"],
-  "tone": "整体情绪基调",
-  "navBeacon": "用一句话概括：题材+主角+核心冲突+目标读者体验（≤50字）"
+  "tone": "整体情绪基调"
 }
 
 【硬性约束】
@@ -2685,7 +2686,7 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 3. structure.mainLine 必填；subLines / hiddenLine / pivotPlan 有才填、无则空字符串或空数组，绝不硬造。
 4. structure.chapterPlan 必须覆盖全书每一章（当前为用户提示中给定的 N 章），一章不落；维度名按主题/起承转合/人物线自由拟定。
 5. genreTags 只能出现 2-4 个，且必须与 logline 一致。
-6. navBeacon 将作为后续所有 AI 的导航灯塔，必须稳定、不剧透结局。
+6. anchor 必须包含 题材+主角+核心冲突 三要素，≤50字；thesis 必须点出作品的核心主题/情感内核，≤80字；二者均不得为空。
 7. 只输出上述 JSON，不要 markdown 代码块、不要解释。
 
 【输出示例】
@@ -2704,7 +2705,8 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
   },
   "genreTags": ["悬疑", "女性视角", "冷峻克制"],
   "tone": "冷峻、压抑、结尾沉重",
-  "navBeacon": "冷峻悬疑：退休法医为救女儿追查三十年旧案，揭开小城权力与亲情的双重谎言。"
+  "anchor": "冷峻悬疑：退休法医为救女儿追查三十年旧案，揭开小城权力与亲情的双重谎言。",
+  "thesis": "面对体制性遗忘与亲情创伤，个人如何在执念中完成自我救赎。"
 }`;
 
 // 4.7 Pro（第7章指令2）：新常量用旧名——buildOutlineSys 等既有引用点自动升级为 PRO 提示词
@@ -3523,7 +3525,7 @@ const TENSION_SCORE_SYS = `你是一位长篇小说「张力评估师」。
 - delta_vs_prev：与上一章相比本章张力变化（-10 到 +10，正数表示提升）。
 
 【硬性约束】
-1. 只输出 JSON 数字，不要解释、不要 markdown 代码块。
+1. 只输出上述 JSON 对象（external/internal/mystery/delta_vs_prev 四个数字字段），不要解释、不要 markdown 代码块、不要输出裸数字。
 2. 分数必须为 0-10 整数（delta_vs_prev 为 -10 到 +10 整数）。`;
 
 // 4.8 旗舰版（板块三-2）：人设一致性防火墙。对照人物卡逐条核对本章正文，找出年龄/外貌/性格/口癖等矛盾。
@@ -8762,6 +8764,18 @@ async function genOutline(){
       applyV45ToOutline(o, state.pendingV45);
       state.pendingV45 = null;
     }
+    // 4.10 修复：大纲 AI 已不再输出 navBeacon（确认：大纲需要 anchor/thesis，不需要 navBeacon）。
+    // 但 navBeacon 仍被 AIBus/规划师/沙盘等下游消费，这里用优化构想简报 _lastPolishBrief 回填，保住「导航灯塔」上下文；
+    // 若已通过「导入设定」带入 navBeacon 或已存在，则不覆盖。
+    if(!o.navBeacon && state._lastPolishBrief){
+      const _b = state._lastPolishBrief;
+      o.navBeacon = {
+        genre: String(_b.genre||'').trim(),
+        protagonist: String(_b.protagonist||'').trim(),
+        coreConflict: String(_b.coreConflict||'').trim(),
+        tone: String(_b.style||'').trim()
+      };
+    }
     o.userIdea = state.idea;
     if(!Array.isArray(o.chapterPlans)) o.chapterPlans = [];
     // 如果 chapters 已重建，同步 state.chapters
@@ -11605,6 +11619,8 @@ function rebindNarrativeEngine(){
     else if(panel==='style') renderStyleDnaPanel();
     else if(panel==='sandbox') renderBranchSandbox();
     else if(panel==='sandboxHistory') renderSandboxHistory();
+    // 交互优化：选择某一项后收起抽屉（子面板经 openNeModal 弹窗接管后续交互，抽屉不再需要）
+    closeNarrativeEngine();
   };
   const m=$('#neModal');
   if(m) m.onclick = (e)=>{
