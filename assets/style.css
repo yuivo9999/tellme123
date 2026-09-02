@@ -758,6 +758,24 @@ body.reader-lock{overflow:hidden}
 /* 梗概流式预览 */
 .cp-stream-preview{background:#0d0d0d;color:#e0e0e0;font-size:12px;line-height:1.6;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,.1);margin:0 0 8px;max-height:400px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 
+/* v1.0.134 规划师五段工具栏（阶段按钮 + 一键五步） */
+.cp-stagebar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center}
+.cp-stage{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:rgba(255,255,255,.85);font-size:11.5px;line-height:1.4;cursor:pointer;transition:all .2s;font-family:inherit}
+.cp-stage .cp-dot{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;font-size:10px;line-height:1;font-style:normal}
+.cp-stage:hover{background:rgba(255,255,255,.14)}
+.cp-stage.done{border-color:rgba(74,222,128,.45);background:rgba(34,197,94,.14);color:#86efac}
+.cp-stage.done .cp-dot{background:rgba(34,197,94,.25);color:#4ade80}
+.cp-stage.undone .cp-dot{background:rgba(239,68,68,.2);color:#f87171}
+.cp-stage.fail{border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.15);color:#fca5a5}
+.cp-stage.fail .cp-dot{background:rgba(239,68,68,.28);color:#f87171}
+.cp-stage.running{border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.12);color:#fcd34d}
+.cp-stage.running .cp-dot{background:transparent}
+.cp-stage:disabled{opacity:.8;cursor:wait}
+.cp-stage-all{display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:8px;border:none;background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);color:#fff;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(245,158,11,.35);transition:all .2s;font-family:inherit}
+.cp-stage-all:hover{background:linear-gradient(135deg,#fbbf24 0%,#f59e0b 100%)}
+.cp-stage-all.running{opacity:.7;cursor:wait}
+.cp-stage-hint{font-size:10.5px;color:rgba(255,255,255,.4);margin:-2px 0 8px}
+
 /* v10.14 章节标题管理块 */
 .ct-block{margin:10px 0 14px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:color-mix(in srgb, var(--accent2) 6%, var(--panel2))}
 /* v10.53 章节标题块折叠：默认折叠，仅保留标题行 */
@@ -985,9 +1003,6 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .ws-card .ws-head .ws-manage-btn:hover{background:rgba(255,255,255,.34);color:#fff !important}
 .ws-card .ws-head .sc-fold-ico{color:#fff !important;opacity:.9}
 .ws-fold-tools{display:flex;gap:8px;margin:2px 0 8px;flex-wrap:wrap}
-.ws-lang-layer{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:8px;padding:6px 10px;margin:0 0 8px}
-.ws-lang-layer b{font-size:12.5px}
-.ws-lang-layer .muted{color:rgba(255,255,255,.5)}
 .ws-group{margin-bottom:10px}
 .ws-group-t{font-size:11.5px;font-weight:700;color:rgba(255,255,255,.52);margin-bottom:6px;letter-spacing:.3px}
 /* v10.19 写作风格三组区块配色（[data-cs=方案id] 由顶栏「🎨 颜色」选择，默认无色） */
@@ -1244,7 +1259,7 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .rp-ov-toggle{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin:6px 0}
 .rp-ov-opt{flex:1;text-align:center;padding:7px 6px;font-size:12.5px;cursor:pointer;background:var(--panel2);color:var(--sub);transition:all .15s;user-select:none;font-family:inherit}
 .rp-ov-opt.active{background:var(--accent);color:#fff;font-weight:600}
-.rp-ov-opt:not(.active):hover{background:var(--line);color:var(--txt)};flex:0 0 auto;margin-top:2px}
+.rp-ov-opt:not(.active):hover{background:var(--line);color:var(--txt)}
 .rp-style-sub{margin-top:8px;border-top:1px dashed var(--line);padding-top:8px}
 .rp-style-sub .rp-style-label:first-child{margin-top:0}
 .rp-style-body .ws-group:first-child .ws-group-t{margin-top:0}
