@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.135';   // v1.0.135 落地打包：补齐 vendor 依赖（nouislider/tom-select/jszip）与主题资源，五段规划师+禁则清单+阅读界面优化完整交付
+const APP_VERSION = '1.0.136';   // v1.0.136 设置新增「API Key 放请求体(api_key)」开关，规避 Authorization: Bearer，适配要求 body 传 Key 的 Cloudflare 中转
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / finalizeChapterTitle 等 fire-and-forget 异步任务
@@ -218,6 +218,7 @@ function normalizeCfg(cfg){
   cfg.groups.forEach((gr,i)=>{
     gr.kind = gr.kind || 'openai';
     gr.baseUrl = gr.baseUrl || '';
+    gr.keyInBody = !!gr.keyInBody;   // v1.0.136 Key 传递方式：true=放入请求体 api_key 字段（规避 Authorization: Bearer）
     gr.keys = (gr.keys||[]).map((k,j)=>({id: k.id||uid('k'), label: k.label||('账号'+(j+1)), key: k.key||''}));
     gr.models = (gr.models && gr.models.length) ? gr.models : defaultModels();
   });
@@ -251,6 +252,7 @@ function resolveActiveSpec(){
     keyId: key.id, keyLabel: key.label,
     baseUrl: (group.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, ''),
     apiKey: key.key || '',
+    keyInBody: !!group.keyInBody,   // v1.0.136 传递方式：请求体 api_key（规避 Bearer 头）
     model: model.name || 'deepseek-v4-pro',
     temperature: (cfg.temperature==null ? 0.7 : cfg.temperature),
     outlineTemp: (cfg.outlineTemp==null ? 0.7 : cfg.outlineTemp),   // v10.8 分任务温度：大纲
@@ -804,12 +806,14 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
       };
       // 缓存友好：请求的前缀（system + user 恒定首部）在全书各章保持不变，
       // DeepSeek 自动命中上下文缓存，命中价远低于未命中价；可变信息一律放 user 最末。
+      if(s.keyInBody) body.api_key = s.apiKey;   // v1.0.136 中转规避：Key 放请求体（api_key）而不放 Authorization 头
       if(maxTokens && maxTokens>0) body.max_tokens = maxTokens;
       // 4.5 P0：默认超时 180 秒，可被传入的 signal 覆盖
       const finalSignal = signal || AbortSignal.timeout(180000);
       let res;
       try{
-        const hdrs = {'Content-Type':'application/json','Authorization':'Bearer '+s.apiKey};
+        const hdrs = {'Content-Type':'application/json'};
+        if(!s.keyInBody) hdrs['Authorization'] = 'Bearer '+s.apiKey;   // keyInBody 时不发 Bearer 头，规避中转拦截
         if(streaming){ hdrs['Accept'] = 'text/event-stream'; hdrs['Cache-Control'] = 'no-cache'; }
         res = await fetch(url, {
           method:'POST',
@@ -12914,6 +12918,9 @@ function renderGroupDetail(){
     <label class="field"><span>接口地址（OpenAI 兼容协议）</span>
       <input class="g-base" type="text" value="${esc(g.baseUrl)}" placeholder="https://api.deepseek.com">
     </label>
+    <label class="mini-check g-kib" title="部分 Cloudflare 中转不读 Authorization 头，要求把 Key 放进请求体 api_key 字段。开启后请求将不再携带 Bearer 头。">
+      <input type="checkbox" class="g-kib-cb" ${g.keyInBody?'checked':''}> API Key 放请求体（api_key）传递，规避 Bearer 头
+    </label>
     <div class="gd-title">账号（API Key 仅存本机，多账号=多卡分流）</div>
     ${g.keys.length ? g.keys.map((k,i)=>`
       <div class="key-row">
@@ -12954,6 +12961,7 @@ function renderGroupDetail(){
     };
   });
   const base = el.querySelector('.g-base'); if(base) base.onchange=(ev)=>{ const gg=_dg(); gg.baseUrl = ev.target.value.trim(); };
+  const kib = el.querySelector('.g-kib-cb'); if(kib) kib.onchange=(ev)=>{ const gg=_dg(); gg.keyInBody = ev.target.checked; };  // v1.0.136
 }
 function onDetail(ev){
   const b = ev.target && ev.target.closest('[data-act]'); if(!b) return;
@@ -12985,7 +12993,7 @@ function addGroup(){
   if(label==null) return;
   if(!label.trim()){ toast('名称为空，未添加'); return; }
   const base=prompt('接口地址（OpenAI 兼容，如 https://api.deepseek.com）：','');
-  const g={ id:uid('g'), kind:'openai', label:label.trim(), baseUrl:(base||'').trim(), keys:[], models:defaultModels() };
+  const g={ id:uid('g'), kind:'openai', label:label.trim(), baseUrl:(base||'').trim(), keys:[], models:defaultModels(), keyInBody:false };
   editCfg.groups.push(g); selGroupId=g.id; refreshAfter();
 }
 
