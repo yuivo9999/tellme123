@@ -8,7 +8,7 @@
 <title>影视前期提示词生成器</title>
 <meta name="app-version" content="1.0.136">
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="assets/style.css?v=149">
+<link rel="stylesheet" href="assets/style.css?v=150">
 <link rel="stylesheet" href="assets/vendor/nouislider/nouislider.min.css">
   <link rel="stylesheet" href="assets/vendor/tom-select/tom-select.css">
 <link rel="stylesheet" href="assets/theme-light.css?v=3">
@@ -188,12 +188,36 @@
       </div>
       <p class="hint">API Key 仅存本机浏览器，不会上传任何第三方；生成时只使用上方所选的账号与模型，避免多个 AI 并发导致费用激增。</p>
 
+      <!-- v227 使用不同AI：分任务模型入口（二级面板） -->
+      <div class="set-block">
+        <div class="set-block-head"><span>各任务使用不同模型</span></div>
+        <p class="hint" style="margin:0 0 8px">默认全部跟随上方「当前生成使用」；可进入二级面板为正文/大纲/词典提取等任务单独指定模型（如轻维护任务用 flash 省钱）。仍是单出口串行请求，绝不并发烧钱。</p>
+        <button id="btnTaskModels" class="btn ghost" type="button">🎯 分任务模型设置 · <span id="tmBadge">全部跟随全局</span> →</button>
+      </div>
+
       <div class="modal-actions">
         <button id="btnCfgTest" class="btn ghost">测试连接</button>
         <button id="btnCfgSave" class="btn primary">保存</button>
       </div>
       <p id="cfgStatus" class="status"></p>
     </div>
+  </div>
+</div>
+
+<!-- v227 使用不同AI：分任务模型二级面板（行内容由 JS 渲染） -->
+<div id="taskModelModal" class="modal hidden">
+  <div class="modal-mask" data-tm-close></div>
+  <div class="modal-panel">
+    <div class="modal-head">
+      <h3>🎯 分任务模型</h3>
+      <button class="icon-btn" data-tm-close>✕</button>
+    </div>
+    <div class="modal-body" id="tmBody"></div>
+    <div class="modal-actions">
+      <button id="btnTmReset" class="btn ghost hidden" type="button">全部恢复跟随全局</button>
+      <button id="btnTmSave" class="btn primary" type="button">保存</button>
+    </div>
+    <p id="tmStatus" class="status"></p>
   </div>
 </div>
 
@@ -250,6 +274,6 @@
   <script src="assets/vendor/tom-select/tom-select.complete.min.js"></script>
 <script src="assets/vendor/jszip.min.js"></script>
 <script src="assets/idb.js?v=4"></script>
-  <script src="assets/app.js?v=226"></script>
+  <script src="assets/app.js?v=227"></script>
   </body>
 </html>
