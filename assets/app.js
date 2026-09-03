@@ -2185,7 +2185,7 @@ function refreshAdvHistBadge(kind){
 // v11 给 AI 配方助手注入本作书名/简介，让候选配方贴合本小说；无大纲时仅提示先生成。
 // 4.7 Pro（3.6 原码）：资深风格工程师 + 写作配方设计师（输出可量化 styleContract）
 const AI_RECIPE_SYS_PRO = `你是一位资深长篇小说「风格工程师」，同时为「写作配方设计师」。
-【核心任务】根据用户描述或上传的主线简述，设计 2~5 个可直接落地的组合配方，并为每个配方输出可量化的「风格契约」。
+【核心任务】根据用户描述或上传的主线简述，设计 2~6 个可直接落地的组合配方，并为每个配方输出可量化的「风格契约」。
 
 【必须输出的 JSON 结构】
 [
@@ -2210,7 +2210,7 @@ const AI_RECIPE_SYS_PRO = `你是一位资深长篇小说「风格工程师」�
 ]
 
 【硬性约束】
-1. tags 只能使用现有词库 id，禁止自造；缺口放入 gap。
+1. tags 只能使用现有词库 id；现有词库是基础参照、不是天花板：当现有词条无法覆盖用户诉求时，必须主动设计 1~3 个新词条放入 gap 补位（这是加分项，不是违规，大胆创造）。
 2. styleContract 必填：sentenceAvg（平均句长，12-60 整数）、sentenceTolerance（0.1-0.5）、dialogueRatio（0-1）、dialogueTolerance（0.05-0.2）、forbiddenPhrases（数组）、preferredTransitions（数组）、rhythmNote（字符串）。
 3. gap 为 null 表示现有词库足够；gap 非空时每个新词条必须五维齐全（note/tips/avoid/check/demo），缺一作废。
 4. 不同候选用词尽量不同、风格拉开差异。
@@ -2226,7 +2226,7 @@ function aiRecipeUser(extra){
 }
 function aiRecipePrompt(userDesc){
   const lib = writeStyleLib();
-  const spec = lib.map(s=> `- ${s.id}：${s.name}（${s.cat||'custom'}）`).join('\n');
+  const spec = lib.map(s=> `- ${s.id}：${s.name}（${s.cat||'custom'}）｜${String(s.note||'').slice(0,60)}`).join('\n');   // v228/P4：注入 note 摘要，AI 不再"只见名字不见味道"
   // 4.7 Pro（3.6）：system 换 AI_RECIPE_SYS_PRO + 现有词库 id/name/cat
   return { system: AI_RECIPE_SYS_PRO + '\n\n【现有词库 id/name/cat】：\n' + spec, user: aiRecipeUser(userDesc) };
 }
@@ -2234,10 +2234,10 @@ function aiRecipePrompt(userDesc){
 // 4.7 Pro（3.6）：同步换 PRO system（保留「完整通读主线简述」语境前缀）
 function aiPromptFromOutline(text){
   const lib = writeStyleLib();
-  const spec = lib.map(s=> `- ${s.id}：${s.name}（${s.cat||'custom'}）`).join('\n');
+  const spec = lib.map(s=> `- ${s.id}：${s.name}（${s.cat||'custom'}）｜${String(s.note||'').slice(0,60)}`).join('\n');   // v228/P4：注入 note 摘要，AI 不再"只见名字不见味道"
   return { system:
     '你是资深长篇小说「风格工程师」。用户上传的是一部小说的【主线简述】TXT（非正文）。\n' +
-    '请你【完整通读】这份梗概，判断该小说的文风、叙事节奏、对白与情绪质感，再为"想模仿这部小说写作"的用户设计 2~5 个可直接落地的组合配方。\n\n' +
+    '请你【完整通读】这份梗概，判断该小说的文风、叙事节奏、对白与情绪质感，再为"想模仿这部小说写作"的用户设计 2~6 个可直接落地的组合配方。\n\n' +
     AI_RECIPE_SYS_PRO + '\n\n【现有词库 id/name/cat】：\n' + spec,
     user: aiRecipeUser(text) };
 }
@@ -2271,7 +2271,7 @@ function aiRecipeCard(){
 function aiRecipeResultHtml(lib){
   if(aiRp && aiRp.err) return `<p class="muted" style="color:var(--danger);margin:8px 0 0">⚠️ ${esc(aiRp.err)}</p>`;
   if(!aiRp || !Array.isArray(aiRp.list) || !aiRp.list.length){
-    return `<p class="muted" style="margin:8px 0 0">${ aiSource==='outline' ? '📤 已读取主线简述，可点「✨」从描述入口，或重新上传后 AI 再次通读。' : '👆 输入描述后点「✨ 生成配方」，AI 将给出 2~5 个组合配方；含词条缺口时会附建议新词条，可自行决定是否加入词库。' }</p>`;
+    return `<p class="muted" style="margin:8px 0 0">${ aiSource==='outline' ? '📤 已读取主线简述，可点「✨」从描述入口，或重新上传后 AI 再次通读。' : '👆 输入描述后点「✨ 生成配方」，AI 将给出 2~6 个组合配方；词库覆盖不了时会附建议新词条（鼓励创造），可自行决定是否加入词库。' }</p>`;
   }
   // libIds 更新（可能已入库缺口词条）
   const libIds = (lib||writeStyleLib()).map(s=>s.id);
@@ -2329,6 +2329,11 @@ function prepRecipeList(list){
       const cl = validateStyleContract(c.styleContract);
       c._scCleaned = cl;
       c._scValid = !!cl;
+      // v228/P4：新词条（gap）五维齐全度标注——true=齐全 / false=有缺维；仅标注供候选卡提示，不强制丢弃（宁松勿误伤）
+      c._gapOk = !(Array.isArray(c.gap) ? c.gap : []).some(n =>
+        !n || !String(n.note||'').trim() || !(Array.isArray(n.tips) && n.tips.length) ||
+        !(Array.isArray(n.avoid) && n.avoid.length) || !(Array.isArray(n.check) && n.check.length) ||
+        !String(n.demo||'').trim());
     }
   });
   return list;
@@ -2336,7 +2341,9 @@ function prepRecipeList(list){
 // C①：候选卡上的风格契约状态徽标（旧快照无 _scValid 时现场计算）
 function recipeScBadge(c){
   const v = !!(c && (c._scValid !== undefined ? c._scValid : !!validateStyleContract(c.styleContract)));
-  return `<span class="ai-recipe-sc ${v?'ok':'bad'}" title="带可量化的风格契约（正文按 L0 约束执行）">${v?'✓ 风格契约':'风格契约不足'}</span>`;
+  // v228/P4：新词条缺维提示（复用现有徽标样式，无 CSS 改动）
+  const gb = (c && c._gapOk === false) ? `<span class="ai-recipe-sc bad" title="建议的新词条缺少 note/tips/avoid/check/demo 中的维度，入典前请补全">⚠ 词条缺维</span>` : '';
+  return gb + `<span class="ai-recipe-sc ${v?'ok':'bad'}" title="带可量化的风格契约（正文按 L0 约束执行）">${v?'✓ 风格契约':'风格契约不足'}</span>`;
 }
 // D2：生成并预校验候选配方；若无任一候选带合格风格契约（强制必备），自动附修正指令重试 1 次。
 async function aiRecipeProduce(system, user){
@@ -2349,6 +2356,7 @@ async function aiRecipeProduce(system, user){
 - forbiddenPhrases：禁用词，至少 3 条；
 - preferredTransitions：偏好转场，至少 3 条；
 - rhythmNote：节奏说明字符串。
+- 含新词条（gap 非空）的配方：每个新词条必须五维齐全——note（一句话定位）、tips（≥2 条）、avoid（≥1 条）、check（≥1 条）、demo（示例句）。
 请务必为每个候选给全、给对上述字段。`;
   let list = null;
   for(let attempt=1; attempt<=2; attempt++){
@@ -2913,7 +2921,8 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 4. structure.chapterPlan 必须覆盖全书每一章（当前为用户提示中给定的 N 章），一章不落；维度名按主题/起承转合/人物线自由拟定。
 5. genreTags 只能出现 2-4 个，且必须与 logline 一致。
 6. anchor 必须包含 题材+主角+核心冲突 三要素，≤50字；thesis 必须点出作品的核心主题/情感内核，≤80字；二者均不得为空。
-7. 只输出上述 JSON，不要 markdown 代码块、不要解释。
+7. 忠实度硬约束：用户构想中出现的专名、称谓、设定、意象与关键情节点，必须在输出中原样保留；不得替换、改名或省略；如需调整须以用户原文为基准做增量扩展。
+8. 只输出上述 JSON，不要 markdown 代码块、不要解释。
 
 【输出示例】
 {
@@ -3202,7 +3211,8 @@ const PLANNER_BEATS_SYS = `你是一位资深长篇「节拍设计师」。请�
 2. 每章 beats 必须恰好 4 段，type 严格为 setup / rise / climax / hook，顺序不可变。
 3. 节拍事件必须从该章主线简述推导，不得偏离主线、不得自创剧情。
 4. requiredEntities 与 foreshadowing 只能使用设定词典中已有人名/地名/专名，禁止自造新名。
-5. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
+5. 精简输出（提速）：每段 beat 的 event 只写一句话（≤40 字），不得展开描写；每段 requiredEntities 至多 2 个；emotional ≤6 字。
+6. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
 
 // ④ 万物词典：产出初期词典种子，合并进权威词典（同名以现有为准）。
 const PLANNER_GLOSSARY_SYS = `你是一位长篇「设定词典构建师」。请基于全书结构骨架、全部章节主线简述与标题，产出作品初期万物词典。
@@ -3281,7 +3291,7 @@ function validateStripLen(text, target){
 // 4.5 已有 validatePolishOutput（返回字符串约定），此处指向它；其余按 4.7 Pro 各节新增的 validator。
 const AIValidators = {
   idea: validateIdeaProOutput,   // 4.8 适配：兼容 4.7 Pro 的 {diagnosis,brief,advice} 结构与 4.5 的 optimizedIdea 结构
-  outline: validateOutlineOutput,
+  outline: validateOutlineFaithful,   // v228/P3：结构 + 忠实度双闸（未保留用户构想核心词将被打回修复队列）
   titles: validateTitleOutput,
   chapterPlan: validateChapterPlanOutput,
   chapter: validateChapterContent,  // 4.5 已有
@@ -4580,7 +4590,8 @@ function openSubplotBoard(){
   const subs = (Array.isArray(g.subplots)?g.subplots:[]).filter(Boolean);
   if(!subs.length){ toast('暂无副线'); return; }
   const full = (state.outline&&state.outline.chapters||[]).length || 1;
-  const cur = (state.outline&&state.outline.chapters||[]).length;
+  // v228/P1：cur = 最新已生成正文的章号（0 = 尚未写任何章），不再拿规划总章数冒充当前进度
+  const cur = Math.max(0, ...(state.chapters||[]).map((c,i)=> (c && c.content && String(c.content).trim()) ? i+1 : 0));
   const ratio = Number.isFinite(state.subRecallRatio) ? state.subRecallRatio : 0.4;
   const rows = subs.map((s,i)=>{
     const nm = String(s.name||'').trim() || '（未命名）';
@@ -4594,7 +4605,7 @@ function openSubplotBoard(){
     const rowCls = closed ? 'sb-closed' : (lost ? 'sb-lost' : '');
     return `<div class="sb-row ${rowCls}">
       <div class="sb-head"><b>${esc(nm)}</b><span class="sb-status">${statusTxt}</span></div>
-      <div class="sb-meta">${q?`问：${esc(q)}`:''}${lost?` · 已消失约 ${gap} 章（超全书 ${Math.round(ratio*100)}%）`:''}</div>
+      <div class="sb-meta">${q?`问：${esc(q)}`:''}${lost?` · 距最新已生成章（第 ${cur} 章）已缺席 ${gap} 章（超全书 ${Math.round(ratio*100)}%）`:''}</div>
       <div class="sb-meta muted">${closed ? '已闭合，无需回归' : (lost ? '建议在后续章节安排一次回归并轻提前情' : '尚未收束，可继续自然推进')}</div>
     </div>`;
   }).join('');
@@ -6106,7 +6117,7 @@ function bindRollingSummaryCard(){
   const gen = $('[data-rs-gen]');
   if(gen) gen.onclick = async ()=>{
     busy(gen, true, '生成中…');
-    try{ await generateRollingSummaries(); render(); toast('滚动摘要已补齐'); }
+    try{ await ensureChapterDigests(); await generateRollingSummaries(); render(); toast('滚动摘要已补齐'); }
     catch(e){ toast('摘要生成失败：'+e.message); }
     finally{ busy(gen, false); }
   };
@@ -7330,7 +7341,7 @@ function glossaryCardHtml(){
       </h3>
     </div>
     <div class="gs-card-body"${collapsed?' style="display:none"':''}>
-    <p class="sub">词典</p>
+    <p class="sub">有改则改</p>
     <div class="gs-panel" id="gsHistory" hidden><div class="gs-panel-title">🕘 历史更改</div><div id="gsHistoryList"></div></div>
     ${(['char','place','proper','sub']).map(t=>{
       const fold = !!(state.gsCatFold && state.gsCatFold[t]);
@@ -9279,6 +9290,15 @@ function validateOutlineOutput(o){
   return '';
 }
 
+// v228/P3：大纲忠实度闸——先过结构校验，再校验是否保留用户构想核心词（复用 v225/P6 的 validateIdeaFaithful；
+// ctx 由 AIBus.get('outline') 提供，base 含 idea=state.idea）。返回 ''=通过，非空=不忠实原因，经 validateAIOutput
+// 字符串约定归一化后自动走 genOutline 的修复队列重试链，零新增管道。
+function validateOutlineFaithful(j, ctx){
+  const err = validateOutlineOutput(j);
+  if(err) return err;
+  return validateIdeaFaithful(j, (ctx && (ctx.idea || ctx.rawIdea)) || '');
+}
+
 // v10.18 主线简述生成（4.5 改造：强制分批，每批最多 PLAN_BATCH_SIZE 章，批间携带"已定稿前文骨架"）。
 // 每批结果合并到 state.outline.chapterPlans 与 state.outline.chapters；每批都校验数量与 schema。
 // 失败保持原值不清空；覆盖由调用方 confirm 把关。
@@ -9360,8 +9380,8 @@ function plannerBatchContext(b, opts){
   const parts = [];
   if(opts.withStyle !== false){ const ws = writeStyleNamesBlock(); if(ws.trim()) parts.push(ws.trim()); }
   const anchor = outlineAnchorBlock(); if(anchor) parts.push(anchor);
-  parts.push(`【导航灯塔】\n${JSON.stringify(o.navBeacon||{}, null, 2)}`);
-  parts.push(`【结构骨架】\n${JSON.stringify(o.structure||{}, null, 2)}`);
+  parts.push(`【导航灯塔】\n${JSON.stringify(o.navBeacon||{})}`);   // v228/P6：紧凑 JSON 输入瘦身（提速，语义不变）
+  parts.push(`【结构骨架】\n${JSON.stringify(o.structure||{})}`);
   parts.push(`【整体情绪基调】${o.tone || '未指定'}`);
   parts.push(`【本批次】第 ${b.start+1}—${b.end} 章，共 ${n} 章\n${batchTitles}`);
   if(opts.withPlans){
@@ -10583,7 +10603,7 @@ function buildChapterUser(i, opt={}){
         const prevSummary = buildRollingSummary(i);   // 第 i 章能看到的、覆盖上一章的滚动摘要
         const prevLastScene = (state.outline._factCard && state.outline._factCard.lastScene) || '';
         if(prevSummary || prevLastScene){
-          parts.push(`【L2 上一章承接（第 ${i} 章《${pc.title||''}》）】\n上一章结尾场景：${prevLastScene || '（未记录）'}\n\n近期滚动摘要：\n${prevSummary || '（暂无）'}\n\n上章末尾原文（承接锚点，约 500 字）：\n${prevFull.slice(-500)}`);
+          parts.push(`【L2 上一章承接（第 ${i} 章《${pc.title||''}》）】\n上一章结尾场景：${prevLastScene || '（未记录）'}\n\n近期滚动摘要：\n${prevSummary || '（暂无）'}\n\n上章末尾原文（承接锚点，约 1500 字）：\n${prevFull.slice(-1500)}`);
         } else {
           // 无摘要兜底：注入上一章尾部 5000 字（仍优先保章尾钩子）
           parts.push(`【L2 上一章真实正文（第 ${i} 章《${pc.title||''}》）】\n${prevFull.slice(-5000)}`);
@@ -10899,6 +10919,8 @@ function pushStyleHistory(label, detail){
 
 function openStyleHistoryPanel(){
   const hist = state._styleHistory || [];
+  // v228/P2：修复面板打不开——fmtTs 此处无全局定义（其余 11 处均为各函数内局部量），点开即 ReferenceError；补一行同款本地实现（与 9085 行大纲历史面板格式一致）
+  const fmtTs = ts=>{ const d=new Date(ts); return (d.getFullYear())+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
   if(!hist.length){ toast('暂无风格历史'); return; }
   const rows = hist.slice().reverse().map((h, ri)=>{
     const ridx = hist.length - 1 - ri;
@@ -10962,24 +10984,20 @@ const ROLLING_SUMMARY_SYS = `你是长篇小说滚动摘要助手。请把以下
 
 function buildRollingSummary(i){
   if(i <= 0) return '';
-  const o = state.outline;
-  if(!o || !o._rollingSummaries) o._rollingSummaries = [];
-  const summaries = o._rollingSummaries;
-  // 需要哪些区块
-  const needed = [];
-  for(let end = Math.floor((i-1)/5)*5; end >= Math.max(0, i-15); end -= 5){
-    if(end <= 0) continue;
-    const start = end - 4;
-    const key = `${start+1}-${end}`;
-    const have = summaries.find(s => s.key === key);
-    if(!have) needed.push({key, start, end});
+  const o = state.outline; if(!o) return '';
+  // v228/P5：双层输出——L1 细（最近 10 章逐章纪要，堵住旧版 ch1–4 的记忆真空）+ L2 粗（更早章节的 5 章块，窗口扩到 30 章）。
+  // 保持同步纯函数：补算全部由 ensureChapterDigests / generateRollingSummaries 负责，本函数只读不写。
+  const digests = Array.isArray(o._chapterDigests) ? o._chapterDigests : [];
+  const blocks  = Array.isArray(o._rollingSummaries) ? o._rollingSummaries : [];
+  const near = [];
+  for(let k = i-1; k >= Math.max(0, i-10); k--){
+    if(digests[k] && digests[k].text) near.unshift(`第 ${k+1} 章：${digests[k].text}`);
   }
-  // 异步生成缺失的摘要（简化版：这里先返回已有摘要）
-  const out = summaries.filter(s => {
-    const [a,b] = s.key.split('-').map(Number);
-    return b < i && b >= i - 15;
+  const far = blocks.filter(s=>{
+    const [a,b] = String(s.key||'').split('-').map(Number);
+    return Number.isFinite(b) && b < i && b >= i - 30 && b < i - 10;
   }).map(s => `第 ${s.key} 章：${s.text}`).join('\n');
-  return out;
+  return [far ? `【远期摘要】\n${far}` : '', near.length ? `【近期逐章纪要】\n${near.join('\n')}` : ''].filter(Boolean).join('\n\n');
 }
 
 // 4.8 旗舰版（板块一-1）：重写第 i 章后，失效所有覆盖该章的记忆层（滚动摘要/事实卡/章节 partial）
@@ -10994,14 +11012,59 @@ function invalidateChapterMemory(i){
   }
   // 事实卡时间线按 ch 去重已在上层 updateFactCardFromChapter 保证；这里仅清理该章的流式缓存
   if(state._chapterPartial) delete state._chapterPartial[i];
+  // v228/P5：逐章细摘要同步失效（重写后由 ensureChapterDigests 自动重算）
+  if(Array.isArray(o._chapterDigests)) delete o._chapterDigests[i];
   // 4.8 旗舰版（板块二-4）：相关词典缓存失效
   if(o._relGlossCache){
     Object.keys(o._relGlossCache).forEach(k => { if(+k >= i) o._relGlossCache[k]._stale = true; });
   }
   persist();
+  // v228/P5-⑤：剧情贴合软审计（仅 toast 提示、不阻断、不入修复队列；本函数 4 个调用点均在正文落库成功之后）
+  auditChapterAdherence(i);
+}
+
+// v228/P5-⑤：剧情贴合软审计——节拍 event 的信息二元组在正文中的命中率，<60% 仅 toast 提示「可能跑偏」，
+// 不阻断、不入修复队列（先观察误报率，后续可再收紧）。函数声明提升，供 invalidateChapterMemory 调用。
+function auditChapterAdherence(i){
+  try{
+    const text = String((state.chapters && state.chapters[i] && state.chapters[i].content)||'');
+    const plan = (state.outline && state.outline.chapterPlans && state.outline.chapterPlans[i]) || {};
+    if(!text.trim() || !Array.isArray(plan.beats) || plan.beats.length < 4) return;
+    const FUNC = /[的了是在和与也被把又就还着有个这那不上为到说得很]/;   // 滤掉含虚词的跨词二元组
+    const kws = new Set();
+    plan.beats.forEach(b=>{
+      const ev = String((b && b.event)||'');
+      (ev.match(/[\u4e00-\u9fa5a-zA-Z0-9]{2,10}/g)||[]).forEach(run=>{
+        for(let p=0; p+1<run.length; p++){ const bg = run.slice(p, p+2); if(!FUNC.test(bg)) kws.add(bg); }
+      });
+    });
+    if(kws.size < 6) return;   // 关键词太少不评估，避免小样本噪声
+    let hit = 0; kws.forEach(w=>{ if(text.includes(w)) hit++; });
+    const ratio = hit / kws.size;
+    if(ratio < 0.6) toast(`⚠️ 第 ${i+1} 章剧情贴合度偏低（约 ${Math.round(ratio*100)}%），建议对照节拍表检查是否跑偏（仅提示，不阻断）`);
+  }catch(e){ /* 软审计绝不影响主流程 */ }
+}
+
+// v228/P5：逐章细摘要（200-300 字/章）。与 5 章一块的粗摘要互补——粗块在第 5 章前完全缺位（旧版开头几章记忆真空，
+// 正是「第三章开始乱来」的根因），细摘要从第 2 章起即有。失败静默、下次触发再续，绝不阻塞写作主流程。
+const CHAPTER_DIGEST_SYS = `你是长篇小说剧情摘要助手。把这一章压缩成 200-300 字的剧情纪要：本章发生的事件、人物状态变化、新出现的人/物/设定、留下的伏笔。只记事实，不写景不抒情。`;
+async function ensureChapterDigests(){
+  const o = state.outline; if(!o) return;
+  if(!Array.isArray(o._chapterDigests)) o._chapterDigests = [];
+  const written = state.chapters.map((c,i)=> (c && c.content && String(c.content).trim()) ? i : -1).filter(i=>i>=0);
+  for(const idx of written){
+    if(o._chapterDigests[idx] && o._chapterDigests[idx].text) continue;
+    try{
+      const res = await callDeepSeek(CHAPTER_DIGEST_SYS, `第 ${idx+1} 章正文：\n` + String(state.chapters[idx].content||'').slice(0,6000),
+        {maxTokens: clampMaxTokens('summary'), temperature: 0.3, topP: 0.5, taskKey:'rolling'});
+      o._chapterDigests[idx] = { ts: Date.now(), text: String(res.text||'').trim().slice(0,400) };
+      persist();
+    }catch(e){ return; }   // 一次失败即退出，下次触发再续
+  }
 }
 
 async function generateRollingSummaries(){
+  ensureChapterDigests().catch(()=>{});   // v228/P5：细摘要与粗块同点触发（火后不管），既有 4 个调用点零改动
   const o = state.outline;
   if(!o) return;
   if(!o._rollingSummaries) o._rollingSummaries = [];
@@ -11603,6 +11666,7 @@ async function genTwoChapters(pairStart){
     invalidateChapterMemory(idx);
   }
   extractGlossaryFromChapter(pairStart); extractGlossaryFromChapter(pairStart+1);   // v225/P2：两章正文落库即提取入典（fire-and-forget）
+  generateRollingSummaries().catch(()=>{});   // v228/P5：两章路径同样触发记忆层补齐（与其他生成路径口径一致）
 }
 
 // 一次写 n 章（4.5 改造：每章生成后检查 finishReason；validateChapterContent 后验校验；
