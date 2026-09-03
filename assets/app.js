@@ -6883,10 +6883,6 @@ async function regenAllTitles(btn){
         callDeepSeek(REGEN_TITLES_SYS, user, {temperature: 0.3, topP: 0.5, onStream: null, signal: _abortCtl?.signal}),
         { needJson: true, expectedCount: n, countPath: 'titles', taskName: '重生成标题-A' }
       ),
-      callAIWithContract(
-        callDeepSeek(REGEN_TITLES_SYS, user, {temperature: 0.35, topP: 0.55, onStream: null, signal: _abortCtl?.signal}),
-        { needJson: true, expectedCount: n, countPath: 'titles', taskName: '重生成标题-B' }
-      )
     ]);
     // 新卡片界面：多个候选时弹出选择器
     const uiCands = buildTitleCandidates(cands, n);
@@ -7028,10 +7024,6 @@ async function genAllTitles(btn){
         callDeepSeek(REGEN_TITLES_SYS, user, {temperature: 0.3, topP: 0.5, onStream: null, signal: _abortCtl?.signal}),
         { needJson: true, expectedCount: n, countPath: 'titles', taskName: '生成标题-A' }
       ),
-      callAIWithContract(
-        callDeepSeek(REGEN_TITLES_SYS, user, {temperature: 0.35, topP: 0.55, onStream: null, signal: _abortCtl?.signal}),
-        { needJson: true, expectedCount: n, countPath: 'titles', taskName: '生成标题-B' }
-      )
     ]);
     // 新卡片界面：多个候选时弹出选择器
     const uiCands = buildTitleCandidates(cands, n);
@@ -9440,7 +9432,6 @@ async function genPlannerSummary(btn, opts){
       _streamBuf = '';
       const cands = await Promise.all([
         callAIWithContract(callDeepSeek(PLANNER_SUMMARY_SYS, user, {temperature:0.35, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerSummaryBatch, taskName:`主线简述批次 ${bi+1}/${batches.length}-A`}),
-        callAIWithContract(callDeepSeek(PLANNER_SUMMARY_SYS, user, {temperature:0.4, topP:0.85, maxTokens:clampMaxTokens('chapterPlan'), onStream:null, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerSummaryBatch, taskName:`主线简述批次 ${bi+1}/${batches.length}-B`})
       ]);
       const best = pickBestChapterPlan(cands, n);
       if(!best.ok) throw new Error(`批次 ${bi+1} 失败：${best.error || '所有候选均无效'}`);
@@ -9497,7 +9488,6 @@ async function genPlannerTitles(btn, opts){
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
     const cands = await Promise.all([
       callAIWithContract(callDeepSeek(REGEN_TITLES_SYS, user, {temperature:0.3, topP:0.5, onStream, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'titles', taskName:'规划师-标题-A'}),
-      callAIWithContract(callDeepSeek(REGEN_TITLES_SYS, user, {temperature:0.35, topP:0.55, onStream:null, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'titles', taskName:'规划师-标题-B'})
     ]);
     const best = pickBestTitles(cands, n);
     if(!best.ok) throw new Error(best.error);
@@ -9542,7 +9532,6 @@ async function genPlannerBeats(btn, opts){
       _streamBuf = '';
       const cands = await Promise.all([
         callAIWithContract(callDeepSeek(PLANNER_BEATS_SYS, user, {temperature:0.35, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerBeatsBatch, taskName:`节拍表批次 ${bi+1}/${batches.length}-A`}),
-        callAIWithContract(callDeepSeek(PLANNER_BEATS_SYS, user, {temperature:0.4, topP:0.85, maxTokens:clampMaxTokens('chapterPlan'), onStream:null, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerBeatsBatch, taskName:`节拍表批次 ${bi+1}/${batches.length}-B`})
       ]);
       const best = pickBestChapterPlan(cands, n);
       if(!best.ok) throw new Error(`批次 ${bi+1} 失败：${best.error || '所有候选均无效'}`);
