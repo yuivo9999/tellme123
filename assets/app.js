@@ -3326,15 +3326,11 @@ function validateIdeaFaithful(j, idea){
 function validateIdeaProOutput(j, ctx){
   if(!j || typeof j !== 'object') return {ok:false, code:'EMPTY'};
   if(j.brief && typeof j.brief === 'object'){
-    // v225/P6：本地忠实度拦截（code=UNFAITHFUL；第二参 ctx 为旧形态调用时的透传，无 rawIdea 则豁免）
-    const bad = validateIdeaFaithful(j, (ctx && ctx.rawIdea) || '');
-    if(bad) return {ok:false, code:'UNFAITHFUL', details:bad};
+    // v228a   
     return {ok:true};   // 4.7 Pro 结构（brief 存在即通过）
   }
   if(Array.isArray(j.options) && j.options.length){
-    // v225/P6：多方案载体逐方案忠实度校验
-    const idea = (ctx && ctx.rawIdea) || '';
-    for(const op of j.options){ const bad = validateIdeaFaithful(op, idea); if(bad) return {ok:false, code:'UNFAITHFUL', details:bad}; }
+    // v228a
     return {ok:true};   // 4.9 加固：多方案载体（{options:[...]}）放行，展示层已有兼容解析
   }
   const err = validatePolishOutput(j);                            // 4.5 结构（字符串约定）
