@@ -52,7 +52,7 @@ const state = {
   chapterRange: null,   // (兼容遗留) 同上
   totalWords: null,     // (兼容遗留) 同上
   chapterCount: null,   // 全书章节数量（整数 1-200，生成大纲前唯一必填数字；null=未设）
-  loglineRange: {min:300, max:700},   // v11 小说简介字数范围（生成大纲前用户可调）：{min,max}，max 上限 5000，min>max 自动对调
+  loglineRange: {min:100, max:300},   // v11 小说简介字数范围（生成大纲前用户可调）：{min,max}，max 上限 5000，min>max 自动对调；v230/T4 默认 100–300
   idea: '',
   coverPrompt: '',      // 整部小说封面提示词（场景页生成 / 长篇模式用）
   coverWithTitle: false,// 封面提示词是否包含「汉字书名」（false=纯画面无文字）
@@ -394,6 +394,8 @@ function projectSnapshot(){
     _fixQueue: Array.isArray(state._fixQueue) ? state._fixQueue : [],   // 4.6 Plus 正文修复队列
     aiNetwork: state.aiNetwork || { stage:'idle', running:[], completed:[], blockedBy:{} },   // 4.8 旗舰版 AI 协作网络（刷新不丢）
     _lastPolishBrief: state._lastPolishBrief || null,   // 4.7 Pro 优化构想结构化简报（供大纲 AI 经 formatNavBeaconForOutline 注入）
+    _lastPolishIdeaText: state._lastPolishIdeaText || '',   // v230/1-C：纯文本优化稿存档（新 PRO 无 JSON brief 时构想→大纲的上下文通道）
+    _outlineCandidates: state._outlineCandidates || null,   // v230/3.1：多大纲候选 {batchTs, items:[{id,label,outline}], chosenId}
     _chapterPartial: state._chapterPartial || {},   // 4.8 旗舰版（板块一-3）：流式中断续写缓存（刷新不丢）
     _tensionCurve: state._tensionCurve || [],   // 4.8 旗舰版（板块三-3）：张力曲线
     _personaCards: state._personaCards || {},   // 4.8 旗舰版（板块三-2）：人设一致性防火墙
@@ -484,6 +486,8 @@ function applyProject(p){
   state._fixQueue = Array.isArray(p._fixQueue) ? p._fixQueue : [];
   state.aiNetwork = (p.aiNetwork && typeof p.aiNetwork === 'object') ? p.aiNetwork : { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络恢复
   state._lastPolishBrief = (p._lastPolishBrief && typeof p._lastPolishBrief === 'object') ? p._lastPolishBrief : null;   // 4.7 Pro 优化构想简报恢复
+  state._lastPolishIdeaText = (typeof p._lastPolishIdeaText === 'string') ? p._lastPolishIdeaText : '';   // v230/1-C 纯文本优化稿恢复
+  state._outlineCandidates = (p._outlineCandidates && typeof p._outlineCandidates === 'object' && Array.isArray(p._outlineCandidates.items)) ? p._outlineCandidates : null;   // v230/3.1 多大纲候选恢复
   state._chapterPartial = (p._chapterPartial && typeof p._chapterPartial === 'object') ? p._chapterPartial : {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存恢复
   // 4.8 旗舰版（板块三）：创新核弹中间件恢复
   state._tensionCurve = Array.isArray(p._tensionCurve) ? p._tensionCurve : [];
@@ -512,6 +516,8 @@ function clearState(){
   state.scCollapsed = false; state.fcCollapsed = false; state.rsCollapsed = false;   // 4.6 Plus 折叠态重置
   state._fixQueue = [];   // 4.6 Plus 修复队列重置
   state._lastPolishBrief = null;   // 4.7 Pro 优化构想简报重置
+  state._lastPolishIdeaText = '';   // v230/1-C 纯文本优化稿重置
+  state._outlineCandidates = null;   // v230/3.1 多大纲候选重置
   state._chapterPartial = {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存重置
   state.aiNetwork = { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络重置
   // 4.8 旗舰版（板块三）：创新核弹中间件重置
@@ -1264,7 +1270,9 @@ async function polishIdea(btn, force){
     const j = extractJsonObject(out);
     if(j && j.brief){
       // 4.7 Pro：结构化简报存档（供大纲 AI 经 formatNavBeaconForOutline 注入【优化构想简报】）
-      state._lastPolishBrief = j.brief; persist();
+      state._lastPolishBrief = j.brief;
+      state._lastPolishIdeaText = '';   // v230/1-C：简报与纯文本优化稿互斥存档——"最后优化者胜出"，防止旧简报盖过新成果
+      persist();
       // 把结构化简报渲染为文本卡片
       const textBrief = formatIdeaBrief(j.brief);
       // 若多方案模式需包装
@@ -1282,6 +1290,11 @@ async function polishIdea(btn, force){
       markAIDone('idea');
       toast('优化完成：已诊断并输出结构化简报');
     } else {
+      // v230/1-C：纯文本优化稿全文存档——新 PRO 不再输出 JSON brief，此存档是构想→大纲上下文传递的唯一通道；
+      // 同时清掉旧结构化简报（陈旧数据不再参与注入），大纲 AI 经 formatNavBeaconForOutline 的 fallback 吃到本稿
+      state._lastPolishIdeaText = out;
+      state._lastPolishBrief = null;
+      persist();
       // 降级：旧行为（4.5 结构 optimizedIdea/navBeacon/defects... 由 showPolishResult 兼容解析展示）
       showPolishResult(out, multi);
       markAIDone('idea');
@@ -1341,6 +1354,30 @@ function validatePolishOutput(j){
   return '';
 }
 
+// v230/1-B：纯文本多方案切分——按「━━ 方案N：名 ━━」分隔符切成多张方案卡；切不出 ≥2 张返回空数组（维持单卡降级）
+function splitPolishMultiText(out){
+  const t = String(out||'').trim();
+  if(!t || !t.includes('━━')) return [];
+  const cards = [];
+  let cur = null;
+  t.split('\n').forEach(ln=>{
+    if(/^\s*━+\s*方案/.test(ln)){
+      if(cur) cards.push(cur);
+      cur = { name: ln.replace(/^\s*━+\s*/,'').replace(/\s*━+\s*$/,'').trim(), text: '' };
+    } else if(cur){
+      cur.text += (cur.text ? '\n' : '') + ln;
+    }
+  });
+  if(cur) cards.push(cur);
+  const ok = cards.filter(c=> String(c.text||'').trim());
+  if(ok.length < 2) return [];
+  return ok.map((c,i)=>({
+    name: c.name || ('方案'+(i+1)),
+    text: String(c.text||'').trim(),
+    _v45: { defects:[], navBeacon:null, seedCharacters:[], seedPlaces:[], suggestedChapterCount:null }
+  }));
+}
+
 // 展示优化结果：多方案（JSON 2-6 个）→ 竖向多色卡片；单稿（文本）→ 单张卡片。均只读。
 // 4.5：入参为 callAIWithContract 解析后的对象（单稿=结构化 JSON；多稿={options:[...]}）；
 //      每个方案附加 _v45{defects,navBeacon,seedCharacters,seedPlaces,suggestedChapterCount}，供「📥 导入设定」使用。
@@ -1370,6 +1407,18 @@ function showPolishResult(out, multi){
       return;
     }
     // JSON 解析失败降级：整体当单稿文本
+    // v230/1-B：纯文本多方案切卡——新 PRO+MULTI 输出「━━ 方案N」分隔的纯文本，切出 ≥2 张即按多方案渲染
+    if(typeof out === 'string'){
+      const segs = splitPolishMultiText(out);
+      if(segs.length >= 2){
+        snapshotPolishBatch('重新优化前');   // 覆盖前把旧整批方案归档为可回退版本（≤5）
+        state.polishOptions = segs;
+        state.polishAdopted = null;
+        persist();
+        renderPolishCards(cards);
+        return;
+      }
+    }
     state.polishOptions = [{ name:'方案1', text: String(typeof out==='object' ? ((out&&out.optimizedIdea)||'') : out).trim(), _v45: pickV45(typeof out==='object'?out:{}) }];
     state.polishAdopted = null;
     persist();
@@ -2918,7 +2967,7 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 1. title ≤ 12 字；不得使用高频套路书名（如《重生之xxx》《xxx系统》《xxx的xxx》）。
 2. logline 必须点明核心冲突与深层命题，篇幅严格落在末尾【简介字数约束】区间内，偏差不得超过 5%。
 3. structure.mainLine 必填；subLines / hiddenLine / pivotPlan 有才填、无则空字符串或空数组，绝不硬造。
-4. structure.chapterPlan 必须覆盖全书每一章（当前为用户提示中给定的 N 章），一章不落；维度名按主题/起承转合/人物线自由拟定。
+4. structure.chapterPlan 是"主题维度 → 章节段落"的归纳性分组骨架（v230/T3 与章数解耦）：维度名按主题/起承转合/人物线自由拟定，每组概括该阶段的章节走向即可；不必与全书预设章数严格对齐，允许合并或跨章概括。
 5. genreTags 只能出现 2-4 个，且必须与 logline 一致。
 6. anchor 必须包含 题材+主角+核心冲突 三要素，≤50字；thesis 必须点出作品的核心主题/情感内核，≤80字；二者均不得为空。
 7. 忠实度硬约束：用户构想中出现的专名、称谓、设定、意象与关键情节点，必须在输出中原样保留；不得替换、改名或省略；如需调整须以用户原文为基准做增量扩展。
@@ -3324,7 +3373,10 @@ function validateIdeaFaithful(j, idea){
   return (miss.length <= must.length * 0.5) ? '' : `优化稿未保留用户核心设定词（缺 ${miss.length}/${must.length}）：${miss.slice(0,5).join('、')}`;
 }
 function validateIdeaProOutput(j, ctx){
-  if(!j || typeof j !== 'object') return {ok:false, code:'EMPTY'};
+  // v230/1-A：构想走"自由发挥纯文本"（新 PRO 明确"不要输出 JSON"），纯文本经 extractJsonObject 得 null——无 JSON 即放行；
+  // 真空响应由 polishIdea 的 if(!out) 兜底与 finishReason 截断检测把关（展示层 showPolishResult 已兼容纯文本）。
+  if(j === null || j === undefined) return {ok:true};          // 纯文本无 JSON：放行
+  if(typeof j !== 'object') return {ok:false, code:'EMPTY'};   // 非 null 但非对象（罕见脏数据）仍拒
   if(j.brief && typeof j.brief === 'object'){
     // v228a   
     return {ok:true};   // 4.7 Pro 结构（brief 存在即通过）
@@ -3409,8 +3461,8 @@ const AIBus = {
       idea: state.idea || '',
       userParams: {
         chapterCount: chapterCountVal() || 30,
-        loglineMin: state.loglineRange?.min ?? 300,
-        loglineMax: state.loglineRange?.max ?? 700
+        loglineMin: state.loglineRange?.min ?? 100,
+        loglineMax: state.loglineRange?.max ?? 300
       }
     };
     switch(kind){
@@ -3452,7 +3504,8 @@ function getSystemPrompt(kind, extra){
   switch(kind){
     case 'idea': return IDEA_POLISH_SYS + (extra && extra.multi ? POLISH_MULTI_MODE : '');   // 4.9 加固：多方案开关接线（此前 POLISH_MULTI_MODE 只定义从未拼入，勾选「多方案」实际不生效）
     case 'recipe': return AI_RECIPE_SYS_PRO;
-    case 'outline': return buildOutlineSys();
+    // v230/3.2：outline 支持多候选角度尾注（genOutlineMulti 经 extra.angleNote 注入【本候选创意角度】）
+    case 'outline': return buildOutlineSys() + ((extra && extra.angleNote) ? '\n\n' + extra.angleNote : '');
     case 'titles': return REGEN_TITLES_SYS;
     case 'chapterPlan': return CHAPTER_PLAN_SYS;
     case 'chapter': return longChapterSys();
@@ -3496,7 +3549,8 @@ function buildRecipeUser(ctx){
 }
 function buildOutlineUser(ctx){
   // 与 4.7 Pro（3.2）genOutline 的 user 拼装等价：【用户构想】+【优化构想简报】
-  const brief = ctx.polishBrief ? formatNavBeaconForOutline() : '';
+  // v230/1-C：改为无条件调用——formatNavBeaconForOutline 内部自行决定用简报/纯文本优化稿/空（此前门控 ctx.polishBrief 会漏掉纯文本通道）
+  const brief = formatNavBeaconForOutline();
   return `【用户构想】\n${ctx.idea}\n\n${brief ? '【优化构想简报】\n' + brief : ''}`;
 }
 function buildSubplotUser(ctx){
@@ -3772,7 +3826,8 @@ const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想�
 3. 输出结构 = 通用核心要素（题材 / 主角 / 结构（含阶段比例） / 风格（含落地方式） / 目标（读者体验））+ 自适应分类要素（分两层）：a. 预设类别：出现"系统/金手指/异能/穿越"→补「金手指（机制与限制）」；"爱情/CP"→补「感情线（关系与阻碍）」；"悬疑/推理/谜案"→补「谜题（核心悬念与线索布局）」；"权谋/宫斗/战争"→补「势力格局（阵营与博弈）」；"群像/家族/多主角"→补「人物关系网」；b. 开放补充：若构想含预设之外的核心题材词（如无限流/种田/娱乐圈/末世/星际/恐怖等），自行命名一个贴合该题材的分类要素（如「世界规则（副本形式/生存规则）」「资源系统（经济来源/发展目标）」「舞台体系（平台/流量/作品）」「生存法则」「科技体系」「恐惧来源」等）并给出关键内容，补充类别必须与该题材词直接对应；c. 用户构想中没有的类别一律不得输出（如无金手指的故事绝不写"金手指"要素）；自适应分类合计不超过 3 项，避免输出膨胀；
 4. 若用户构想含风格基调（轻松/诙谐/深沉/热血等），必须明确写出"风格"要素并给出 2-3 个落地方式；
 5. 篇幅 150-300 字，用简洁条目式，不要解释、不要 markdown 代码块、不要输出 JSON。
-【自由发挥区】核心要素的措辞、自适应分类的选择与颗粒度、补充方向由你把握，让优化稿读起来具体、可执行、贴合用户原意。`;
+【自由发挥区】核心要素的措辞、自适应分类的选择与颗粒度、补充方向由你把握，让优化稿读起来具体、可执行、贴合用户原意。
+文末用 1~3 行给用户下一步建议：可以补什么、可以砍什么、哪类读者会最喜欢——像编辑给作者的建议，不像检查清单。`;
 
 
 // 4.7 Pro（第7章指令2）：新常量用旧名——所有既有引用点（polishIdea 等）自动升级为 PRO 提示词
@@ -3781,10 +3836,11 @@ const IDEA_POLISH_SYS = IDEA_POLISH_SYS_PRO;
 // v10.13 优化构想·输出模式后缀：单稿（4.5：与多方案同一 JSON 契约，仅不带 options 包装）
 const POLISH_SINGLE_MODE = `\n\n【本次输出模式：单稿】严格只输出一个完整 JSON（与【输出格式】完全一致，不要解释、不要 markdown 代码块）。`;
 
-// v1.0.121 优化构想·输出模式后缀：多方案（JSON 载体，2-6 个方向方案，无编辑意见）
-const POLISH_MULTI_MODE = `\n\n【本次输出模式：多方案】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{"options":[{"name":"方案A 稳健向","optimizedIdea":"...","defects":["..."],"navBeacon":{...},"seedCharacters":[...],"seedPlaces":[...],"suggestedChapterCount":30}]}
-要求：输出 2-6 个方案；每个方案都是完整 JSON；seedCharacters/seedPlaces 仅整理用户构想中已明确提及的人物/地点（原样沿用其名字与设定），用户未提及的一律输出空数组 []，禁止新增任何人物或地名；方案差异只允许在走向/补全，必须逐条保留用户原意；navBeacon 的 genre/coreConflict/tone 既要方案间一致，也必须与用户构想一致。`;
+// v1.0.121 优化构想·输出模式后缀：多方案 —— v230/1-B 重写为与新 PRO 同构的纯文本多方案（旧 JSON options 指令与新 PRO"不要输出 JSON"矛盾，已废弃）；
+// 展示层 showPolishResult 会按「━━ 方案N」分隔符切卡（splitPolishMultiText），切不出 ≥2 张时整体降级单卡。
+const POLISH_MULTI_MODE = `\n\n【本次输出模式：多方案】在上述要求基础上，一次性给出 2~3 个不同方向的优化构想。
+每个方案用一行分隔符开头：「━━ 方案N：方案名 ━━」，随后是按上述结构的一段条目式构想，并在方案末尾加一行「推荐理由：…（这个方案给谁、适合什么口味）」。
+方案之间方向要明显拉开（如稳健商业向 / 高概念反差向 / 情感人物向），仍不要输出 JSON、不要 markdown 代码块。`;
 
 // v8c 词典增量补全：从已生成章节正文中提取「现有词典未收录」的新人物/新地名/新专名，去重后并入词典。
 // 供批量生成章节后的自动补全与词典卡片的「📥 提取新增」共用；人物字段对齐词典契约（age/gender 必填）。
@@ -3999,11 +4055,12 @@ function buildOutlineSys(){
   parts.push(OUTLINE_GEN_SYS_PRO);          // 新书目+简介+结构
   parts.push('\n\n'+ORIGINALITY_OUTLINE_SYS);
   const lr = state.loglineRange;
-  const _m = Number.isFinite(lr&&lr.min)?Math.max(1,Math.floor(lr.min)):300;
-  const _x = Number.isFinite(lr&&lr.max)?Math.min(5000,Math.max(1,Math.floor(lr.max))):700;
+  const _m = Number.isFinite(lr&&lr.min)?Math.max(1,Math.floor(lr.min)):100;
+  const _x = Number.isFinite(lr&&lr.max)?Math.min(5000,Math.max(1,Math.floor(lr.max))):300;
   const _lo = Math.min(_m,_x), _hi = Math.max(_m,_x);
   const N = chapterCountVal() || 30;        // 若未填，按默认 30 章
-  parts.push(`\n\n【简介字数约束】本作小说简介总字数必须控制在 ${_lo}—${_hi} 字之间，严格遵守区间，不得超出。当前全书预设 ${N} 章，chapterPlan 必须覆盖全部 ${N} 章，数量严格一致。`);
+  // v230/T3：章数从"硬性覆盖"软化为"参考体量"——chapterPlan 是归纳性分组骨架，无程序消费者，与预设章数解耦
+  parts.push(`\n\n【简介字数约束】本作小说简介总字数必须控制在 ${_lo}—${_hi} 字之间，严格遵守区间，不得超出。全书预设 ${N} 章仅供 chapterPlan 分组时参考体量，不必严格对齐。`);
   const banNote = banListBlockFor('outline');
   if(banNote) parts.push(banNote);
   return parts.join('\n\n');
@@ -5501,12 +5558,14 @@ function viewStory(){
         <button id="btnGenOutline" class="btn primary block">${isLong()?'📚 生成长篇大纲':'✨ 生成故事大纲'}</button>
       </div>
       <p id="outlineStatus" class="status"></p>
+      ${ outlineCandidatesHtml() }
     </div>`;
   }
   // 大纲已生成
   const o = state.outline;
   let html = `
     ${ origIdeaCard() }
+    ${ outlineCandidatesHtml() }
     <div class="card">
       <div class="card-head-row">
         <h3 style="margin:0">📋 故事大纲</h3>
@@ -5517,6 +5576,7 @@ function viewStory(){
         <span class="so-fold">${state.soCollapsed?'▸':'▾'}</span><b>📌 小说简介</b>
       </div>
       <p class="sub so-logline" ${state.soCollapsed?'hidden':''}>${esc(o.logline||'')}</p>
+      <div class="btn-row" style="margin-top:6px"><button type="button" class="btn small ghost" id="btnOutlineRegen" title="再生成一批 3 个候选大纲供选择；当前大纲与旧候选自动存入历史版本，不会丢失">🔄 重生成大纲</button></div>
       ${ isLong() ? anchorEditHtml() : '' }
       ${ isLong() ? structureCardHtml() : '' }
       ${ chapterTitleBlock() }
@@ -8750,15 +8810,15 @@ function bindView(){
   const idea = $('#ideaInput'); if(idea){
     idea.oninput = ()=> state.idea = idea.value;
     bindPolishIdea();   // v10.13 优化构想按钮 + 优化区绑定
-    $('#btnGenOutline').onclick = genOutline;
+    $('#btnGenOutline').onclick = genOutlineMulti;   // v230/3.2：生成大纲 → 多候选流程（≥1 个成功即进入候选选择态）
   }
   // v11 简介字数范围（生成大纲前、仅长篇）：双数字输入，min>max 自动对调、max 上限 5000
   const llMin = $('#llMin'), llMax = $('#llMax');
   if(isLong() && llMin && llMax){
     const commitLL = ()=>{
       let mn = Math.floor(Number(llMin.value)), mx = Math.floor(Number(llMax.value));
-      if(!Number.isFinite(mn) || mn<1) mn = 300;
-      if(!Number.isFinite(mx) || mx<1) mx = 700;
+      if(!Number.isFinite(mn) || mn<1) mn = 100;   // v230/T4 默认 100–300
+      if(!Number.isFinite(mx) || mx<1) mx = 300;
       if(mn>5000){ mn = 5000; llMin.value = 5000; }
       if(mx>5000){ mx = 5000; llMax.value = 5000; }
       if(mn>mx){ const _t=mn; mn=mx; mx=_t; llMin.value=mn; llMax.value=mx; }   // 兜底：自动对调
@@ -8820,6 +8880,10 @@ function bindView(){
   $$('.spec-opt').forEach(b=> b.onclick = ()=>{ selectSpec(b.dataset.spec); });
   const btnCO = $('#btnConfirmOutline'); if(btnCO) btnCO.onclick = ()=>{ state.outlineConfirmed=true; persist(); render(); };
   const btnOH = $('#btnOutlineHist'); if(btnOH) btnOH.onclick = ()=> openOutlineHistoryPanel();
+  // v230/3.3+3.5：候选大纲 选用/预览 + 「🔄 重生成大纲」
+  $$('[data-cand-adopt]').forEach(b=> b.onclick = ()=> adoptOutlineCandidate(b.dataset.candAdopt));
+  $$('[data-cand-prev]').forEach(b=> b.onclick = ()=> previewOutlineCandidate(b.dataset.candPrev));
+  const btnRegen = $('#btnOutlineRegen'); if(btnRegen) btnRegen.onclick = ()=> regenOutlineBatch(btnRegen);
   const btnRO = $('#btnReOutline'); if(btnRO) btnRO.onclick = ()=>{ state.outline=null; state.outlineConfirmed=false; state.chapters=[]; persist(); render(); };
   // 短片：一键生成全部章节（从头生成全部，保留原「生成全部」覆盖语义）
   const btnGAShort = $('#btnGenAllChapters'); if(btnGAShort) btnGAShort.onclick = ()=> genManyChapters(state.chapters.length, true);
@@ -9015,12 +9079,17 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
  * 生成动作
  * ========================================================= */
 /* ---------- P0-1 大纲版本历史：覆盖前快照 + 📚 弹窗预览/恢复（上限10） ---------- */
-function snapshotOutline(){
-  const o = state.outline;
+// v230/3.4：快照支持可选 label（如"候选B·未选用""重生成前·原大纲"）；旧数据无 label 照常显示时间，向后兼容
+function snapshotOutlineLabel(o, label){
   if(!o || typeof o !== 'object') return;
   const copy = JSON.parse(JSON.stringify(o));
-  state.outlineHistory.unshift({ outline: copy, ts: Date.now() });
+  const item = { outline: copy, ts: Date.now() };
+  if(label) item.label = String(label);
+  state.outlineHistory.unshift(item);
   if(state.outlineHistory.length > 50) state.outlineHistory.splice(50);
+}
+function snapshotOutline(label){
+  snapshotOutlineLabel(state.outline, label);
 }
 function hasOutlineHistory(){ return Array.isArray(state.outlineHistory) && state.outlineHistory.length > 0; }
 function outlineHistoryCount(){ return hasOutlineHistory() ? state.outlineHistory.length : 0; }
@@ -9033,7 +9102,7 @@ function openOutlineHistoryPanel(){
     const o = h.outline || {};
     const n = (o.chapters||[]).length;
     return `<div class="cv-row">
-      <div class="cv-meta" style="flex:1;min-width:0"><div class="cv-time">${fmtTs(h.ts)}</div><div class="cv-t" style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.title||'未命名')} · ${n} 章 · ${wc(o)} 字符</div></div>
+      <div class="cv-meta" style="flex:1;min-width:0"><div class="cv-time">${h.label?`<b style="color:var(--primary,#4a7dff)">${esc(h.label)}</b> · `:''}${fmtTs(h.ts)}</div><div class="cv-t" style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.title||'未命名')} · ${n} 章 · ${wc(o)} 字符</div></div>
       <div class="cv-actions" style="display:flex;gap:6px;flex-shrink:0">
         <button type="button" class="btn ghost cv-b" data-ov-prev="${idx}">预览</button>
         <button type="button" class="btn ghost cv-b" data-ov-restore="${idx}">↩ 恢复</button>
@@ -9092,6 +9161,207 @@ function openOutlineHistoryPanel(){
 }
 function closeOutlineHistoryPanel(){ const p=$('#ovPanel'); if(p) p.remove(); }
 
+// v230/T3+3.3：大纲落盘共用段——genOutline 与多候选「选用此版」两条路共用，避免复制粘贴漂移。
+// 含：章数软检查（T3：仅提示不拦截）、旧标题保留/重建、当前大纲入历史（label 可配）、
+//     旧词典沿用、简介字数 toast（非阻断）、pendingV45 应用、navBeacon 回填、userIdea/chapterPlans 初始化、state.chapters 同步。
+// opts.replacedLabel：当前大纲入历史时的标注（默认'被替换的上一版'）；opts.silent：候选生成阶段静默（不弹章数提示）。
+function applyOutlineObject(o, opts){
+  opts = opts || {};
+  // v230/T3：章数软检查——structure.chapterPlan 是"主题维度→章节段落"归纳分组，无程序消费者，数量仅参考；
+  // 分组缺失（covered=0）静默放行；有值但与预设不符时 toast 提醒一次，不再 throw 作废整份大纲
+  const _N = chapterCountVal() || 30;
+  const covered = (o.structure && o.structure.chapterPlan)
+    ? Object.values(o.structure.chapterPlan).flat().length : 0;
+  if(covered && covered !== _N && !opts.silent){
+    toast(`提示：大纲章节分组覆盖 ${covered} 章（预设 ${_N} 章），仅作参考不作拦截；正式章节以「章节标题」步骤为准。`);
+  }
+  // 保留旧章节标题（如果数量一致）
+  const oldChapters = (state.outline && state.outline.chapters) || [];
+  const newN = state.chapterCount || oldChapters.length;
+  if(newN && oldChapters.length === newN){
+    o.chapters = oldChapters;
+  } else {
+    o.chapters = [];
+  }
+  // 沿用旧词典（4.5 注：在覆盖 state.outline 前读取，否则"沿用旧词典"永远失效）
+  const prevGloss = (state.outline && state.outline.glossary && sourceHasGlossary(state.outline.glossary)) ? state.outline.glossary : null;
+  snapshotOutline(opts.replacedLabel || '被替换的上一版');
+  state.outline = o;
+  normalizeOutline(state.outline);   // 4.6 Plus：outline 防御归一化
+  state.outlineConfirmed = false;
+  // 简介字数检查（toast-only 非阻断；v230/T4 默认区间 100–300）
+  const _ll = String(o.logline||'').trim().length;
+  const _lr = state.loglineRange||{};
+  const _lo = Math.min(Number.isFinite(_lr.min)?_lr.min:100, Number.isFinite(_lr.max)?_lr.max:300);
+  const _hi = Math.max(Number.isFinite(_lr.min)?_lr.min:100, Number.isFinite(_lr.max)?_lr.max:300);
+  if(_ll < _lo || _ll > _hi){ toast(`提示：简介当前 ${_ll} 字，目标 ${_lo}—${_hi} 字，未落在区间内。`); }
+  if(prevGloss) o.glossary = prevGloss;
+  else if(!o.glossary) o.glossary = {characters:[], places:[], propernouns:[]};
+  // 4.9 修复：应用「导入设定」暂存的结构化设定（生成大纲前点击导入设定时暂存于 state.pendingV45），
+  // 使导航灯塔/种子人物/种子地点自动落到这份真实大纲上，然后清空待应用槽位。
+  if(state.pendingV45){
+    applyV45ToOutline(o, state.pendingV45);
+    state.pendingV45 = null;
+  }
+  // 4.10 修复：大纲 AI 已不再输出 navBeacon。但 navBeacon 仍被 AIBus/规划师/沙盘等下游消费，
+  // 这里用优化构想简报 _lastPolishBrief 回填；若已通过「导入设定」带入 navBeacon 或已存在，则不覆盖。
+  if(!o.navBeacon && state._lastPolishBrief){
+    const _b = state._lastPolishBrief;
+    o.navBeacon = {
+      genre: String(_b.genre||'').trim(),
+      protagonist: String(_b.protagonist||'').trim(),
+      coreConflict: String(_b.coreConflict||'').trim(),
+      tone: String(_b.style||'').trim()
+    };
+  }
+  o.userIdea = state.idea;
+  if(!Array.isArray(o.chapterPlans)) o.chapterPlans = [];
+  // 如果 chapters 已重建，同步 state.chapters
+  if(o.chapters.length){
+    state.chapters = o.chapters.map(c=>({title:c.title, content:'', strip:'', confirmed:false}));
+  }
+}
+
+// —— v230/3.1：多大纲候选（3 个角度差异化候选，供比选；未选候选入历史可切回） ——
+const OUTLINE_CANDIDATE_N = 3;   // 每批候选数（1 = 退化为单发行为）
+// state._outlineCandidates = { batchTs, items:[{id,label,outline}], chosenId }（随项目持久化，见 projectSnapshot/applyProject/clearState）
+const OUTLINE_CANDIDATE_ANGLES = [
+  { tag:'稳健商业向',   note:'本候选走「稳健商业向」：类型要素齐全、市场成熟度高，主线清晰不冒险，适合大众读者口味。', temp:0.75 },
+  { tag:'高概念反差向', note:'本候选走「高概念反差向」：围绕一个抓人的"如果……会怎样"设定展开，敢做反差与新奇组合。', temp:0.85 },
+  { tag:'情感人物向',   note:'本候选走「情感人物向」：人物关系与内心弧光优先，主线为情感服务，重视人物动机与代价。', temp:0.95 }
+];
+
+// v230/3.2：多候选生成——串行逐个（沿用 _abortCtl 可中断），角度差异化 + 温度阶梯；
+// 每个候选完整走 callAIGuarded('outline')（内置结构+忠实度双闸校验，v228/P3 闸原样保留）；
+// 单个失败 toast 跳过，≥1 个成功即进入候选选择态，全部失败才报错走修复队列。
+async function genOutlineMulti(btn){
+  const st = $('#outlineStatus');
+  if(st){ st.className='status'; st.textContent=''; }
+  const ideaIn = $('#ideaInput');
+  if(ideaIn) state.idea = ideaIn.value.trim();   // 仅第②步页面有输入框；「重生成大纲」入口直接用已存 state.idea
+  if(!state.idea){ toast('先写几句构想'); return; }
+  if(!canRunAI('outline')){ toast('请先完成上游步骤：优化构想'); return; }
+  if(!state.outline || !state.outline.navBeacon){
+    toast('建议先「优化构想」生成结构化设定，再生成大纲');
+  }
+  markAIRunning('outline');
+  if(btn) busy(btn,true,'生成候选大纲中…');
+  if(btn && btn.parentNode) showStopBtn(btn.parentNode);
+  const items = [];
+  try{
+    const N = Math.max(1, OUTLINE_CANDIDATE_N|0);
+    for(let i=0;i<N;i++){
+      const ang = OUTLINE_CANDIDATE_ANGLES[i % OUTLINE_CANDIDATE_ANGLES.length];
+      const tag = '候选' + String.fromCharCode(65 + (i % OUTLINE_CANDIDATE_ANGLES.length));
+      if(st){ st.className='status'; st.textContent = `${tag}（${ang.tag}）生成中…（${i+1}/${N}）`; }
+      let cand = null;
+      try{
+        // 角度差异化：经 getSystemPrompt('outline', {angleNote}) 追加到系统提示词尾部
+        const txt = await callAIGuarded('outline', { angleNote: `【本候选创意角度】${ang.note}` },
+          {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal});
+        cand = extractJsonObject(txt);
+        if(!cand || !String(cand.title||'').trim() || !String(cand.logline||'').trim()) throw new Error('未解析到书名/简介');
+      }catch(e){
+        if(e.name === 'AbortError') throw e;
+        toast(`${tag}（${ang.tag}）未通过校验，已跳过：${e.message}`);
+      }
+      if(cand) items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand });
+    }
+    if(!items.length) throw new Error('全部候选均未通过校验');
+    state._outlineCandidates = { batchTs: Date.now(), items, chosenId: null };
+    persist(); render();
+    if(st){ st.className='status'; st.textContent = `已生成 ${items.length} 个候选大纲，请在候选卡中比选采用`; }
+    toast(`已生成 ${items.length} 个候选大纲，请比选采用`);
+  }catch(e){
+    if(e.name==='AbortError'){ if(st){ st.className='status'; st.textContent='已停止生成'; } else { toast('已停止生成'); } }
+    else {
+      if(st){ st.className='status err'; st.textContent = e.message; }
+      addToFixQueue({kind:'outline', error:e.message});   // 4.8（6.4）：失败进修复队列
+      toast('大纲生成失败，已加入修复队列');
+    }
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='outline');   // 兜底清理运行态
+    hideStopBtn(); if(btn) busy(btn,false);
+  }
+}
+
+// v230/3.3：候选大纲卡片区（未生成大纲页与已生成大纲页共用；chosenId 标注当前采用者）
+function outlineCandidatesHtml(){
+  const cands = state._outlineCandidates;
+  if(!cands || !Array.isArray(cands.items) || !cands.items.length) return '';
+  const cards = cands.items.map(it=>{
+    const od = (it && it.outline) || {};
+    const mainLine = (od.structure && od.structure.mainLine) || '';
+    const adopted = cands.chosenId === it.id;
+    return `<div class="card" style="margin-top:10px">
+      <div class="card-head-row">
+        <b style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(od.title||'未命名')} <span class="muted">［${esc(it.label||'候选')}］</span></b>
+        ${adopted?'<b style="color:var(--ok, #2e9e5b);white-space:nowrap">✅ 当前采用</b>':`<button type="button" class="btn small primary" data-cand-adopt="${esc(it.id)}" style="white-space:nowrap">▶ 选用此版</button>`}
+      </div>
+      <p class="sub" style="margin:6px 0 0">${esc(String(od.logline||'').slice(0,120))}${String(od.logline||'').length>120?'…':''}</p>
+      ${mainLine?`<p class="muted" style="margin:4px 0 0">主线：${esc(String(mainLine).slice(0,80))}${String(mainLine).length>80?'…':''}</p>`:''}
+      <div class="btn-row" style="margin-top:8px">
+        <button type="button" class="btn small ghost" data-cand-prev="${esc(it.id)}">👁 预览</button>
+      </div>
+    </div>`;
+  }).join('');
+  return `<div id="outlineCands">
+    <p class="muted" style="margin:10px 0 0">🧭 本批候选大纲（${cands.items.length} 个，${new Date(cands.batchTs).toLocaleString()}）：选用后未选候选自动存入「📚 大纲版本」历史，可随时切回。</p>
+    ${cards}
+  </div>`;
+}
+
+// v230/3.3：采用候选大纲（点击 → confirm 确认 → 生效；被替换的当前大纲与未选候选均入历史）
+function adoptOutlineCandidate(id){
+  const cands = state._outlineCandidates;
+  if(!cands || !Array.isArray(cands.items)) return;
+  const it = cands.items.find(x=>x && x.id===id);
+  if(!it) return;
+  if(cands.chosenId === id){ toast('该候选已是当前采用版本'); return; }
+  if(!window.confirm('选用后：未选候选将存入历史版本，当前大纲自动入历史，已写正文按章节同步规则保留。确定？')) return;
+  applyOutlineObject(JSON.parse(JSON.stringify(it.outline)), { replacedLabel: '被替换的上一版' });
+  // 未选用的其他候选逐个入历史（label 标注；上一批的当前采用者即当前大纲，已在上面入历史，不重复）
+  cands.items.forEach(x=>{
+    if(!x || x.id===id || x.id===cands.chosenId) return;
+    if(x.outline) snapshotOutlineLabel(x.outline, `${x.label||'候选'}·未选用`);
+  });
+  cands.chosenId = id;
+  persist(); render();
+  toast(`已采用「${it.label||'候选'}」`);
+}
+
+// v230/3.3：候选大纲预览（gs-overlay 弹窗；无章节列表时展示 structure.chapterPlan 分组）
+function previewOutlineCandidate(id){
+  const cands = state._outlineCandidates; if(!cands || !Array.isArray(cands.items)) return;
+  const it = cands.items.find(x=>x && x.id===id); if(!it) return;
+  const od = it.outline||{};
+  const chapRows = (Array.isArray(od.chapters) && od.chapters.length)
+    ? od.chapters.map((c,i)=>`${i+1}. ${esc((c&&c.title)||'')}`).join('<br>')
+    : (()=>{ const cp = od.structure && od.structure.chapterPlan; if(!cp || typeof cp!=='object') return '';
+        return Object.keys(cp).map(k=>`<b>${esc(k)}</b>：${esc((Array.isArray(cp[k])?cp[k]:[]).join('、'))}`).join('<br>'); })();
+  const ov = document.createElement('div'); ov.id='candPrevPanel'; ov.className='gs-overlay';
+  ov.innerHTML = `<div class="gs-modal">
+    <div class="gs-modal-head"><b>预览 · ${esc(it.label||'候选')}</b><button class="gs-x" data-cp2-close>✕</button></div>
+    <div class="cv-pre" style="padding:12px;max-height:60vh;overflow:auto"><b>${esc(od.title||'')}</b><br><span class="muted">${esc(od.logline||'')}</span><br><br>${chapRows}</div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-cp2-close]').onclick = ()=> ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+}
+
+// v230/3.5：「🔄 重生成大纲」——再生产一批新候选；当前大纲与上一批候选自动入历史，不丢失
+async function regenOutlineBatch(btn){
+  const cands = state._outlineCandidates;
+  const cur = cands && cands.chosenId ? '（当前采用：' + ((cands.items.find(x=>x&&x.id===cands.chosenId)||{}).outline||{}).title + '）' : '';
+  if(!window.confirm(`将再生成一批 ${OUTLINE_CANDIDATE_N} 个新候选${cur}；当前大纲与上一批候选自动存入历史版本，不会丢失。继续？`)) return;
+  if(cands && Array.isArray(cands.items)){
+    snapshotOutline('重生成前·原大纲');
+    cands.items.forEach(x=>{ if(x && x.outline && x.id!==cands.chosenId) snapshotOutlineLabel(x.outline, `${x.label||'候选'}·未选用`); });
+  }
+  state._outlineCandidates = null;
+  await genOutlineMulti(btn);
+}
+
 // 4.5：genOutline 改造——走 callAIWithContract 校验；保留 title/logline/anchor/thesis/structure；
 // chapters 数量一致时保留旧标题；锚点前移（直接使用 AI 返回的 anchor/thesis，不再事后提取）。
 async function genOutline(){
@@ -9116,59 +9386,10 @@ async function genOutline(){
     const txt = await callAIGuarded('outline', null, {temperature: resolveActiveSpec().outlineTemp, maxTokens: 8192, signal: _abortCtl?.signal});
     const o = extractJsonObject(txt);
     if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()) throw new Error('未解析到书名/简介');
-    // 4.7 Pro（3.2）：校验 chapterPlan 覆盖（数量不符将被程序拒绝）
-    const _N = chapterCountVal() || 30;
-    const covered = (o.structure && o.structure.chapterPlan)
-      ? Object.values(o.structure.chapterPlan).flat().length : 0;
-    if(covered !== _N){
-      throw new Error(`chapterPlan 覆盖 ${covered} 章，与预设 ${_N} 章不符`);
-    }
-    // 保留旧章节标题（如果数量一致）
-    const oldChapters = (state.outline && state.outline.chapters) || [];
-    const newN = state.chapterCount || oldChapters.length;
-    if(newN && oldChapters.length === newN){
-      o.chapters = oldChapters;
-    } else {
-      o.chapters = [];
-    }
-    // 沿用旧词典（4.5 注：在覆盖 state.outline 前读取，否则"沿用旧词典"永远失效）
-    const prevGloss = (state.outline && state.outline.glossary && sourceHasGlossary(state.outline.glossary)) ? state.outline.glossary : null;
-    snapshotOutline();
-    state.outline = o;
-    normalizeOutline(state.outline);   // 4.6 Plus：outline 防御归一化（第 1 章调用点：genOutline 赋值后）
-    state.outlineConfirmed = false;
-    // 简介字数检查
-    const _ll = String(o.logline||'').trim().length;
-    const _lr = state.loglineRange||{};
-    const _lo = Math.min(Number.isFinite(_lr.min)?_lr.min:300, Number.isFinite(_lr.max)?_lr.max:700);
-    const _hi = Math.max(Number.isFinite(_lr.min)?_lr.min:300, Number.isFinite(_lr.max)?_lr.max:700);
-    if(_ll < _lo || _ll > _hi){ toast(`提示：简介当前 ${_ll} 字，目标 ${_lo}—${_hi} 字，未落在区间内。`); }
-    if(prevGloss) o.glossary = prevGloss;
-    else if(!o.glossary) o.glossary = {characters:[], places:[], propernouns:[]};
-    // 4.9 修复：应用「导入设定」暂存的结构化设定（生成大纲前点击导入设定时暂存于 state.pendingV45），
-    // 使导航灯塔/种子人物/种子地点自动落到这份真实大纲上，然后清空待应用槽位。
-    if(state.pendingV45){
-      applyV45ToOutline(o, state.pendingV45);
-      state.pendingV45 = null;
-    }
-    // 4.10 修复：大纲 AI 已不再输出 navBeacon（确认：大纲需要 anchor/thesis，不需要 navBeacon）。
-    // 但 navBeacon 仍被 AIBus/规划师/沙盘等下游消费，这里用优化构想简报 _lastPolishBrief 回填，保住「导航灯塔」上下文；
-    // 若已通过「导入设定」带入 navBeacon 或已存在，则不覆盖。
-    if(!o.navBeacon && state._lastPolishBrief){
-      const _b = state._lastPolishBrief;
-      o.navBeacon = {
-        genre: String(_b.genre||'').trim(),
-        protagonist: String(_b.protagonist||'').trim(),
-        coreConflict: String(_b.coreConflict||'').trim(),
-        tone: String(_b.style||'').trim()
-      };
-    }
-    o.userIdea = state.idea;
-    if(!Array.isArray(o.chapterPlans)) o.chapterPlans = [];
-    // 如果 chapters 已重建，同步 state.chapters
-    if(o.chapters.length){
-      state.chapters = o.chapters.map(c=>({title:c.title, content:'', strip:'', confirmed:false}));
-    }
+    // v230/T3+3.3：章数硬校验已拆除（chapterPlan 与章数解耦），落盘段抽取为 applyOutlineObject 共用——
+    // genOutline 与多候选「选用此版」两条路走同一函数（含：章数软检查/旧标题保留/旧词典沿用/当前大纲入历史/
+    // 简介字数 toast/pendingV45 应用/navBeacon 回填/userIdea/chapterPlans 初始化/state.chapters 同步）
+    applyOutlineObject(o, { replacedLabel: '被替换的上一版' });
     markAIDone('outline');   // 4.8（6.4）：成功后标记完成
     persist(); render();
     toast('大纲已生成');
@@ -9186,11 +9407,15 @@ async function genOutline(){
 }
 
 // 4.7 Pro（3.2 原码）：若优化构想产出了 brief，将其注入大纲 AI 的【优化构想简报】
+// v230/1-C：新 PRO 输出纯文本、无 JSON brief——无 brief 时回退用 _lastPolishIdeaText（最近一次纯文本优化稿，截 800 字）注入，
+// 保住构想→大纲的上下文传递；大纲忠实度闸比对源仍是 state.idea 用户原文，不受影响。
 function formatNavBeaconForOutline(){
   // 若 4.7 Pro 优化构想生成了 brief，可将其注入大纲 AI
   const b = state._lastPolishBrief;
-  if(!b) return '';
-  return `题材：${b.genre || ''}\n主角：${b.protagonist || ''}\n核心冲突：${b.coreConflict || ''}\n风格：${b.style || ''}`;
+  if(b) return `题材：${b.genre || ''}\n主角：${b.protagonist || ''}\n核心冲突：${b.coreConflict || ''}\n风格：${b.style || ''}`;
+  const t = String(state._lastPolishIdeaText||'').trim();
+  if(t) return t.slice(0, 800) + (t.length > 800 ? '\n（已截断）' : '');
+  return '';
 }
 
 // 4.5：大纲输出 schema 校验（title/logline/anchor/thesis/structure.mainLine 完整性）
@@ -10309,9 +10534,9 @@ function applyChRawResponse(i, raw){
 // 长篇：写作范式选择器（结构 + 可复用词典，均折叠；节奏/标题/质量 v10.18/10.60 移除）
 // 长篇：写作范式选择器（可复用词典折叠；结构/节奏/标题风格已移除 v11）
 function loglineRangeHtml(){
-  const lr = state.loglineRange || {min:300, max:700};
-  const _m = Number.isFinite(lr.min)?Math.max(1,Math.min(5000,Math.floor(lr.min))):300;
-  const _x = Number.isFinite(lr.max)?Math.max(1,Math.min(5000,Math.floor(lr.max))):700;
+  const lr = state.loglineRange || {min:100, max:300};
+  const _m = Number.isFinite(lr.min)?Math.max(1,Math.min(5000,Math.floor(lr.min))):100;
+  const _x = Number.isFinite(lr.max)?Math.max(1,Math.min(5000,Math.floor(lr.max))):300;
   const _lo = Math.min(_m,_x), _hi = Math.max(_m,_x);
   return `<div class="logline-range">
     <span class="llr-label">简介字数范围：</span>
