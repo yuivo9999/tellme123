@@ -1517,3 +1517,14 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 }
 .ne-banner.warn{ background:color-mix(in srgb, var(--warn) 12%, var(--panel2)); border-color:color-mix(in srgb, var(--warn) 40%, var(--line)); }
 .ne-banner b{ font-weight:700; }
+
+/* v225/P4：规划师阶段栏"半程态"琥珀色（进度 N/M，未完成不亮绿灯） */
+.cp-stage.partial .cp-dot{ background:rgba(184,134,11,.22); color:#b8860b; }
+.cp-dot.partial{ color:#b8860b; font-size:10px; }
+
+/* v226/8.2：词典「🆕 新增」折叠态角标（悬停 title 显示来源章节 + 真实入库时间） */
+.gs-newtag{ font-size:10px; color:#b8860b; background:rgba(184,134,11,.12); border-radius:8px; padding:1px 6px; margin-left:6px; white-space:nowrap; flex-shrink:0; }
+
+/* v226/8.2：「🆕 新增」面板「定位」跳转后的高亮闪烁 */
+@keyframes gsFlashKf{ 0%,60%{ background:rgba(184,134,11,.18); outline:2px solid rgba(184,134,11,.55); outline-offset:-2px; } 100%{ background:transparent; outline:2px solid transparent; } }
+.gs-flash{ animation: gsFlashKf 1.6s ease-out both; border-radius:8px; }
