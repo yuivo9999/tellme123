@@ -196,6 +196,13 @@ let uidSeq = 1000;
 let genBatchN = 2;   // v1.0.120 批量生成多章：当前步进/预设选定的章数（默认 2，等效旧「下一批 2 章」）
 function remainingEmptyChapters(){ return (state.chapters||[]).filter(c=> !(c.content && String(c.content).trim())).length; }
 function uid(p){ return (p||'id')+(++uidSeq)+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }   // v1.0.137 fix：原仅自增序号，刷新页面后 uidSeq 重置回 1000，新增组会与历史组拿到相同 ID（如两个 g1001），导致组间串名/串 Key。现追加时间戳+随机段保证跨会话唯一；会话内自增段保留，同会话也绝不重复。旧数据中的短 ID 仅作比较用、不解析格式，完全兼容。
+// v227「使用不同AI」分任务模型：任务档键清单（UI 分组渲染与 resolveActiveSpec 覆盖解析共用）。
+// 档位语义与 UI 分组见《使用不同ai.md》§3.2；调用点标注映射见同文 §1.3；测试连接（恒用全局）不在清单内。
+const TM_KEYS = ['chapter','outline','planSummary','planBeats','plannerTitles','plannerAux',
+  'idea','titleAdvice','contentAdvice','sandbox',
+  'glossary','subplot','strip','rolling','audit',
+  'assets','recipe'];
+
 function defaultModels(){ return [
   {name:'deepseek-v4-pro', label:'deepseek-v4-pro（质量最高，推荐）', kind:'pro'},
   {name:'deepseek-v4-flash', label:'deepseek-v4-flash（最快/最便宜）', kind:'flash'},
@@ -240,6 +247,16 @@ function normalizeCfg(cfg){
   } else {
     cfg.active = { groupId:null, keyId:null, model:'' };
   }
+  // v227 分任务模型映射归一化：缺失/字段不全的三元组一律回落 ''（=跟随全局 active，旧存档零迁移）。
+  // 必须存「组+账号+模型」完整三元组：只存模型名会发生拿 A 组 Key 调 B 组模型的串号事故（上方组 ID 自愈逻辑即为此类前科的遗迹）。
+  const _srcTM = (cfg.taskModels && typeof cfg.taskModels === 'object') ? cfg.taskModels : {};
+  const _tm = {};
+  TM_KEYS.forEach(k=>{
+    const v = _srcTM[k];
+    _tm[k] = (v && typeof v==='object' && v.groupId && v.keyId && v.model)
+      ? { groupId:String(v.groupId), keyId:String(v.keyId), model:String(v.model) } : '';
+  });
+  cfg.taskModels = _tm;
   return cfg;
 }
 function getCfg(){
@@ -248,13 +265,28 @@ function getCfg(){
 function saveCfg(cfg){ localStorage.setItem(KEY_CFG, JSON.stringify(cfg)); }
 
 // 解析「当前生成使用」的具体请求参数（来源唯一，组→账号→模型）。
-function resolveActiveSpec(){
+// v227 分任务模型：传入 taskKey 且 cfg.taskModels[taskKey] 为完整三元组时按任务覆盖（组仍存在才生效，否则回落全局）；
+// 不传参 = 现状全局行为，30 个既有调用点未标注 taskKey 时与 v226 逐字节一致（回归红线）。
+function resolveActiveSpec(taskKey){
   const cfg = getCfg();
   const act = cfg.active || {};
-  const group = cfg.groups.find(g=>g.id===act.groupId) || cfg.groups[0] || {};
-  const key = (group.keys||[]).find(k=>k.id===act.keyId) || (group.keys||[])[0] || {};
-  const model = (group.models||[]).find(m=>m.name===act.model) || (group.models||[])[0] || {};
+  let group = cfg.groups.find(g=>g.id===act.groupId) || cfg.groups[0] || {};
+  let key = (group.keys||[]).find(k=>k.id===act.keyId) || (group.keys||[])[0] || {};
+  let model = (group.models||[]).find(m=>m.name===act.model) || (group.models||[])[0] || {};
+  // 覆盖解析：温度字段不受影响——模型与温度正交，分任务温度照常生效
+  const _tm = taskKey ? (cfg.taskModels||{})[taskKey] : null;
+  let _overridden = false;
+  if(_tm){
+    const tg = cfg.groups.find(g=>g.id===_tm.groupId);
+    if(tg){
+      const tk = (tg.keys||[]).find(k=>k.id===_tm.keyId) || (tg.keys||[])[0] || {};
+      const tmod = (tg.models||[]).find(m=>m.name===_tm.model) || (tg.models||[])[0] || {};
+      group = tg; key = tk; model = tmod; _overridden = true;
+    }
+  }
   return {
+    taskKey: taskKey || '',   // v227 请求日志归因用
+    taskOverride: _overridden,   // v227 true=本次请求被分任务映射覆盖（日志标注「🎯分任务」）
     groupId: group.id, groupLabel: group.label,
     keyId: key.id, keyLabel: key.label,
     baseUrl: (group.baseUrl || 'https://api.deepseek.com').replace(/\/+$/, ''),
@@ -742,7 +774,7 @@ function openAiLogPanel(){
       <div class="ailog-head">
         <span class="ailog-time">${fmtTs(r.ts)}</span>
         <span class="ailog-task">${esc(task||'（无任务名）')}</span>
-        <span class="ailog-meta">${r.temp!=null?('🌡 '+r.temp):''} · ${r.ms!=null?(r.ms+'ms'):''} · <b class="${r.ok?'ok':'err'}">${r.ok?'✓':'✗'}</b></span>
+        <span class="ailog-meta">${r.temp!=null?('🌡 '+r.temp):''} · ${r.ms!=null?(r.ms+'ms'):''} · <b class="${r.ok?'ok':'err'}">${r.ok?'✓':'✗'}</b>${r.tmo?` · 🎯${esc(String(r.tm||''))}（分任务覆盖）`:''}</span>
         <button type="button" class="btn small ghost" data-ailog-toggle="${ri}">展开</button>
       </div>
       <div class="ailog-body hidden" data-ailog-body="${ri}">
@@ -782,7 +814,7 @@ function openAiLogPanel(){
 }
 function closeAiLogPanel(){ const p=$('#ailogPanel'); if(p) p.remove(); }
 
-async function callDeepSeek(system, user, {temperature=null, topP=null, signal=null, maxTokens=null, onStream=null, retry=2}={}){
+async function callDeepSeek(system, user, {temperature=null, topP=null, signal=null, maxTokens=null, onStream=null, retry=2, taskKey=null}={}){
   const _t0 = Date.now();
   // P2-1 记录基础信息（task 用 system 前 24 字近似任务名；具体字段在成功/失败收尾时补全）
   // v2.4 记录实际完整长度 sysLen/userLen/respLen，日志展示"前500字/共N字"消除误解
@@ -795,12 +827,13 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
     sysLen: String(system||'').length,
     userLen: String(user||'').length,
     respLen: 0,
-    resp: '', ms: null, ok: false, err: ''
+    resp: '', ms: null, ok: false, err: '', tm: taskKey || '', tmo: false   // v227 分任务模型归因字段
   };
   let lastErr;
   for(let attempt=0; attempt<=retry; attempt++){
     try{
-      const s = resolveActiveSpec();
+      const s = resolveActiveSpec(taskKey);
+      if(taskKey) _rec.tmo = !!s.taskOverride;   // v227 日志可见「本次请求被分任务映射覆盖」
       if(!s.apiKey) throw new Error('请先在 ⚙️ 配置并选择要使用的 AI 账号（API Key）');
       const url = s.baseUrl + '/chat/completions';
       const streaming = typeof onStream === 'function';
@@ -2320,7 +2353,7 @@ async function aiRecipeProduce(system, user){
   let list = null;
   for(let attempt=1; attempt<=2; attempt++){
     const sys = attempt>1 ? String(system)+FIX : system;
-    const raw = unwrapAIResult(await callDeepSeek(sys, user, opt));
+    const raw = unwrapAIResult(await callDeepSeek(sys, user, Object.assign({}, opt, {taskKey:'recipe'})));
     const cands = prepRecipeList(parseAiJsonList(raw));
     if(Array.isArray(cands) && cands.length){
       list = cands;
@@ -3317,6 +3350,8 @@ function validateAIOutput(kind, raw, ctx){
 // 4.8 旗舰版（第 4 章 4.4）：新形态 callAIGuarded(kind, extra, opts)——system / user / ctx 全部由 AIBus 派生；
 // 兼容旧形态 callAIGuarded(kind, system, user, ctx, opts)（第二参为字符串时按 4.7 逻辑执行）。
 async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
+  // v227 分任务模型：kind（'idea'/'outline'）在 TM_KEYS 内时透传为 taskKey，新旧形态共用；其余 kind 不注入（跟随全局）
+  const _tmKey = TM_KEYS.includes(kind) ? kind : null;
   // 4.9 修复：callDeepSeek 已改为返回 {text, finishReason, usage} 对象，必须经 unwrapAIResult 解包为纯文本后再校验/回传；
   // 否则对象被 String() 转成 "[object Object]"，JSON 解析必然失败（大纲误报「SCHEMA 返回不是对象」、构想误报「EMPTY」），
   // 且回传给调用方的也是对象导致结果永远无法落盘展示。此处同时检测 finishReason==='length'（输出被 max_tokens 截断）并抛出明确错误。
@@ -3329,7 +3364,7 @@ async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
   };
   if(typeof systemOrExtra === 'string'){
     // 4.7 旧形态：callAIGuarded(kind, system, user, ctx, opts)
-    const txt = _unwrap(await callDeepSeek(systemOrExtra, userOrOpts, opts));
+    const txt = _unwrap(await callDeepSeek(systemOrExtra, userOrOpts, Object.assign({}, opts||{}, _tmKey?{taskKey:_tmKey}:{})));
     const report = validateAIOutput(kind, txt, ctx);
     if(!report.ok){
       throw new Error(`${kind} AI 输出校验失败：${report.code} ${report.details || ''}`);
@@ -3338,7 +3373,7 @@ async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
   }
   // 4.8 新形态：callAIGuarded(kind, extra, opts)
   const extra = systemOrExtra || {};
-  const callOpts = userOrOpts || {};
+  const callOpts = Object.assign({}, userOrOpts||{}, _tmKey?{taskKey:_tmKey}:{});   // v227 分任务模型透传
   const system = getSystemPrompt(kind, extra);
   const user = buildAIPrompt(kind, extra);
   const busCtx = AIBus.get(kind, extra);
@@ -4236,7 +4271,7 @@ async function extractNewGlossary(bodyTexts){
   if(!body.trim()) return {characters:[], places:[], propernouns:[]};
   // 4.8 旗舰版（P2）：user 统一经 buildAIPrompt('glossary') 从 AIBus 上下文组装（与旧内联拼装等价）
   const user = buildAIPrompt('glossary', { content: body });
-  const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.25, topP: 0.5}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样，提升 JSON 合规率
+  const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.25, topP: 0.5, taskKey:'glossary'}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样，提升 JSON 合规率
   const j = parseJson(txt) || {};
   // 4.7 Pro（3.8）：解析后校验（不阻断，仅告警；7 字段缺失由 keepChar + completeCharFields 兜底补齐）
   const _glRep = validateGlossaryExtract(j);
@@ -4325,7 +4360,7 @@ async function extractGlossaryFromChapter(i){
   startBgTask();
   try{
     const user = buildAIPrompt('glossary', { content: body.slice(0, 50000) });
-    const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.25, topP: 0.5}));
+    const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.25, topP: 0.5, taskKey:'glossary'}));
     const n = mergeExtractedGlossary(sanitizeGlossaryExtract(parseJson(txt) || {}), i+1);
     if(n.total > 0){ persist(); toast(`第 ${i+1} 章新增词典：+${n.c} 人物（7字段）/ +${n.p} 地名 / +${n.k} 专名`); }
   }catch(e){ /* 静默失败，不阻塞正文 */ }
@@ -4341,7 +4376,7 @@ async function extractSubplotUpdates(chIdx, content){
   if(!body) return {subplots:[]};
   // 4.8 旗舰版（P2）：user 统一经 buildAIPrompt('subplot') 从 AIBus 上下文组装（与旧内联拼装等价）
   const user = buildAIPrompt('subplot', { idx: chIdx });
-  const txt = unwrapAIResult(await callDeepSeek(SUBPROGRESS_UPDATE_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.25, topP: 0.5}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样
+  const txt = unwrapAIResult(await callDeepSeek(SUBPROGRESS_UPDATE_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.25, topP: 0.5, taskKey:'subplot'}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样
   const j = parseJson(txt) || {};
   // 4.7 Pro（3.7）：解析后校验（不阻断，仅告警）
   const _subRep = validateSubplotOutput(j);
@@ -6014,7 +6049,7 @@ async function scoreChapterTension(i, text){
   const prev = state._tensionCurve && state._tensionCurve.length ? state._tensionCurve[state._tensionCurve.length-1] : null;
   const user = `【上一章张力参考】${prev ? `外在${prev.external}/内心${prev.internal}/信息差${prev.mystery}` : '（无）'}\n\n【本章正文（第 ${i+1} 章）】\n${text.slice(0, 12000)}`;
   try{
-    const txt = unwrapAIResult(await callDeepSeek(TENSION_SCORE_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.3, topP: 0.5}));
+    const txt = unwrapAIResult(await callDeepSeek(TENSION_SCORE_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.3, topP: 0.5, taskKey:'audit'}));
     const j = parseJson(txt) || {};
     const clamp = n => Math.max(0, Math.min(10, Math.round(Number(n)||0)));
     const score = {
@@ -6252,7 +6287,7 @@ async function extractStoryAnchors(opts){
   const btn = opts.btn;
   if(btn){ btn.disabled = true; busy(btn,true,'提取中…'); }
   try{
-    const txt = unwrapAIResult(await callDeepSeek(ANCHOR_EXTRACT_SYS, `【完整简介】\n${body}`, {temperature:0.2, topP:0.5, signal:_abortCtl?.signal, maxTokens:clampMaxTokens('json')}));   // 4.8 旗舰版（板块二-2/3）：JSON 窄采样 + 限长
+    const txt = unwrapAIResult(await callDeepSeek(ANCHOR_EXTRACT_SYS, `【完整简介】\n${body}`, {temperature:0.2, topP:0.5, signal:_abortCtl?.signal, maxTokens:clampMaxTokens('json'), taskKey:'audit'}));   // 4.8 旗舰版（板块二-2/3）：JSON 窄采样 + 限长
     const j = parseJson(txt) || {};
     const a = clampAnchor(j.anchor, 60), t = clampAnchor(j.thesis, 120);
     if(!a && !t){ if(!opts.silent) toast('未提取到有效核心定位/深层命题'); return; }
@@ -6596,7 +6631,7 @@ async function ctAiRefineAdvice(){
     const ctx = buildCtAdviceCtx();
     const {system, user} = ctAiRefinePrompt(ctx, raw);
     const spec = resolveActiveSpec();
-    const res = unwrapAIResult(await callDeepSeek(system, user, {temperature: spec.titleTemp, topP:0.5, maxTokens:clampMaxTokens('json')}));   // 4.8 旗舰版（板块二-2/3）：建议类 JSON 窄采样 + 限长
+    const res = unwrapAIResult(await callDeepSeek(system, user, {temperature: spec.titleTemp, topP:0.5, maxTokens:clampMaxTokens('json'), taskKey:'titleAdvice'}));   // 4.8 旗舰版（板块二-2/3）：建议类 JSON 窄采样 + 限长
     const list = parseAiJsonList(res);
     const ls = Array.isArray(list) ? list.filter(x=> x && String(x.text||'').trim()) : [];
     if(!ls.length) throw new Error('AI 未返回有效建议，请重试');
@@ -7295,7 +7330,7 @@ function glossaryCardHtml(){
       </h3>
     </div>
     <div class="gs-card-body"${collapsed?' style="display:none"':''}>
-    <p class="sub">全文一致性基准：生成正文时一律使用以下人名/地名/专名，不得自造新名。生成章节时，人物身份/岁数/性别/外貌/爱好/关系/性格会<b>完整注入</b>章节 AI（字段留空则不注入）；自动提取的新人物会带全 7 项设定（推断不出填「未知」）。建议用「🔍 字段检查」确认人物字段齐全，避免 AI 信息不足写错。🧵 <b>副线</b>由章节正文 AI 在生成后自动追踪（新增/推进/收束），你只可查看与纠偏，不新增。</p>
+    <p class="sub">词典</p>
     <div class="gs-panel" id="gsHistory" hidden><div class="gs-panel-title">🕘 历史更改</div><div id="gsHistoryList"></div></div>
     ${(['char','place','proper','sub']).map(t=>{
       const fold = !!(state.gsCatFold && state.gsCatFold[t]);
@@ -9405,7 +9440,7 @@ async function genPlannerSummary(btn, opts){
       const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（批次 ${bi+1}/${batches.length}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
       _streamBuf = '';
       const cands = await Promise.all([
-        callAIWithContract(callDeepSeek(PLANNER_SUMMARY_SYS, user, {temperature:0.35, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerSummaryBatch, taskName:`主线简述批次 ${bi+1}/${batches.length}-A`}),
+        callAIWithContract(callDeepSeek(PLANNER_SUMMARY_SYS, user, {temperature:0.35, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planSummary'}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerSummaryBatch, taskName:`主线简述批次 ${bi+1}/${batches.length}-A`}),
       ]);
       const best = pickBestChapterPlan(cands, n);
       if(!best.ok) throw new Error(`批次 ${bi+1} 失败：${best.error || '所有候选均无效'}`);
@@ -9465,7 +9500,7 @@ async function genPlannerTitles(btn, opts){
     const user = titlesGenUser({ req:'' });
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
     const cands = await Promise.all([
-      callAIWithContract(callDeepSeek(REGEN_TITLES_SYS, user, {temperature:0.3, topP:0.5, onStream, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'titles', taskName:'规划师-标题-A'}),
+      callAIWithContract(callDeepSeek(REGEN_TITLES_SYS, user, {temperature:0.3, topP:0.5, onStream, signal:_abortCtl?.signal, taskKey:'plannerTitles'}), {needJson:true, expectedCount:n, countPath:'titles', taskName:'规划师-标题-A'}),
     ]);
     const best = pickBestTitles(cands, n);
     if(!best.ok) throw new Error(best.error);
@@ -9509,7 +9544,7 @@ async function genPlannerBeats(btn, opts){
       const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（批次 ${bi+1}/${batches.length}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
       _streamBuf = '';
       const cands = await Promise.all([
-        callAIWithContract(callDeepSeek(PLANNER_BEATS_SYS, user, {temperature:0.35, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerBeatsBatch, taskName:`节拍表批次 ${bi+1}/${batches.length}-A`}),
+        callAIWithContract(callDeepSeek(PLANNER_BEATS_SYS, user, {temperature:0.35, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerBeatsBatch, taskName:`节拍表批次 ${bi+1}/${batches.length}-A`}),
       ]);
       const best = pickBestChapterPlan(cands, n);
       if(!best.ok) throw new Error(`批次 ${bi+1} 失败：${best.error || '所有候选均无效'}`);
@@ -9569,7 +9604,7 @@ async function genPlannerGlossary(btn, opts){
     if(sourceHasGlossary((o.glossary)||{})) parts.push(`【现有词典】${JSON.stringify(o.glossary,null,2)}`);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const res = await callAIWithContract(callDeepSeek(PLANNER_GLOSSARY_SYS, user, {temperature:0.3, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal}), {needJson:true, taskName:'规划师-词典'});
+    const res = await callAIWithContract(callDeepSeek(PLANNER_GLOSSARY_SYS, user, {temperature:0.3, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-词典'});
     if(!res.ok) throw new Error(res.error);
     const g = res.data && res.data.glossary;
     if(!g || (!Array.isArray(g.characters) && !Array.isArray(g.places) && !Array.isArray(g.propernouns))) throw new Error('词典结构缺失');
@@ -9613,7 +9648,7 @@ async function genPlannerForeshadow(btn, opts){
     parts.push(`【全书章数】${total}`);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const res = await callAIWithContract(callDeepSeek(PLANNER_FORESHADOW_SYS, user, {temperature:0.3, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal}), {needJson:true, taskName:'规划师-伏笔'});
+    const res = await callAIWithContract(callDeepSeek(PLANNER_FORESHADOW_SYS, user, {temperature:0.3, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-伏笔'});
     if(!res.ok) throw new Error(res.error);
     const fs = (res.data && Array.isArray(res.data.foreshadows)) ? res.data.foreshadows : [];
     if(!fs.length) throw new Error('未提取到伏笔条目');
@@ -9724,7 +9759,7 @@ async function sandboxBranch(choicePointIdx, options){
   if(nextTitles) parts.push(`【后续标题约束】${nextTitles}`);
   parts.push(`【分支选项】\n${(options||[]).map((opt,idx)=>`${idx+1}. ${opt}`).join('\n')}`);
   const user = parts.join('\n\n');
-  const txt = unwrapAIResult(await callDeepSeek(SANDBOX_BRANCH_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.4, topP: 0.85}));
+  const txt = unwrapAIResult(await callDeepSeek(SANDBOX_BRANCH_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.4, topP: 0.85, taskKey:'sandbox'}));
   const j = parseJson(txt) || {};
   const branches = (Array.isArray(j.branches)?j.branches:[]).map((b,idx)=>({
     id: String(b.id || `opt${idx+1}`),
@@ -10201,7 +10236,7 @@ async function chSumGenerate(i, genBtn){
   const sys = getSystemPrompt('strip', { targetZhs: target });
   const user = buildAIPrompt('strip', { idx: i, targetZhs: target });
   try{
-    const txt = unwrapAIResult(await callDeepSeek(sys, user, {temperature: 0.3, topP: 0.5, signal: _abortCtl?.signal, maxTokens: clampMaxTokens('strip')}));   // 4.8 旗舰版（板块二-2/3）：梗概类窄采样 + 限长
+    const txt = unwrapAIResult(await callDeepSeek(sys, user, {temperature: 0.3, topP: 0.5, signal: _abortCtl?.signal, maxTokens: clampMaxTokens('strip'), taskKey:'strip'}));   // 4.8 旗舰版（板块二-2/3）：梗概类窄采样 + 限长
     let strip = String(txt||'').trim();
     if(!strip){ toast('未生成到本章梗概'); return; }
     strip = strip.replace(/^```[\s\S]*?\n/, '').replace(/\n```\s*$/,'').trim();   // 去 markdown 代码块围栏
@@ -10366,7 +10401,7 @@ async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride,
     let partial = (state._chapterPartial && state._chapterPartial[i]) || '';
     const _onStream = (delta)=>{ partial += delta; state._chapterPartial[i] = partial; if(onStream) onStream(delta); };
     try{
-      txt = unwrapAIResult(await callDeepSeek(longChapterSys(styleOverride), user, {maxTokens: mt, onStream: _onStream, temperature: dynamicChapterParams(i).temperature, topP: dynamicChapterParams(i).topP, signal: signal || _abortCtl?.signal}));
+      txt = unwrapAIResult(await callDeepSeek(longChapterSys(styleOverride), user, {maxTokens: mt, onStream: _onStream, temperature: dynamicChapterParams(i).temperature, topP: dynamicChapterParams(i).topP, signal: signal || _abortCtl?.signal, taskKey:'chapter'}));
       delete state._chapterPartial[i];
       persist();
     }catch(e){
@@ -10750,7 +10785,7 @@ async function personaDriftCheck(i, text){
   });
   const cards = chars.map(c => `${c.name}：identity=${c.identity||'未知'}，age=${c.age||'未知'}，gender=${c.gender||'未知'}，appearance=${c.appearance||'未知'}，hobby=${c.hobby||'未知'}，relation=${c.relation||'未知'}，trait=${c.trait||'未知'}`).join('\n');
   const user = `【人物卡】\n${cards}\n\n【本章正文（第 ${i+1} 章）】\n${text.slice(0, 12000)}`;
-  const txt = unwrapAIResult(await callDeepSeek(PERSONA_DRIFT_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.1, topP: 0.3}));
+  const txt = unwrapAIResult(await callDeepSeek(PERSONA_DRIFT_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.1, topP: 0.3, taskKey:'audit'}));
   const j = parseJson(txt) || {};
   const violations = (Array.isArray(j.violations)?j.violations:[]).filter(v => v && String(v.name||'').trim() && String(v.field||'').trim());
   // 记录本章特质（用于后续 canon 演化，当前仅存储）
@@ -10794,7 +10829,7 @@ function dialogueRatio(text){
 async function extractStyleDNA(text){
   if(!String(text||'').trim()) return null;
   try{
-    const txt = unwrapAIResult(await callDeepSeek(STYLE_FINGERPRINT_SYS, text.slice(0, 15000), {maxTokens: clampMaxTokens('json'), temperature: 0.2, topP: 0.5}));
+    const txt = unwrapAIResult(await callDeepSeek(STYLE_FINGERPRINT_SYS, text.slice(0, 15000), {maxTokens: clampMaxTokens('json'), temperature: 0.2, topP: 0.5, taskKey:'audit'}));
     const j = parseJson(txt) || {};
     const fp = {
       sentenceAvg: Number.isFinite(j.sentenceAvg) ? j.sentenceAvg : 22,
@@ -10983,7 +11018,7 @@ async function generateRollingSummaries(){
     const _hooks = (_l4 && Array.isArray(_l4.unresolvedHooks) && _l4.unresolvedHooks.length)
       ? '【未收束伏笔（摘要须保留相关线索）】\n' + _l4.unresolvedHooks.map(h=>h.text||'').join('、') + '\n\n' : '';
     try{
-      const res = await callDeepSeek(ROLLING_SUMMARY_SYS, _hooks + bodies, {maxTokens: clampMaxTokens('summary'), temperature: 0.3, topP: 0.5});   // 4.8 旗舰版（板块二-2/3）：摘要类窄采样 + 限长
+      const res = await callDeepSeek(ROLLING_SUMMARY_SYS, _hooks + bodies, {maxTokens: clampMaxTokens('summary'), temperature: 0.3, topP: 0.5, taskKey:'rolling'});   // 4.8 旗舰版（板块二-2/3）：摘要类窄采样 + 限长
       o._rollingSummaries.push({key, text: String(res.text||'').trim().slice(0,500)});
       persist();
     }catch(e){ /* 静默失败 */ }
@@ -11359,7 +11394,7 @@ async function aiRefineAdvice(i){
   try{
     const ctx = buildAiRefineCtx(i);
     const {system, user} = aiRefineAdvicePrompt(ctx, raw);
-    const res = unwrapAIResult(await callDeepSeek(system, user, {temperature:0.6, topP:0.5, maxTokens:clampMaxTokens('json')}));   // 4.8 旗舰版（板块二-2/3）：建议类 JSON 窄采样 + 限长
+    const res = unwrapAIResult(await callDeepSeek(system, user, {temperature:0.6, topP:0.5, maxTokens:clampMaxTokens('json'), taskKey:'contentAdvice'}));   // 4.8 旗舰版（板块二-2/3）：建议类 JSON 窄采样 + 限长
     const list = parseAiJsonList(res);
     const ls = Array.isArray(list) ? list.filter(x=> x && String(x.text||'').trim()) : [];
     if(!ls.length) throw new Error('AI 未返回有效建议，请重试');
@@ -11610,10 +11645,10 @@ async function genNChapters(start, n){
           const _userOpt = _fix ? { advice: _fix } : {};
           const _dyn = dynamicChapterParams(idx);
           if(isLong()){
-            const res = await callDeepSeek(longChapterSys(), buildChapterUser(idx, _userOpt), {maxTokens: chapterMaxTokens(), onStream, temperature: _dyn.temperature, topP: _dyn.topP, signal: _abortCtl?.signal});
+            const res = await callDeepSeek(longChapterSys(), buildChapterUser(idx, _userOpt), {maxTokens: chapterMaxTokens(), onStream, temperature: _dyn.temperature, topP: _dyn.topP, signal: _abortCtl?.signal, taskKey:'chapter'});
             txt = res.text; finishReason = res.finishReason;
           } else {
-            const res = await callDeepSeek(PROMPTS.chapterSys + specSysAddition() + '\n\n' + ORIGINALITY_CHAPTER_SYS + chapterStyleNote(), buildChapterUser(idx, _userOpt), {maxTokens: chapterMaxTokens(), temperature: _dyn.temperature, topP: _dyn.topP, signal: (_abortCtl && _abortCtl.signal)});
+            const res = await callDeepSeek(PROMPTS.chapterSys + specSysAddition() + '\n\n' + ORIGINALITY_CHAPTER_SYS + chapterStyleNote(), buildChapterUser(idx, _userOpt), {maxTokens: chapterMaxTokens(), temperature: _dyn.temperature, topP: _dyn.topP, signal: (_abortCtl && _abortCtl.signal), taskKey:'chapter'});
             txt = res.text; finishReason = res.finishReason;
           }
           _chRawBuf = { i:idx, raw: txt, ts: Date.now() };
@@ -11700,7 +11735,7 @@ async function continueTruncatedChapter(i, firstPart, resumeFrom){
   const tail = full.slice(-800);
   const user = `【前文末尾（${resumeFrom ? '已生成但尚未落库的草稿尾部' : '被截断'}）】\n${tail}\n\n【续写要求】\n从上文中断处无缝继续，不要重复任何已有内容，不要重新开头。保持与原文一致的叙事节奏、人物称谓和风格。`;
   let secondPartial = '';
-  const res = await callDeepSeek(longChapterSys(), user, {maxTokens: clampMaxTokens('continue'), onStream: (delta)=>{
+  const res = await callDeepSeek(longChapterSys(), user, {maxTokens: clampMaxTokens('continue'), taskKey:'chapter', onStream: (delta)=>{
     // 4.8 旗舰版（板块一-3）：续写时 partial 应包含前文完整内容 + 新生成内容，避免再次中断后丢失前文
     secondPartial += delta;
     state._chapterPartial[i] = full + secondPartial;
@@ -11883,7 +11918,7 @@ async function genOneChapterNoUI(i){
   try{
     const txt = isLong()
       ? await writeOneChapterContent(i, user)
-      : unwrapAIResult(await callDeepSeek(PROMPTS.chapterSys + specSysAddition() + '\n\n' + ORIGINALITY_CHAPTER_SYS + chapterStyleNote(), user, {temperature: resolveActiveSpec().chapterTemp})).trim();   // v10.8 章节温度 / v10.12 防套路 / v2.0 写作风格
+      : unwrapAIResult(await callDeepSeek(PROMPTS.chapterSys + specSysAddition() + '\n\n' + ORIGINALITY_CHAPTER_SYS + chapterStyleNote(), user, {temperature: resolveActiveSpec().chapterTemp, taskKey:'chapter'})).trim();   // v10.8 章节温度 / v10.12 防套路 / v2.0 写作风格
     state.chapters[i].content = txt;
     persist();
   }catch(e){ /* 继续后续 */ }
@@ -11975,7 +12010,7 @@ async function genCharacters(){
   try{
     // P1-3 覆盖前快照
     if(state.characters && state.characters.length) pushAssetHist('characters', state.characters);
-    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.characterSys, '【完整故事】\n'+fullStoryText()));
+    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.characterSys, '【完整故事】\n'+fullStoryText(), {taskKey:'assets'}));
     state.raw.characters = txt;
     const j = parseJson(txt);
     state.characters = j.characters || [];
@@ -11991,7 +12026,7 @@ async function genScenes(){
   try{
     // P1-3 覆盖前快照
     if(state.scenes && state.scenes.length) pushAssetHist('scenes', state.scenes);
-    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.sceneSys, '【完整故事】\n'+fullStoryText()));
+    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.sceneSys, '【完整故事】\n'+fullStoryText(), {taskKey:'assets'}));
     state.raw.scenes = txt;
     const j = parseJson(txt);
     state.scenes = (j.scenes || []).map(s=>{
@@ -12022,7 +12057,7 @@ async function genCover(){
   try{
     // P1-3 覆盖前快照
     if(state.coverPrompt) pushAssetHist('cover', state.coverPrompt);
-    const txt = unwrapAIResult(await callDeepSeek(sys, user));
+    const txt = unwrapAIResult(await callDeepSeek(sys, user, {taskKey:'assets'}));
     state.coverPrompt = txt.trim();
     persist(); render();
     toast(state.coverWithTitle?'已生成含书名封面提示词':'已生成纯画面封面提示词');
@@ -12049,7 +12084,7 @@ async function genStoryboard(){
       const content = ch.content||'';
       const user = `【本章】第${i+1}章 ${ch.title||oc.title||''}\n主线简述：${(state.outline&&Array.isArray(state.outline.chapterPlans)&&state.outline.chapterPlans[i])?chapterPlanText(state.outline.chapterPlans[i]):''}\n本章正文：\n${content.slice(0,50000)}${content.length>50000?'…':''}\n\n${base}`;
       try{
-        const txt = unwrapAIResult(await callDeepSeek(PROMPTS.storyboardSys, user));
+        const txt = unwrapAIResult(await callDeepSeek(PROMPTS.storyboardSys, user, {taskKey:'assets'}));
         const j = parseJson(txt);
         (j.shots||[]).forEach(s=>{
           s.章节 = i+1;
@@ -12896,6 +12931,153 @@ function updateCfgBadge(){
   const s=_curSpec();
   b.textContent = (s.group?'':'AI') + s.group + ' · ' + (shortModel(s.model)||'未选') + (s.flash?' ⚡':'');
   if(b.title != null) b.title='当前模型：'+s.group+' · '+s.key+' · '+s.model+'（点击切换）';
+  updateTmBadge();   // v227 徽标联动（幂等）
+}
+
+/* --- v227「使用不同AI」分任务模型二级面板（设计见《使用不同ai.md》§3） --- */
+// 档位分组：顺序=创作流水线；同档默认推荐同模型（§3.2 排列逻辑：按写书流程排、三档分组、全局置顶）
+const TM_GROUPS = [
+  { title:'✍️ 重创作（要质量，费用大头，建议主力模型）', keys:[
+    ['chapter','正文生成','全书正文质量与费用大头；所选模型须支持流式（stream）'],
+    ['outline','故事大纲','决定全书骨架，建议质量优先'],
+    ['planSummary','规划师 · 主线简述','JSON，注入每章正文的结构锚'],
+    ['planBeats','规划师 · 节拍表','JSON，逐章情节节拍'],
+    ['plannerTitles','规划师 · 标题定稿','JSON，全书章节标题'],
+    ['plannerAux','规划师 · 词典播种/伏笔','JSON 任务']
+  ]},
+  { title:'💡 建议类（要点子，建议中档模型）', keys:[
+    ['idea','优化构想','对既有构想发散/收敛'],
+    ['titleAdvice','标题 AI 建议','JSON 任务'],
+    ['contentAdvice','章节内容 AI 建议','JSON 任务'],
+    ['sandbox','分支沙盘','JSON 任务']
+  ]},
+  { title:'🔧 轻维护（高频小请求，建议 flash 省钱）', keys:[
+    ['glossary','词典提取','JSON 严谨任务；换弱模型解析失败率会升高（有校验兜底，不阻断）'],
+    ['subplot','副线追踪','JSON 任务'],
+    ['strip','本章梗概（速读）','每章生成后都会调用'],
+    ['rolling','滚动摘要','长篇记忆层，每批正文后调用'],
+    ['audit','一致性巡检（张力/人设/指纹/锚点）','纯 JSON 后台巡检，用户无感']
+  ]},
+  { title:'📦 其他资产', keys:[
+    ['assets','封面/人物/场景/分镜','提示词类产出'],
+    ['recipe','配方产物','AI 配方助手']
+  ]}
+];
+let editTM = null;          // 面板暂存：保存前绝不落盘（对齐设置弹窗 editCfg 模式）
+let _tmEscHandler = null;   // ESC 关闭挂钩（现有 modal 无全局 ESC，本面板自持）
+function tmCustomCount(tm){ return TM_KEYS.filter(k=> tm && tm[k]).length; }
+function updateTmBadge(){
+  const n = tmCustomCount(getCfg().taskModels);
+  const el = $('#tmBadge'); if(el) el.textContent = n ? ('已自定义 '+n+' 项') : '全部跟随全局';
+  const b = $('#cfgBadge'); if(b) b.classList.toggle('tm-on', n>0);
+}
+function tmResolvePreview(triple){
+  if(!triple) return '跟随全局';
+  const cfg = getCfg();
+  const g = cfg.groups.find(x=>x.id===triple.groupId);
+  if(!g) return '⚠️ 服务组不存在（保存后仍会回落全局）';
+  const k = (g.keys||[]).find(x=>x.id===triple.keyId) || (g.keys||[])[0];
+  const m = (g.models||[]).find(x=>x.name===triple.model) || (g.models||[])[0];
+  return '实际:' + (g.label||'') + ' · ' + (k?(k.label||'账号'):'⚠️ 无账号') + ' · ' + (m?m.name:'⚠️ 无模型');
+}
+function openTaskModelPanel(){
+  editTM = JSON.parse(JSON.stringify(getCfg().taskModels || {}));
+  $('#taskModelModal').classList.remove('hidden');
+  const st=$('#tmStatus'); if(st){ st.className='status'; st.textContent=''; }
+  renderTaskModelPanel();
+  _tmEscHandler = (e)=>{ if(e.key==='Escape') requestCloseTaskModelPanel(); };
+  document.addEventListener('keydown', _tmEscHandler);
+}
+function closeTaskModelPanel(){
+  $('#taskModelModal').classList.add('hidden');
+  if(_tmEscHandler){ document.removeEventListener('keydown', _tmEscHandler); _tmEscHandler=null; }
+  editTM = null;
+}
+// 关闭保护：有未保存差异时确认放弃（现有设置弹窗无此保护，本面板新增）
+function requestCloseTaskModelPanel(){
+  if(editTM && JSON.stringify(editTM) !== JSON.stringify(getCfg().taskModels || {})){
+    if(!window.confirm('分任务模型有未保存的更改，放弃并关闭？')) return;
+  }
+  closeTaskModelPanel();
+}
+function refreshTmResetBtn(){
+  const btn=$('#btnTmReset'); if(!btn) return;
+  const n = tmCustomCount(editTM||{});
+  btn.classList.toggle('hidden', n===0);
+  btn.textContent = '全部恢复跟随全局（'+n+' 项自定义）';
+}
+function renderTaskModelPanel(){
+  const body = $('#tmBody'); if(!body) return;
+  const cfg = getCfg();
+  const cur = cfg.active || {};
+  const curGroup = cfg.groups.find(g=>g.id===cur.groupId) || cfg.groups[0] || {};
+  const curKey = (curGroup.keys||[]).find(k=>k.id===cur.keyId) || (curGroup.keys||[])[0];
+  const curModel = (curGroup.models||[]).find(m=>m.name===cur.model) || (curGroup.models||[])[0];
+  const optHtml = (arr, val, ph)=> arr.length
+    ? arr.map(x=>`<option value="${esc(String(x.v))}" ${String(x.v)===String(val)?'selected':''}>${esc(x.t)}</option>`).join('')
+    : `<option value="">${esc(ph)}</option>`;
+  const row = (key, name, note)=>{
+    const tm = editTM[key] || '';
+    const gid = tm ? tm.groupId : '';
+    const grp = cfg.groups.find(g=>g.id===gid);
+    const kid = tm ? tm.keyId : '';
+    const mid = tm ? tm.model : '';
+    return `<div class="tm-row${tm?' tm-custom':''}" data-tm-row="${key}">
+      <div class="tm-head"><span class="tm-name">${esc(name)}</span><span class="tm-note">${esc(note||'')}</span></div>
+      <div class="tm-sels">
+        <select data-tm-sel="group" data-tm-key="${key}">
+          <option value="">跟随全局</option>
+          ${cfg.groups.map(g=>`<option value="${esc(g.id)}" ${gid===g.id?'selected':''}>${esc(g.label)}</option>`).join('')}
+        </select>
+        <select data-tm-sel="key" data-tm-key="${key}" ${grp?'':'disabled'}>${optHtml((grp?(grp.keys||[]):[]).map(k=>({v:k.id,t:k.label||'账号'})), kid, '（该组无账号）')}</select>
+        <select data-tm-sel="model" data-tm-key="${key}" ${grp?'':'disabled'}>${optHtml((grp?(grp.models||[]):[]).map(m=>({v:m.name,t:m.name})), mid, '（该组无模型）')}</select>
+      </div>
+      <div class="tm-preview${tm?'':' tm-follow'}">${esc(tmResolvePreview(tm||null))}</div>
+    </div>`;
+  };
+  body.innerHTML = `
+    <div class="cv-div">全书费用大头 = <b>正文生成</b>；把轻维护任务换成 flash 通常能省一半以上。所有任务仍是单出口串行请求，不会并发多个 AI。deepseek-v4-flash-vision-exp 为带视觉模型，本应用全站纯文本请求，选它无额外收益。</div>
+    <div class="set-block">
+      <div class="set-block-head"><span>◆ 全局默认（未单独设置的任务都用它）</span></div>
+      <div class="tm-preview">${esc((curGroup.label||'AI') + ' · ' + (curKey?(curKey.label||'账号'):'⚠️ 无账号') + ' · ' + (curModel?curModel.name:'⚠️ 无模型'))}（只读；去上方「AI 模型配置」修改）</div>
+    </div>
+    ${TM_GROUPS.map(gr=>`<div class="set-block"><div class="set-block-head"><span>${esc(gr.title)}</span></div>${gr.keys.map(k=>row(k[0],k[1],k[2])).join('')}</div>`).join('')}`;
+  // 三级级联：换组→账号/模型重置为该组第一项；暂存只改 editTM，重渲染由数据派生、无丢失
+  $$('#tmBody [data-tm-sel]').forEach(sel=>{
+    sel.onchange = ()=>{
+      const key = sel.dataset.tmKey, level = sel.dataset.tmSel;
+      const cfgNow = getCfg();
+      const tm = editTM[key] || '';
+      if(level==='group'){
+        if(!sel.value){ editTM[key]=''; }
+        else{
+          const grp = cfgNow.groups.find(g=>g.id===sel.value);
+          editTM[key] = grp ? { groupId:grp.id, keyId:((grp.keys||[])[0]||{}).id||'', model:((grp.models||[])[0]||{}).name||'' } : '';
+        }
+      }else if(tm){
+        if(level==='key') tm.keyId = sel.value;
+        if(level==='model') tm.model = sel.value;
+      }
+      renderTaskModelPanel();
+      refreshTmResetBtn();
+    };
+  });
+  refreshTmResetBtn();
+}
+function saveTaskModels(){
+  // 兜底清洗：组不存在/三元组不齐的条目一律回落 ''（与 normalizeCfg 同规则，杜绝串号）
+  const cfg = getCfg();
+  const clean = {};
+  TM_KEYS.forEach(k=>{
+    const v = editTM && editTM[k];
+    const ok = v && typeof v==='object' && v.groupId && v.keyId && v.model && cfg.groups.some(g=>g.id===v.groupId);
+    clean[k] = ok ? { groupId:v.groupId, keyId:v.keyId, model:v.model } : '';
+  });
+  const c = getCfg(); c.taskModels = clean; saveCfg(c);
+  const n = tmCustomCount(clean);
+  closeTaskModelPanel();
+  updateCfgBadge();
+  toast(n ? ('分任务模型已保存：'+n+' 项自定义，其余跟随全局') : '分任务模型已保存：全部跟随全局');
 }
 
 /* --- 第一段：服务列表 --- */
@@ -13105,6 +13287,15 @@ async function init(){
   $$('[data-close]').forEach(b=> b.onclick = closeSettings);
   $('#btnCfgSave').onclick = ()=>{ saveSettings(); closeSettings(); };   // v10.10 保存后自动关闭设置窗口（测试连接仍走 testConn，不关窗）
   $('#btnCfgTest').onclick = testConn;
+  // v227「使用不同AI」分任务模型二级面板
+  $('#btnTaskModels').onclick = openTaskModelPanel;
+  $('#btnTmSave').onclick = saveTaskModels;
+  $('#btnTmReset').onclick = ()=>{
+    if(!window.confirm('确定清除全部分任务设置，全部恢复跟随全局？')) return;
+    TM_KEYS.forEach(k=>{ editTM[k]=''; });
+    renderTaskModelPanel();
+  };
+  $$('#taskModelModal [data-tm-close]').forEach(el=> el.onclick = requestCloseTaskModelPanel);
   // 多 AI 模型控件
   const btnAddG = $('#btnAddGroup'); if(btnAddG) btnAddG.onclick = addGroup;
   const selG=$('#c_selGroup'), selK=$('#c_selKey'), selM=$('#c_selModel');
