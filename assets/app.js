@@ -1354,16 +1354,26 @@ function validatePolishOutput(j){
   return '';
 }
 
-// v230/1-B：纯文本多方案切分——按「━━ 方案N：名 ━━」分隔符切成多张方案卡；切不出 ≥2 张返回空数组（维持单卡降级）
+// v230/1-B：纯文本多方案切分——按「方案N」标题行切成多张方案卡；切不出 ≥2 张返回空数组（维持单卡降级）
+// v232 修复：AI 实际输出的分隔装饰常为 ──/——/==/**/# 等变体，不再依赖字面 ━━；
+// 头行判定改为「去装饰字符后以 方案+可选序号 开头」（支持中文数字/阿拉伯序号），行宽 ≤40 防正文误判。
 function splitPolishMultiText(out){
   const t = String(out||'').trim();
-  if(!t || !t.includes('━━')) return [];
+  if(!t) return [];
+  const DECOR = /[━─—–＿_=＝*＊#＃~〜～\s-]/g;   // 常见装饰/分隔字符（含全半角与空白）
   const cards = [];
   let cur = null;
   t.split('\n').forEach(ln=>{
-    if(/^\s*━+\s*方案/.test(ln)){
+    const s = String(ln||'').trim();
+    let isHead = false, name = '';
+    if(s && s.length <= 40){
+      const core = s.replace(DECOR, '');
+      const m = core.match(/^方案([一二三四五六七八九十\d]{1,2})?(?:[：:、.．,，)）]|$)/);
+      if(m){ isHead = true; name = core; }
+    }
+    if(isHead){
       if(cur) cards.push(cur);
-      cur = { name: ln.replace(/^\s*━+\s*/,'').replace(/\s*━+\s*$/,'').trim(), text: '' };
+      cur = { name, text: '' };
     } else if(cur){
       cur.text += (cur.text ? '\n' : '') + ln;
     }
@@ -1398,8 +1408,8 @@ function showPolishResult(out, multi){
     // 改为捕获后置 null → 走下方 splitPolishMultiText 切卡，切不出 ≥2 张再降级单卡。
     let j = null;
     if(out && typeof out === 'object'){ j = out; }
-    else { try{ j = parseJson(String(out)); }catch(e){ j = null; } }
-    const opts = Array.isArray(j.options) ? j.options.filter(o=>o && String(o.optimizedIdea||o.text||'').trim()) : [];
+    else { try{ j = parseJson(String(out)); }catch(e){ j = {}; } }   // v232 修复：捕获后置 {}（v231 置 null → 下一行 j.options 对 null 取属性抛 TypeError，多方案纯文本仍中断）
+    const opts = Array.isArray(j && j.options) ? j.options.filter(o=>o && String(o.optimizedIdea||o.text||'').trim()) : [];   // v232：j && 双保险
     if(opts.length){
       snapshotPolishBatch('重新优化前');   // 覆盖前把旧整批方案归档为可回退版本（≤5）
       state.polishOptions = opts.map(o=> Object.assign({}, o, {
@@ -8815,7 +8825,7 @@ function bindView(){
   const idea = $('#ideaInput'); if(idea){
     idea.oninput = ()=> state.idea = idea.value;
     bindPolishIdea();   // v10.13 优化构想按钮 + 优化区绑定
-    $('#btnGenOutline').onclick = genOutlineMulti;   // v230/3.2：生成大纲 → 多候选流程（≥1 个成功即进入候选选择态）
+    $('#btnGenOutline').onclick = ()=> genOutlineMulti($('#btnGenOutline'));   // v232 修复：onclick 直挂会把 PointerEvent 当 btn 传入，busy() 内 classList 访问炸断且在 try 外无 catch——表现为点击无反应
   }
   // v11 简介字数范围（生成大纲前、仅长篇）：双数字输入，min>max 自动对调、max 上限 5000
   const llMin = $('#llMin'), llMax = $('#llMax');
