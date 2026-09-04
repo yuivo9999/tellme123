@@ -5422,12 +5422,11 @@ function openStyleLibPanel(){
           <button class="btn small ghost" data-lib-reset>恢复默认</button>
           <button class="gs-x" data-lib-close>✕</button>
         </span></div>
-      <!-- v237/904-2：导入导出统一整合到管理界面顶部第二行（原底部词条导出导入 + v236 配方包导出导入 + 消息看板入口） -->
+      <!-- v238/反馈②：第二行整合为 4 按钮——旧「⬇ 导出词条」整包直下按钮退役（exportWsStyleBundle 同步退役），交互式「📦 选择导出」替代 -->
       <div class="ws-lib-toprow">
         <span class="muted" style="font-size:11px;flex:0 0 auto">导入 / 导出：</span>
-        <button type="button" class="btn small ghost" data-lib-export title="导出全部自定义风格词条与改动">⬇ 导出词条</button>
+        <button type="button" class="btn small ghost" data-lib-rexcenter title="打开导出中心：平铺勾选配方与词条，打包导出（配方自动附带其引用词条🔒）">📦 选择导出</button>
         <button type="button" class="btn small ghost" data-lib-import title="导入风格词条包（合并式：只添加我没有的）">⬆ 导入词条</button>
-        <button type="button" class="btn small ghost" data-lib-rexcenter title="跨批挑选个别配方/词条，勾选后打包导出（配方自动附带其引用词条）">📦 配方选择导出</button>
         <button type="button" class="btn small ghost" data-lib-rimport title="导入配方包 JSON（先预览勾选，再确认导入；词条自动合并进词库）">⬆ 导入配方包</button>
         <button type="button" class="btn small ghost" data-lib-tboard title="回看全部历史提示消息（底部悬浮提示消失后仍可查）">📜 消息看板</button>
         <input type="file" id="wsLibImportFile" accept=".json,application/json" hidden />
@@ -5453,8 +5452,7 @@ function openStyleLibPanel(){
   document.body.appendChild(ov);
   ov.querySelector('[data-lib-close]').onclick = closeStyleLibPanel;
   ov.querySelector('[data-lib-read]').onclick = () => openStyleLibReader();
-  // v10.32 底部工具条：导出整套；导入触发隐藏文件选择（v237/904-2 上移至顶部第二行，绑定不变）
-  ov.querySelector('[data-lib-export]').onclick = exportWsStyleBundle;
+  // v238/反馈②：旧「⬇ 导出词条」按钮与 exportWsStyleBundle 整包直下能力退役；「⬆ 导入词条」触发隐藏文件选择（v237/904-2 上移至顶部第二行，绑定不变）
   ov.querySelector('[data-lib-import]').onclick = ()=>{ const f=$('#wsLibImportFile'); if(f) f.click(); };
   const wlImp = ov.querySelector('#wsLibImportFile'); if(wlImp) wlImp.onchange = e=>{ const file=e.target.files && e.target.files[0]; if(file) importWsStyleBundle(file); e.target.value=''; };
   // v237/904-2：配方包入口（选择导出中心 / 导入配方包）+ 消息看板入口——与配方历史面板同源，双入口不互斥
@@ -5520,26 +5518,8 @@ function openStyleLibPanel(){
     closeStyleLibPanel(); openStyleLibPanel();   // 立即重建面板：清掉「已改」标记、自定义项与编辑过的指令
   };
 }
-// v10.32 写作风格「词条+组合」整套导出：写 writing-styles-YYYYMMDD-HHmmss.json（覆盖式导入用）
-function exportWsStyleBundle(){
-  const c = getCfg().styleCustom || { notes:{}, added:[], removed:[], comboRemoved:[] };
-  const styleCustom = {
-    notes: c.notes && typeof c.notes==='object' ? c.notes : {},
-    added: Array.isArray(c.added) ? c.added : [],
-    removed: Array.isArray(c.removed) ? c.removed : [],
-    comboRemoved: Array.isArray(c.comboRemoved) ? c.comboRemoved : [],
-    customCombos: Array.isArray(c.customCombos) ? c.customCombos : []
-  };
-  const data = { ver:1, exportedAt:Date.now(), kind:'wsStyleBundle', styleCustom };
-  const ts = new Date();
-  const pad = n => String(n).padStart(2,'0');
-  const stamp = `${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`;
-  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json;charset=utf-8'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = `writing-styles-${stamp}.json`; a.click();
-  URL.revokeObjectURL(a.href);
-  toast('已导出词条与组合配方');
-}
+// v238/反馈②：exportWsStyleBundle 整包直下导出已退役（唯一入口「⬇ 导出词条」按钮移除）；
+// 词条导出统一走「📦 选择导出」中心（openExportCenter → exportSelection），不再保留双轨。
 // v234/W2：整套导入改合并式——不再整体替换。added/customCombos 按 id 去重追加（已有的保留我的），
 // removed/comboRemoved 取并集，notes 逐 id 合并（已有 id 保留当前批注）；tags 过滤在合并 added 之后执行
 function importWsStyleBundle(file){
@@ -6818,7 +6798,7 @@ function applyBundleSelection(st, ov){
   const p = $('#impPrevPanel'); if(p) p.remove();
   toast(`导入完成：配方 ${cands.length} · 新增词条 ${elAdded} · 覆盖词条 ${elRepl}`);
 }
-/* ---------- v236/F2：📦 选择导出中心——跨批挑候选 + 挑自定义词条，两段折叠默认收起，底部汇总条 ---------- */
+/* ---------- v238/反馈③+C：📦 选择导出中心——平铺清单：默认全部展开、无折叠分支、名字完整不截断，底部汇总条 ---------- */
 // 引用锁：已勾候选 tags 引用的词条强制勾选且锁定（防导出残缺包）；解锁后状态保留可手动取消；更新底部汇总
 function refreshExLocks(ov){
   const locked = new Set();
@@ -6843,36 +6823,32 @@ function openExportCenter(){
   const added = (cfg.styleCustom && Array.isArray(cfg.styleCustom.added)) ? cfg.styleCustom.added : [];
   const GROUPS = ['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'];
   let totalCands = 0; hist.forEach(e=> totalCands += (Array.isArray(e&&e.list)?e.list.length:0));
-  // 批次树（默认收起）：批头复选=全选该批；候选行级勾选
+  // v238/反馈③+C：平铺清单——批头「第 N 批 · N 条 · 日期」勾选=全选该批；候选名完整显示不截断、只显示名字
   const batchHtml = hist.map((e,ei)=>{
     const list = Array.isArray(e.list)?e.list:[];
     if(!list.length) return '';
     const cands = list.map((c,ci)=>{
       const nm = String(c&&c.name||'').trim() || ('候选'+(ci+1));
-      return `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(nm)}"><input type="checkbox" data-ex-cand="${ei}:${ci}"> ${esc(nm.slice(0,18))}</label>`;
+      return `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(nm)}"><input type="checkbox" data-ex-cand="${ei}:${ci}"> ${esc(nm)}</label>`;
     }).join('');
     return `<div style="margin:4px 0">
-      <div style="display:flex;align-items:center;gap:6px">
-        <span class="sc-fold-ico" data-ex-fold style="cursor:pointer;user-select:none">▸</span>
-        <label style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer" title="勾选=全选该批候选">
-          <input type="checkbox" data-ex-batch="${ei}"> ${e.src==='outline'?'📑':'📝'} ${esc(String(e.desc||'').slice(0,20))} <span class="muted" style="font-size:11px">· ${list.length} 条 · ${new Date(e.ts).toLocaleDateString('zh-CN')}</span>
-        </label>
-      </div>
-      <div data-ex-body style="display:none;padding:2px 0 6px 22px;flex-wrap:wrap">${cands}</div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600" title="勾选=全选该批候选">
+        <input type="checkbox" data-ex-batch="${ei}"> ${e.src==='outline'?'📑':'📝'} 第 ${ei+1} 批 <span class="muted" style="font-size:11px">· ${list.length} 条 · ${new Date(e.ts).toLocaleDateString('zh-CN')}</span>
+      </label>
+      <div data-ex-body style="display:flex;padding:2px 0 6px 22px;flex-wrap:wrap">${cands}</div>
     </div>`;
   }).join('');
-  // 词条树（按分组折叠，默认收起）
+  // v238/反馈③+C：词条平铺——分组头全选框（data-ex-gall）一键全选该组；词条名完整显示不截断
   const byGroup = {};
   added.forEach(x=>{ if(!x||!x.id) return; const g = GROUPS.includes(x.group)?x.group:'custom'; (byGroup[g]=byGroup[g]||[]).push(x); });
   const gKeys = GROUPS.filter(g=>byGroup[g]&&byGroup[g].length); if(byGroup.custom&&byGroup.custom.length) gKeys.push('custom');
   const elHtml = gKeys.map(g=>{
-    const items = byGroup[g].map(x=>`<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(String(x.note||'').slice(0,80))}"><input type="checkbox" data-ex-el="${esc(String(x.id))}"> ${esc(String(x.name||'').slice(0,16))}</label>`).join('');
+    const items = byGroup[g].map(x=>`<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(String(x.note||'').slice(0,80))}"><input type="checkbox" data-ex-el="${esc(String(x.id))}"> ${esc(String(x.name||''))}</label>`).join('');
     return `<div style="margin:4px 0">
-      <div style="display:flex;align-items:center;gap:6px">
-        <span class="sc-fold-ico" data-ex-fold style="cursor:pointer;user-select:none">▸</span>
-        <b class="muted" style="font-size:12px;flex:1">${g==='custom'?'其他':g}（${byGroup[g].length}）</b>
-      </div>
-      <div data-ex-body style="display:none;padding:2px 0 6px 22px;flex-wrap:wrap">${items}</div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="勾选=全选该组词条">
+        <input type="checkbox" data-ex-gall="${esc(g)}"> <b style="font-size:12px">${g==='custom'?'其他':g}（${byGroup[g].length}）</b>
+      </label>
+      <div data-ex-group="${esc(g)}" style="display:flex;padding:2px 0 6px 22px;flex-wrap:wrap">${items}</div>
     </div>`;
   }).join('');
   const ov = document.createElement('div'); ov.id='exCenterPanel'; ov.className='gs-overlay';
@@ -6880,7 +6856,7 @@ function openExportCenter(){
     <div class="gs-modal">
       <div class="gs-modal-head"><b>📦 选择导出</b><button class="gs-x" data-ex-close title="关闭">✕</button></div>
       <div class="cv-body">
-        <div style="margin:6px 0 2px"><b>配方历史</b> <span class="muted" style="font-size:12px">${hist.length} 批 · 共 ${totalCands} 条候选（点批名展开）</span></div>
+        <div style="margin:6px 0 2px"><b>配方历史</b> <span class="muted" style="font-size:12px">${hist.length} 批 · 共 ${totalCands} 条候选（默认全部展开，点名字前的框勾选）</span></div>
         ${batchHtml || '<p class="muted">暂无配方历史。</p>'}
         <div style="margin:10px 0 2px"><b>我的自定义词条</b> <span class="muted" style="font-size:12px">${added.length} 个（勾选配方时其引用词条自动附带🔒）</span></div>
         ${elHtml || '<p class="muted">暂无自定义词条。</p>'}
@@ -6898,12 +6874,16 @@ function openExportCenter(){
       ov.querySelectorAll(`[data-ex-cand^="${t.dataset.exBatch}:"]`).forEach(cb=>{ cb.checked = t.checked; });
       refreshExLocks(ov); return;
     }
+    // v238/反馈③+C：分组头全选框——一键全选/取消该组词条（引用锁词条保持勾选且禁用）
+    if(t.matches('[data-ex-gall]')){
+      const body = ov.querySelector(`[data-ex-group="${t.dataset.exGall}"]`);
+      if(body) body.querySelectorAll('[data-ex-el]').forEach(cb=>{ if(!cb.disabled) cb.checked = t.checked; });
+      refreshExLocks(ov); return;
+    }
     if(t.matches('[data-ex-cand], [data-ex-el]')) refreshExLocks(ov);
   });
   ov.addEventListener('click', e=>{
     const cl = e.target.closest('[data-ex-close]'); if(cl){ close(); return; }
-    const f = e.target.closest('[data-ex-fold]');
-    if(f){ const body = f.parentElement.nextElementSibling; if(body){ const open = body.style.display!=='none'; body.style.display = open?'none':'flex'; f.textContent = open?'▸':'▾'; } return; }
     const go = e.target.closest('[data-ex-go]');
     if(go){
       const cands = [];
@@ -8462,17 +8442,17 @@ function renderChapters(){
     const html = slice.map((c,offset)=>{
       const i = from + offset;
       const hasC = !!(c.content && c.content.trim());
-      // 建议1：无正文章节→卡片折叠成标题行；有正文→默认展开；点击标题行切换
-      const foldedCls = hasC ? '' : ' folded';
-       return `<div class="card ch-card" data-ch-card="${i}" style="background:var(--panel);border:1px solid var(--line)">
-        <div class="ch-head" data-fold="${i}" role="button" tabindex="0" aria-expanded="${foldedCls?'false':'true'}">
-          <span class="ch-fold-ico">${hasC?'▾':'▸'}</span>
+      // v238/A：长篇恒展开——无正文的卡片也保留正文框（矮空框+占位提示），不再默认折叠成细标题条藏框；
+      // 点标题行仍可手动折叠（data-fold 切换逻辑不变，见 9571 行）
+      return `<div class="card ch-card" data-ch-card="${i}" style="background:var(--panel);border:1px solid var(--line)">
+        <div class="ch-head" data-fold="${i}" role="button" tabindex="0" aria-expanded="true">
+          <span class="ch-fold-ico">▾</span>
           <h3 style="margin:0;flex:1;word-break:break-word;line-height:1.35" title="第${i+1}章 · ${esc(cleanChapterTitle(c.title))}">第${i+1}章 · ${esc(cleanChapterTitle(c.title))}${c._titleByAI?'<i class="tbd-title-tag" style="font-style:normal;font-size:11px;font-weight:400;opacity:.55;margin-left:6px" title="本章标题已由章节正文 AI 定稿">正文定稿</i>':(!state.plannerFinalized?'<i class="tbd-title-tag" style="font-style:normal;font-size:11px;font-weight:400;opacity:.55;margin-left:6px" title="标题尚未由全书规划师定稿，当前沿用第二步参考稿">参考稿</i>':'')}</h3>
           ${wcBadge(c.content, `data-wc-ch="${i}"`)}
         </div>
         <div class="ch-meta ch-status-wrap" data-ch-status="${i}">${chapterBadgesHtml(i)}</div>
-        <div class="ch-body${foldedCls}">
-          <textarea data-ch="${i}" style="margin-top:8px">${esc(c.content)}</textarea>
+        <div class="ch-body">
+          <textarea data-ch="${i}" class="${hasC?'':'ch-ta-empty'}" style="margin-top:8px" ${hasC?'':'placeholder="暂无正文：点击「🔄 重生成」生成，或直接在此输入"'}>${esc(c.content)}</textarea>
           <div class="btn-row">
             <button class="btn ghost" data-regen="${i}" ${state.generating?'disabled':''}>🔄 重生成</button>
             <button class="btn ghost" data-read="${i}">📖 阅读</button>
@@ -9762,9 +9742,39 @@ function applyOutlineObject(o, opts){
   o.userIdea = state.idea;
   if(!Array.isArray(o.chapterPlans)) o.chapterPlans = [];
   // 如果 chapters 已重建，同步 state.chapters
+  // v238/B：章节数一致时逐章迁移已写内容（content/strip/confirmed/_styleConfirmed/_titleByAI）——
+  // 换大纲/换候选不再清空正文；数量不一致才重建为空（原大纲与正文已随 snapshotOutline 入历史版本可找回）
   if(o.chapters.length){
-    state.chapters = o.chapters.map(c=>({title:c.title, content:'', strip:'', confirmed:false}));
+    const _prev = (Array.isArray(state.chapters) && state.chapters.length === o.chapters.length) ? state.chapters : null;
+    state.chapters = o.chapters.map((c,ci)=>{
+      const p = _prev && _prev[ci];
+      return {
+        title: c.title,
+        content: p ? String(p.content||'') : '',
+        strip: p ? String(p.strip||'') : '',
+        confirmed: p ? !!p.confirmed : false,
+        _styleConfirmed: p ? !!p._styleConfirmed : false,
+        _titleByAI: p ? !!p._titleByAI : false
+      };
+    });
   }
+}
+
+// v238/B：正文保留状态探测（「选用此版」确认文案与生成前置警示共用同一判定源）
+function chapterContentStat(){
+  const n = (state.chapters||[]).filter(c=> c && c.content && String(c.content).trim()).length;
+  const curN = (state.outline && Array.isArray(state.outline.chapters) && state.outline.chapters.length) ? state.outline.chapters.length : (state.chapters||[]).length;
+  return { hasContent: n>0, contentN: n, curN };
+}
+// v238/B：生成/重生成大纲前置警示——已有正文且预设章数从 N 改成 M 时，提示正文将无法按章节对应保留
+function confirmOutlineContentGuard(){
+  const s = chapterContentStat();
+  if(!s.hasContent) return true;
+  const newN = chapterCountVal();
+  if(s.curN && newN && s.curN !== newN){
+    return window.confirm(`当前已写正文 ${s.contentN} 章（共 ${s.curN} 章），本次预设章数为 ${newN} 章。章数不同，新大纲生效后正文将无法按章节对应保留（原大纲与正文会存入历史版本，可找回）。继续生成？`);
+  }
+  return true;
 }
 
 // —— v230/3.1：多大纲候选（3 个角度差异化候选，供比选；未选候选入历史可切回） ——
@@ -9789,6 +9799,8 @@ async function genOutlineMulti(btn){
   if(ideaIn) state.idea = ideaIn.value.trim();   // 仅第②步页面有输入框；「重生成大纲」入口直接用已存 state.idea
   if(!state.idea){ toast('先写几句构想'); return; }
   if(!canRunAI('outline')){ toast('请先完成上游步骤：优化构想'); return; }
+  // v238/B：已有正文且章节数预设被改动时，生成前明确警示正文无法按章节对应保留
+  if(!confirmOutlineContentGuard()) return;
   // v230/1-B 修复：移除"建议先优化构想"toast——构想改纯文本后 navBeacon 不再回填，此提示变成每点必弹，
   // 且被误解为阻断（生成实际继续）；大纲 AI 的构想上下文已由 buildOutlineUser→formatNavBeaconForOutline 的
   // 纯文本 fallback 注入，无信息损失。允许用户跳过优化构想直接生成大纲。
@@ -9876,7 +9888,20 @@ function adoptOutlineCandidate(id){
   const it = cands.items.find(x=>x && x.id===id);
   if(!it) return;
   if(cands.chosenId === id){ toast('该候选已是当前采用版本'); return; }
-  if(!window.confirm('选用后：未选候选将存入历史版本，当前大纲自动入历史，已写正文按章节同步规则保留。确定？')) return;
+  // v238/B：确认文案按实际情形动态生成——章数一致时明确"正文保留"，章数不同时警示"正文清空"
+  {
+    const s = chapterContentStat();
+    const newN = (it.outline && Array.isArray(it.outline.chapters)) ? it.outline.chapters.length : 0;
+    let msg;
+    if(s.hasContent && newN && s.curN && newN !== s.curN){
+      msg = `选用后：未选候选将存入历史版本，当前大纲自动入历史。⚠️ 新候选章节数（${newN}）与当前（${s.curN}）不同，已写正文将被清空（可从历史版本找回）。确定？`;
+    } else if(s.hasContent){
+      msg = '选用后：未选候选将存入历史版本，当前大纲自动入历史，已写正文将按章节对应保留。确定？';
+    } else {
+      msg = '选用后：未选候选将存入历史版本，当前大纲自动入历史。确定？';
+    }
+    if(!window.confirm(msg)) return;
+  }
   applyOutlineObject(JSON.parse(JSON.stringify(it.outline)), { replacedLabel: '被替换的上一版' });
   // 未选用的其他候选逐个入历史（label 标注；上一批的当前采用者即当前大纲，已在上面入历史，不重复）
   cands.items.forEach(x=>{
@@ -9931,6 +9956,8 @@ async function genOutline(){
   if(!state.idea){ toast('先写几句构想'); if(btn) busy(btn,false); return; }
   // 4.8 旗舰版（6.4）：拓扑路由检查 + 运行态标记（唯一执行前检查入口）
   if(!canRunAI('outline')){ toast('请先完成上游步骤：优化构想'); if(btn) busy(btn,false); return; }
+  // v238/B：已有正文且章节数预设被改动时，生成前明确警示正文无法按章节对应保留
+  if(!confirmOutlineContentGuard()){ if(btn) busy(btn,false); return; }
   markAIRunning('outline');
   if(btn) busy(btn,true,'生成大纲中…');
   // v230/1-B 修复：移除"建议先优化构想"toast（同 genOutlineMulti——纯文本构想时代该提示每点必弹且被误解为阻断）
@@ -11892,7 +11919,8 @@ function patchChapter(i){
   const ta = card.querySelector('textarea[data-ch="'+i+'"]');
   if(ta && !ta.matches(':focus')) ta.value = state.chapters[i].content;
   if(body && body.classList.contains('folded') && hasC){ body.classList.remove('folded'); }
-  const ico = card.querySelector('.ch-fold-ico'); if(ico) ico.textContent = hasC ? '▾' : '▸';
+  // v238/A：恒展开后图标跟随实际折叠状态（用户手动折叠显示 ▸，展开显示 ▾），不再按 hasC 误判
+  const ico = card.querySelector('.ch-fold-ico'); if(ico) ico.textContent = (body && body.classList.contains('folded')) ? '▸' : '▾';
   const re = card.querySelector('[data-regen="'+i+'"]');
   if(re){ re.disabled = !!state.generating; }
   // 本章梗概按钮 disabled 状态（正文生成后即亮起，无需刷新）
@@ -13323,6 +13351,8 @@ function renderNarrativeEngineMenu(){
     <button class="ne-menu-item" data-ne-panel="sandbox"><span class="ne-ico">🌿</span><span class="ne-lbl">分支沙盘推演</span></button>
     <button class="ne-menu-item" data-ne-panel="sandboxHistory"><span class="ne-ico">📜</span><span class="ne-lbl">沙盘历史</span>${branchN?`<span class="ne-badge info">${branchN}</span>`:''}</button>
     <button class="ne-menu-item" data-ne-panel="banlist"><span class="ne-ico">🚫</span><span class="ne-lbl">禁则清单</span>${stateBanEnabled()?'<span class="ne-badge ok">ON</span>':'<span class="ne-badge">OFF</span>'}</button>
+    <!-- v238/反馈①：消息看板入口移入「叙事」面板菜单（第 9 项），带历史消息条数角标；顶栏不加按钮 -->
+    <button class="ne-menu-item" data-ne-panel="toastboard"><span class="ne-ico">📋</span><span class="ne-lbl">消息看板</span>${(()=>{const n=toastLogGet().length; return n?`<span class="ne-badge info">${n}</span>`:'';})()}</button>
   `;
 }
 
@@ -13341,6 +13371,7 @@ function rebindNarrativeEngine(){
     else if(panel==='sandbox') renderBranchSandbox();
     else if(panel==='sandboxHistory') renderSandboxHistory();
     else if(panel==='banlist') renderBanListPanel();
+    else if(panel==='toastboard') openToastBoard();   // v238/反馈①：叙事菜单第 9 项——打开消息看板（抽屉随后统一收起）
     // 交互优化：选择某一项后收起抽屉（子面板经 openNeModal 弹窗接管后续交互，抽屉不再需要）
     closeNarrativeEngine();
   };

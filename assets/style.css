@@ -843,6 +843,8 @@ body.reader-lock{overflow:hidden}
 .ch-meta{display:flex;align-items:center;gap:8px;padding:0 2px 4px}
 .ch-fold-ico{flex:0 0 auto;width:18px;text-align:center;color:var(--muted);font-size:13px;transition:transform .15s}
 .ch-card .ch-body.folded{display:none}
+/* v238/A：空正文章节卡矮空框——恒展开后无正文显示占位提示，视觉更轻不占屏 */
+.ch-card textarea.ch-ta-empty{min-height:56px}
 .ch-pager{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0}
 .ch-pager .ch-page{padding:4px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--sub);font-size:12px;cursor:pointer}
 .ch-pager .ch-page.active{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:700}
@@ -1389,7 +1391,9 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .ai-network-panel{
   display:flex; flex-wrap:wrap; gap:6px;
   margin:0 0 10px; padding:10px 12px;
-  background:var(--warn-bg, rgba(255,255,255,.35));
+  /* v238/D：原 var(--warn-bg, rgba(255,255,255,.35))——--warn-bg 全库从未定义，35% 白 fallback 恒生效，
+     暗色主题下叠加成突兀中灰块；改用主题面板变量 --panel2，暗色即深色、各主题自动适配 */
+  background:var(--panel2);
   border:1px solid var(--line, rgba(128,128,128,.25));
   border-radius:8px;
 }
