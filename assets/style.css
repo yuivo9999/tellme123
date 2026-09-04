@@ -719,6 +719,9 @@ body.reader-lock{overflow:hidden}
 
 /* 停止按钮在动作行中靠右 */
 .cp-head-row.action-row .stop-btn{position:absolute;right:0;top:50%;transform:translateY(-50%);z-index:2}
+/* v241/908-2：一键五步运行时 ⏹ 挂在动作行最右（绝对定位不占流），⚡ 主动让位避免重叠；
+   用 cp-stopping 类而非 :has(.stop-btn)——停止按钮隐藏后仍留在行内 DOM，:has 会永久误命中 */
+.cp-head-row.action-row.cp-stopping .cp-stage-all{margin-right:44px}
 /* 风格约束 - 在头部内的变体 */
 .cp-head .cp-style-toggle{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.15);color:rgba(255,255,255,.85)}
 .cp-head .cp-style-toggle:hover{background:rgba(255,255,255,.18)}
@@ -1019,7 +1022,8 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .ws-card .ws-head:hover{background:linear-gradient(135deg,#2a6bc0 0%,#9fdcf5 100%)}
 .ws-card .ws-head h3{color:#fff !important}
 /* v240/906-5：摘要占满整行 → 自动换到标题条第二行最左（恒显，折叠态也保留；用户 17:53 定夺） */
-.ws-card .ws-head .ws-sum{flex:0 0 100%;text-align:left;color:#fff !important;opacity:.92;text-shadow:0 1px 2px rgba(20,50,100,.35)}
+/* v241：ws-sum 加 order:10 —— flex-wrap 下换行后恒排最末，「⚙️ 管理」与折叠箭头回到标题行（修 908 报告的三行错位） */
+.ws-card .ws-head .ws-sum{flex:0 0 100%;order:10;text-align:left;color:#fff !important;opacity:.92;text-shadow:0 1px 2px rgba(20,50,100,.35)}
 .ws-card .ws-head .ws-manage-btn{background:rgba(255,255,255,.22);border:1px solid rgba(255,255,255,.5);color:#fff !important;text-shadow:0 1px 2px rgba(20,50,100,.35)}
 .ws-card .ws-head .ws-manage-btn:hover{background:rgba(255,255,255,.34);color:#fff !important}
 .ws-card .ws-head .sc-fold-ico{color:#fff !important;opacity:.9}

@@ -4431,6 +4431,9 @@ function bindPlannerTitles(newTitles){
   const o = state.outline; if(!o) return false;
   const n = (o.chapters||[]).length;
   if(!Array.isArray(newTitles) || newTitles.length !== n) return false;
+  // v241/908-4：先把 state.chapters 对齐 outline.chapters（v225/P5-B 断裂修复），否则 setAllTitles
+  // 里 state.chapters[i] 不存在、标题只写进 outline 数据源，正文任务行永远看不到章
+  if(syncChaptersFromOutline()) persist();
   snapshotTitleBatch('规划师定稿前');
   const applied = setAllTitles(newTitles);
   if(applied > 0){
@@ -7232,7 +7235,7 @@ function setAllTitles(titles){
   return cnt;
 }
 
-/* ---------- P1-2 章节标题曾用记录：🕘 弹窗查看 + 一键恢复（上限10） ---------- */
+/* ---------- P1-2 章节标题曾用记录：🕘 弹窗查看 + 一键恢复（上限50） ---------- */
 function openChTitleHistoryPanel(){
   closeChTitleHistoryPanel();
   const hist = chTitleHistory(); if(!hist.length){ toast('暂无曾用标题'); return; }
@@ -7278,9 +7281,9 @@ function openChTitleHistoryPanel(){
 }
 function closeChTitleHistoryPanel(){ const p=$('#cthPanel'); if(p) p.remove(); }
 
-/* ---------- v10.16 章节标题·批量版本回退（整批快照 ≤5 份，独立于单条曾用标题） ---------- */
+/* ---------- v10.16 章节标题·批量版本回退（整批快照上限 50 份，独立于单条曾用标题） ---------- */
 function chTitleBatches(){ const o=state.outline; return (o && Array.isArray(o.chTitleBatches)) ? o.chTitleBatches : []; }
-// 把「当前全部章节标题」整批压入版本栈（最新在前；与最新一份相同则跳过去重；上限5）
+// 把「当前全部章节标题」整批压入版本栈（最新在前；与最新一份相同则跳过去重；上限50）
 function snapshotTitleBatch(label){
   const o = state.outline; if(!o) return;
   const titles = (o.chapters||[]).map(c=> (c&&c.title)||'');
@@ -8451,22 +8454,9 @@ function closeChapterVersionPanel(){ const p=$('#cvPanel'); if(p) p.remove(); }
 
 // v240/906-1：恢复长篇分页（每页 10 章，v238 蓝本回填）——905-3 的"常显"撤销；
 // 分页每页只渲染 10 张卡，渲染量天然受控，v239 的 CH_RENDER_CAP 防御随之退役；
-// 保留：尚未生成章节但已填章节数时显示第一章空框占位（用户 17:53 定夺）。
+// v241/908-3：第一章空框占位撤除——空态改为单一提示行（占位卡函数已删）。
 let chPage = 0;
 const CH_PAGE_SIZE = 10;
-// 第一章空框占位卡（无数据绑定：只读空框，生成大纲后由真实卡片接管）
-function chPlaceholderCardHtml(){
-  return `<div class="card ch-card" data-ch-card="0" style="background:var(--panel);border:1px solid var(--line)">
-    <div class="ch-head" role="button" tabindex="0" aria-expanded="true">
-      <span class="ch-fold-ico">▾</span>
-      <h3 style="margin:0;flex:1;word-break:break-word;line-height:1.35">第1章</h3>
-      ${wcBadge('', 'data-wc-ch="0"')}
-    </div>
-    <div class="ch-body">
-      <textarea readonly data-ch-ph="0" class="ch-ta-empty" style="margin-top:8px" placeholder="第一章空框（占位）：完成大纲并生成正文后，这里会显示真实章节卡。"></textarea>
-    </div>
-  </div>`;
-}
 // v239/905-3：长篇章节卡模板（v240 起供分页切片渲染复用）
 function chCardHtml(c, i){
   const hasC = !!(c.content && c.content.trim());
@@ -8500,13 +8490,17 @@ function renderChapters(){
   const total = state.chapters.length;
   if(isLong()){
     if(!total){
-      // 未生成章节：已填章节数 → 第一章空框占位（v240 保留）；未填 → 提示行
-      const wantN = chapterCountVal();
-      if(wantN > 0){
-        wrap.innerHTML = `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：完成大纲后即可生成正文，下方为第一章空框占位。</span></div>${chPlaceholderCardHtml()}`;
-      } else {
-        wrap.innerHTML = `<div class="ch-pager"><span class="muted">共 0 章：先在第②步生成大纲。</span></div>`;
+      // v241/B：渲染层自愈——outline.chapters 已有章节数组但 state.chapters 为空/错位（v225/P5-B 断裂的存量坏档），
+      // 先对齐同步并持久化，同步成功直接按真实章节渲染（含分页）；同步不了才落到空态提示
+      if(state.outline && Array.isArray(state.outline.chapters) && state.outline.chapters.length && syncChaptersFromOutline()){
+        persist();
+        return renderChapters();
       }
+      // v241/908-3：撤除第一章空框占位（v240 曾保留）——空态只给一行提示
+      const wantN = chapterCountVal();
+      wrap.innerHTML = wantN > 0
+        ? `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：确认大纲后这里会出现章节卡。</span></div>`
+        : `<div class="ch-pager"><span class="muted">共 0 章：先在第②步生成大纲。</span></div>`;
       return;
     }
     // v240/906-1：长篇每页 10 章分页渲染；chPage 对齐到有效页（v238 蓝本）
@@ -9444,7 +9438,8 @@ function bindView(){
   bindWriteStyle();   // v2.0 写作风格卡片绑定（chips/浓度/预设/收藏/管理/清空）
   // 故事页内联规范选择器
   $$('.spec-opt').forEach(b=> b.onclick = ()=>{ selectSpec(b.dataset.spec); });
-  const btnCO = $('#btnConfirmOutline'); if(btnCO) btnCO.onclick = ()=>{ state.outlineConfirmed=true; persist(); render(); };
+  // v241/908-4（A2）：确认大纲时若 state.chapters 与 outline.chapters 数量错位（v225/P5-B 断裂存量），先对齐再置标志
+  const btnCO = $('#btnConfirmOutline'); if(btnCO) btnCO.onclick = ()=>{ syncChaptersFromOutline(); state.outlineConfirmed=true; persist(); render(); };
   const btnOH = $('#btnOutlineHist'); if(btnOH) btnOH.onclick = ()=> openOutlineHistoryPanel();
   // v230/3.3+3.5：候选大纲 选用/预览 + 「🔄 重生成大纲」
   $$('[data-cand-adopt]').forEach(b=> b.onclick = ()=> adoptOutlineCandidate(b.dataset.candAdopt));
@@ -9813,6 +9808,25 @@ function applyOutlineObject(o, opts){
   }
 }
 
+// v241/908-4：state.chapters 与 outline.chapters 对齐同步——修复 v225/P5-B 起的「双数据源断裂」：
+// 大纲 AI 返回无 chapters 字段时 applyOutlineObject 跳过重建（o.chapters=[]），之后 ensureChaptersPlaceholder
+// 只建 outline.chapters 占位（不动 state.chapters），setAllTitles 又只往已存在的 state.chapters[i] 写，
+// btnConfirmOutline 只置标志 → 章节页永远「共 0 章」。本函数按 outline.chapters 重建 state.chapters。
+// 安全闸：两源数量一致不动（内容迁移由 applyOutlineObject 负责）；数量不一致但现有章节已有正文时也不动
+// （防误清内容，错位项目交给既有覆盖/重生成流程找回）。
+function syncChaptersFromOutline(){
+  const o = state.outline;
+  if(!o || !Array.isArray(o.chapters) || !o.chapters.length) return false;
+  const cur = Array.isArray(state.chapters) ? state.chapters : [];
+  if(cur.length === o.chapters.length) return false;   // 已对齐，无需同步
+  if(cur.some(c=> c && c.content && String(c.content).trim())) return false;   // 有正文的错位项目不动
+  state.chapters = o.chapters.map(c=>({
+    title: String((c && c.title) || ''),
+    content:'', strip:'', confirmed:false, _styleConfirmed:false, _titleByAI:false
+  }));
+  return true;
+}
+
 // v238/B：正文保留状态探测（「选用此版」确认文案与生成前置警示共用同一判定源）
 function chapterContentStat(){
   const n = (state.chapters||[]).filter(c=> c && c.content && String(c.content).trim()).length;
@@ -10168,7 +10182,9 @@ function plannerGate(opts){
   if(!isLong() || !state.outline) return false;
   // v234 修复：删除对 aiNetwork.completed 硬查——completed 只是会话标记，多候选采用路径/导入项目/旧存档都可能缺失，
   // 而 state.outline 存在即代表大纲在手（上一行已检查），completed 缺失时误报"请先完成上游步骤：生成大纲"阻断全部五步
-  if(genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
+  // v241：force=true 供「⚡ 一键五步」总控旁路——总控入口已统一做 genBusy 检查，且总控每步先挂 ⏹（置
+  // _abortCtl）；若不旁路，阶段入口的 genBusy 命中 _abortCtl 会造成第二种自锁（907 问题一的镜像坑）
+  if(!(opts && opts.force) && genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
   ensureChaptersPlaceholder();   // v225/P5-A：占位章节数组就位，五阶段入口共用此闸
   return true;
 }
@@ -10524,6 +10540,8 @@ async function genPlannerStage(btn, stage){
 // 跳过模式按 plannerStageDone 过滤并列出将执行/跳过清单（修"已有进度仍全量重跑、卡在第一步特别久"）
 async function genPlannerAll(btn){
   const o = state.outline; if(!isLong() || !o) return;
+  // v241：总控入口统一互斥检查——各阶段对总控走 force 旁路（见 plannerGate），并发拦截必须在这里做
+  if(genBusy()){ toast('已有生成任务进行中，请稍候'); return; }
   const doneList = PLANNER_STAGES.filter(s=>plannerStageDone(s.id)).map(s=>stageLabel(s.id));
   let skipDone = true;
   if(doneList.length){
@@ -10538,17 +10556,46 @@ async function genPlannerAll(btn){
   }
   const stages = skipDone ? PLANNER_STAGES.map(s=>s.id).filter(id=>!plannerStageDone(id)) : PLANNER_STAGES.map(s=>s.id);
   if(!stages.length){ toast('五步均已完成，无需生成；如需重做请点击对应步骤按钮'); return; }
-  if(btn) busy(btn, true, `五步生成中（0/${stages.length}）…`);
-  for(let si=0; si<stages.length; si++){
-    const st = stages[si];
-    if(btn) busy(btn, true, `五步生成中（${si+1}/${stages.length}）…`);
-    refreshPlannerStageBar(st, null);
-    const ok = await PLANNER_GEN[st](null, {silent:true});
-    if(!ok){ if(btn) busy(btn, false); toast('一键生成中断于「'+stageLabel(st)+'」，可单独点击该步骤按钮重试'); return; }
-    refreshPlannerStageBar(null, null);
+  // v241/907-1 自锁修复：原给总控按钮走 busy() 加 .is-busy，而各阶段的 plannerGate→genBusy() 扫描
+  // .is-busy 会命中总控自身 → 每步 0 进度即被拦截（单步正常、一键必断，v238 起历史问题）。改用
+  // .cp-stage-all.running 视觉态（refreshPlannerStageBar 本就维护该类）+ textContent 文案，不进 genBusy 扫描面。
+  const setTxt = t=>{ if(btn){ if(btn._txt === undefined) btn._txt = btn.innerHTML; btn.textContent = t; } };
+  const finish = ()=>{
+    if(btn && btn._txt !== undefined){ btn.innerHTML = btn._txt; delete btn._txt; }
+    if(btn) btn.classList.remove('running');
+  };
+  if(btn){ btn.classList.add('running'); setTxt(`五步生成中（0/${stages.length}）…`); }
+  try{
+    for(let si=0; si<stages.length; si++){
+      const st = stages[si];
+      setTxt(`五步生成中（${si+1}/${stages.length}）…`);
+      refreshPlannerStageBar(st, null);
+      // v241/908-2：每步开始把 ⏹ 挂到「⚡ 一键五步」所在动作行（阶段收到的 btn=null，其内部不再自建停止按钮，
+      // 全程共用这里的一个 AbortController）；cp-stopping 类给 ⚡ 让位；abort 事件置 stopped，区分「用户停止」与「阶段失败」
+      const stopParent = btn ? (btn.closest('.cp-head-row.action-row') || btn.parentNode)
+                             : document.querySelector('.cp-card .cp-head-row.action-row');
+      let stopped = false;
+      if(stopParent){
+        showStopBtn(stopParent);
+        stopParent.classList.add('cp-stopping');
+        if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true});
+      }
+      const ok = await PLANNER_GEN[st](null, {silent:true, force:true});
+      hideStopBtn();
+      if(stopParent) stopParent.classList.remove('cp-stopping');
+      if(!ok){
+        refreshPlannerStageBar(null, st);
+        toast(stopped ? `已停止一键五步（停在「${stageLabel(st)}」）` : `一键生成中断于「${stageLabel(st)}」，可单独点击该步骤按钮重试`);
+        return;
+      }
+      refreshPlannerStageBar(null, null);
+    }
+    toast(skipDone ? `智能五步完成（${stages.length} 步）` : '规划师五步全部完成');
+  }finally{
+    finish();
+    hideStopBtn();
+    $$('.cp-stopping').forEach(el=>el.classList.remove('cp-stopping'));
   }
-  if(btn) busy(btn, false);
-  toast(skipDone ? `智能五步完成（${stages.length} 步）` : '规划师五步全部完成');
 }
 
 // 4.5：前文骨架（供规划师批间衔接）：全部前序标题 + 最近 3 章简述
