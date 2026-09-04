@@ -146,10 +146,47 @@ function parseAge(s){
 const $ = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 
+// v237/904-4：提示时长 1800→4200ms；全部提示写入看板日志（localStorage 上限 200 条），toast 内嵌 📋 按钮随时回看
+const TOAST_LOG_KEY = 'fyp_toastLog_v1';
+function toastLogPush(msg){
+  try{
+    const a = JSON.parse(localStorage.getItem(TOAST_LOG_KEY)||'[]');
+    a.push({ ts: Date.now(), msg: String(msg??'') });
+    while(a.length > 200) a.shift();
+    localStorage.setItem(TOAST_LOG_KEY, JSON.stringify(a));
+  }catch(e){}
+}
+function toastLogGet(){ try{ return JSON.parse(localStorage.getItem(TOAST_LOG_KEY)||'[]'); }catch(e){ return []; } }
+function toastLogClear(){ try{ localStorage.removeItem(TOAST_LOG_KEY); }catch(e){} }
 function toast(msg){
   const t = $('#toast');
-  t.textContent = msg; t.classList.remove('hidden');
-  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.add('hidden'), 1800);
+  toastLogPush(msg);
+  t.innerHTML = `<span class="toast-msg">${esc(String(msg??''))}</span><button type="button" class="toast-hist" title="打开消息看板，回看全部提示" data-toast-board>📋</button>`;
+  const hb = t.querySelector('[data-toast-board]'); if(hb) hb.onclick = (e)=>{ e.stopPropagation(); openToastBoard(); };
+  t.classList.remove('hidden');
+  clearTimeout(t._t); t._t = setTimeout(()=>t.classList.add('hidden'), 4200);
+}
+// v237/904-4：消息看板——底部悬浮提示消失太快，看板记录全部提示（最新在上）可随时回看
+function openToastBoard(){
+  const old = $('#toastBoardPanel'); if(old) old.remove();
+  const ov = document.createElement('div'); ov.id='toastBoardPanel'; ov.className='gs-overlay';
+  const list = toastLogGet().slice().reverse();
+  ov.innerHTML = `
+    <div class="gs-modal">
+      <div class="gs-modal-head"><b>📜 消息看板（${list.length}）</b>
+        <span style="display:flex;gap:6px">
+          <button class="btn small ghost" data-tb-clear>清空</button>
+          <button class="gs-x" data-tb-close>✕</button>
+        </span></div>
+      <div class="cv-body">
+        ${list.length ? list.map(x=>`<div class="tb-row"><span class="tb-ts">${new Date(x.ts).toLocaleString('zh-CN',{hour12:false})}</span><span class="tb-msg">${esc(x.msg)}</span></div>`).join('') : '<p class="muted">暂无消息记录。</p>'}
+      </div>
+    </div>`;
+  ov.addEventListener('click', e=>{
+    if(e.target.closest('[data-tb-close]') || e.target===ov){ ov.remove(); return; }
+    if(e.target.closest('[data-tb-clear]')){ toastLogClear(); ov.remove(); openToastBoard(); return; }
+  });
+  document.body.appendChild(ov);
 }
 async function copyText(text){
   try{
@@ -5385,6 +5422,17 @@ function openStyleLibPanel(){
           <button class="btn small ghost" data-lib-reset>恢复默认</button>
           <button class="gs-x" data-lib-close>✕</button>
         </span></div>
+      <!-- v237/904-2：导入导出统一整合到管理界面顶部第二行（原底部词条导出导入 + v236 配方包导出导入 + 消息看板入口） -->
+      <div class="ws-lib-toprow">
+        <span class="muted" style="font-size:11px;flex:0 0 auto">导入 / 导出：</span>
+        <button type="button" class="btn small ghost" data-lib-export title="导出全部自定义风格词条与改动">⬇ 导出词条</button>
+        <button type="button" class="btn small ghost" data-lib-import title="导入风格词条包（合并式：只添加我没有的）">⬆ 导入词条</button>
+        <button type="button" class="btn small ghost" data-lib-rexcenter title="跨批挑选个别配方/词条，勾选后打包导出（配方自动附带其引用词条）">📦 配方选择导出</button>
+        <button type="button" class="btn small ghost" data-lib-rimport title="导入配方包 JSON（先预览勾选，再确认导入；词条自动合并进词库）">⬆ 导入配方包</button>
+        <button type="button" class="btn small ghost" data-lib-tboard title="回看全部历史提示消息（底部悬浮提示消失后仍可查）">📜 消息看板</button>
+        <input type="file" id="wsLibImportFile" accept=".json,application/json" hidden />
+        <input type="file" id="wsRecipeImportFile" accept=".json,application/json" hidden />
+      </div>
       <div class="cv-body">
         <div class="ws-lib-group ws-lib-fold">
           <div class="ws-lib-fold-t" data-lib-fold="combos" role="button" tabindex="0" title="展开/收起">
@@ -5401,19 +5449,19 @@ function openStyleLibPanel(){
           <div class="ws-lib-fold-b" hidden>${mine}</div>
         </div>
       </div>
-      <div class="ws-lib-foot">
-        <button type="button" class="btn small ghost" data-lib-export>⬇ 导出</button>
-        <button type="button" class="btn small ghost" data-lib-import>⬆ 导入</button>
-        <input type="file" id="wsLibImportFile" accept=".json,application/json" hidden />
-      </div>
     </div>`;
   document.body.appendChild(ov);
   ov.querySelector('[data-lib-close]').onclick = closeStyleLibPanel;
   ov.querySelector('[data-lib-read]').onclick = () => openStyleLibReader();
-  // v10.32 底部工具条：导出整套；导入触发隐藏文件选择
+  // v10.32 底部工具条：导出整套；导入触发隐藏文件选择（v237/904-2 上移至顶部第二行，绑定不变）
   ov.querySelector('[data-lib-export]').onclick = exportWsStyleBundle;
   ov.querySelector('[data-lib-import]').onclick = ()=>{ const f=$('#wsLibImportFile'); if(f) f.click(); };
   const wlImp = ov.querySelector('#wsLibImportFile'); if(wlImp) wlImp.onchange = e=>{ const file=e.target.files && e.target.files[0]; if(file) importWsStyleBundle(file); e.target.value=''; };
+  // v237/904-2：配方包入口（选择导出中心 / 导入配方包）+ 消息看板入口——与配方历史面板同源，双入口不互斥
+  const rexc = ov.querySelector('[data-lib-rexcenter]'); if(rexc) rexc.onclick = ()=> openExportCenter();
+  ov.querySelector('[data-lib-rimport]').onclick = ()=>{ const f=$('#wsRecipeImportFile'); if(f) f.click(); };
+  const rImp = ov.querySelector('#wsRecipeImportFile'); if(rImp) rImp.onchange = e=>{ const file=e.target.files && e.target.files[0]; if(file) importRecipeBundle(file); e.target.value=''; };
+  const tbd = ov.querySelector('[data-lib-tboard]'); if(tbd) tbd.onclick = ()=> openToastBoard();
   ov.addEventListener('click', e=>{ if(e.target===ov) closeStyleLibPanel(); });
   // v10.17 分组/我的收藏折叠开关（默认折叠，点击展开）
   ov.querySelectorAll('[data-lib-fold]').forEach(h=> h.onclick = ()=>{
@@ -5644,13 +5692,11 @@ function viewStory(){
         ${hasOutlineHistory()?`<button type="button" class="btn small ghost" id="btnOutlineHist" title="查看并恢复历史大纲版本">📚 大纲版本(${outlineHistoryCount()})</button>`:''}
         ${titleManagerHtml()}
       </div>
-      <div class="so-fold-head" data-so-toggle role="button" tabindex="0" title="展开/收起小说简介">
+      <div class="so-fold-head" data-so-toggle role="button" tabindex="0" title="展开/收起小说简介" style="display:flex">
         <span class="so-fold">${state.soCollapsed?'▸':'▾'}</span><b>📌 小说简介</b>
+        <button type="button" class="btn small ghost" id="btnLoglineEdit" title="编辑小说简介" style="margin-left:auto;padding:1px 8px;font-size:12px">✎ 编辑</button>
       </div>
-      <div style="position:relative">
-        <p class="sub so-logline" ${state.soCollapsed?'hidden':''}>${esc(o.logline||'')}</p>
-        <button type="button" class="btn small ghost" id="btnLoglineEdit" title="编辑小说简介" ${state.soCollapsed?'hidden':''} style="position:absolute;top:-4px;right:0;padding:1px 8px;font-size:12px">✎ 编辑</button>
-      </div>
+      <p class="sub so-logline" ${state.soCollapsed?'hidden':''}>${esc(o.logline||'')}</p>
       <div class="btn-row" style="margin-top:6px"><button type="button" class="btn small ghost" id="btnOutlineRegen" title="再生成一批 ${OUTLINE_CANDIDATE_N} 个候选大纲供选择；当前大纲与旧候选自动存入历史版本，不会丢失">🔄 重生成大纲</button></div>
       ${ isLong() ? anchorEditHtml() : '' }
       ${ isLong() ? structureCardHtml() : '' }
@@ -6216,7 +6262,7 @@ function qualityReportCardHtml(){
       </span>
     </div>
   `).join('');
-  return `<div class="card qr-card">
+  return `<div class="card qr-card" style="background:var(--panel2);border:1px solid var(--line)">
     <div class="qr-head">
       <h3 style="margin:0">⚠️ 质量报告${issues.length ? `（${issues.length} 章需关注）` : ''}</h3>
       ${issues.length ? `<button type="button" class="btn small ghost" data-qr-retry-all>全部重试</button>` : ''}
@@ -6344,11 +6390,21 @@ function bindOutlineFold(){
     if(state){ state.soCollapsed = on; if(typeof persist==='function') persist(); }
   };
 }
-// v235/E4 小说简介笔图标编辑：✎ → 原位 textarea → 失焦/Ctrl+Enter 保存写回 o.logline（单数据源）；Esc 取消；空值视为取消
+// v235/E4 小说简介笔图标编辑；v237/904-1：按钮移入"📌 小说简介"标题行右侧（不再浮在简介文字上遮挡首行），
+//   点击 stopPropagation 防误触折叠；简介收起时点击编辑先自动展开再进入编辑
 function bindLoglineEdit(){
   const eb = $('#btnLoglineEdit'); if(!eb) return;
-  eb.onclick = ()=>{
-    const p = $('.so-logline'); if(!p) return;
+  eb.onclick = (e)=>{
+    e.stopPropagation();
+    let p = $('.so-logline');
+    if(!p){
+      // 收起态：先展开（翻转 hidden + 箭头 + 持久化），再取简介段
+      if(state){ state.soCollapsed = false; if(typeof persist==='function') persist(); }
+      const head = $('[data-so-toggle]');
+      if(head){ const f = head.querySelector('.so-fold'); if(f) f.textContent = '▾'; }
+      p = $('.so-logline');
+    }
+    if(!p) return;
     const ta = document.createElement('textarea');
     ta.className = 'logline-ta';
     ta.value = String((state.outline||{}).logline||'');
@@ -8408,7 +8464,7 @@ function renderChapters(){
       const hasC = !!(c.content && c.content.trim());
       // 建议1：无正文章节→卡片折叠成标题行；有正文→默认展开；点击标题行切换
       const foldedCls = hasC ? '' : ' folded';
-       return `<div class="card ch-card" data-ch-card="${i}">
+       return `<div class="card ch-card" data-ch-card="${i}" style="background:var(--panel);border:1px solid var(--line)">
         <div class="ch-head" data-fold="${i}" role="button" tabindex="0" aria-expanded="${foldedCls?'false':'true'}">
           <span class="ch-fold-ico">${hasC?'▾':'▸'}</span>
           <h3 style="margin:0;flex:1;word-break:break-word;line-height:1.35" title="第${i+1}章 · ${esc(cleanChapterTitle(c.title))}">第${i+1}章 · ${esc(cleanChapterTitle(c.title))}${c._titleByAI?'<i class="tbd-title-tag" style="font-style:normal;font-size:11px;font-weight:400;opacity:.55;margin-left:6px" title="本章标题已由章节正文 AI 定稿">正文定稿</i>':(!state.plannerFinalized?'<i class="tbd-title-tag" style="font-style:normal;font-size:11px;font-weight:400;opacity:.55;margin-left:6px" title="标题尚未由全书规划师定稿，当前沿用第二步参考稿">参考稿</i>':'')}</h3>
@@ -8441,7 +8497,7 @@ function renderChapters(){
   } else {
     // 短片模式：全部渲染，保留「待确认/已确认」（决策7：仅长篇去除确认）
     wrap.innerHTML = state.chapters.map((c,i)=>`
-      <div class="card ch-card" data-ch-card="${i}">
+      <div class="card ch-card" data-ch-card="${i}" style="background:var(--panel);border:1px solid var(--line)">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
          <div style="display:flex;align-items:center;gap:8px;min-width:0">
   <h3 style="margin:0;word-break:break-word;line-height:1.35" title="第${i+1}章 · ${esc(cleanChapterTitle(c.title))}">第${i+1}章 · ${esc(cleanChapterTitle(c.title))}</h3>
@@ -10206,8 +10262,10 @@ async function genPlannerBeats(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
   // v234/P3：缺上游只提示不阻断——节拍表以简述为锚，跳过①直接跑质量会下降
+  // v237/904-5 修复：原检测误查 o.chapters[].summary（该数组只有标题，summary 恒空 → 已生成简述也永远误报）；
+  //   ①主线简述实际写入 o.chapterPlans[idx].summary（见 genPlannerSummary），与⑤伏笔网检测同源，改查同一字段
   const o0 = state.outline || {};
-  const hasSummary = (o0.chapters||[]).length > 0 && (o0.chapters||[]).every(c=>String(c&&c.summary||'').trim());
+  const hasSummary = (o0.chapterPlans||[]).some(p=>String(p&&p.summary||'').trim());
   if(!hasSummary && !opts.silent && !confirm('尚无①主线简述作为锚点，节拍表质量会下降（建议先跑①）。仍要直接生成节拍表吗？')) return false;
   markAIRunning('chapterPlan');
   refreshPlannerStageBar('beats', null);

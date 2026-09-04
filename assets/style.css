@@ -760,21 +760,35 @@ body.reader-lock{overflow:hidden}
 
 /* v1.0.134 规划师五段工具栏（阶段按钮 + 一键五步） */
 .cp-stagebar{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;align-items:center}
-.cp-stage{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:rgba(255,255,255,.85);font-size:11.5px;line-height:1.4;cursor:pointer;transition:all .2s;font-family:inherit}
+/* v237/904-3：五步按钮文字主题自适应——原硬编码白色文字/透明底在三种亮色主题下看不清；
+   改用主题变量 + color-mix 状态色：暗色主题维持浅色观感，亮色主题自动变深色可读 */
+.cp-stage{display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:11.5px;line-height:1.4;cursor:pointer;transition:all .2s;font-family:inherit}
 .cp-stage .cp-dot{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;font-size:10px;line-height:1;font-style:normal}
-.cp-stage:hover{background:rgba(255,255,255,.14)}
-.cp-stage.done{border-color:rgba(74,222,128,.45);background:rgba(34,197,94,.14);color:#86efac}
+.cp-stage:hover{background:var(--panel)}
+.cp-stage.done{border-color:rgba(74,222,128,.45);background:color-mix(in srgb, #22c55e 14%, var(--panel2));color:color-mix(in srgb, #4ade80 55%, var(--txt))}
 .cp-stage.done .cp-dot{background:rgba(34,197,94,.25);color:#4ade80}
 .cp-stage.undone .cp-dot{background:rgba(239,68,68,.2);color:#f87171}
-.cp-stage.fail{border-color:rgba(239,68,68,.55);background:rgba(239,68,68,.15);color:#fca5a5}
+.cp-stage.fail{border-color:rgba(239,68,68,.55);background:color-mix(in srgb, #ef4444 14%, var(--panel2));color:color-mix(in srgb, #f87171 60%, var(--txt))}
 .cp-stage.fail .cp-dot{background:rgba(239,68,68,.28);color:#f87171}
-.cp-stage.running{border-color:rgba(245,158,11,.5);background:rgba(245,158,11,.12);color:#fcd34d}
+.cp-stage.running{border-color:rgba(245,158,11,.5);background:color-mix(in srgb, #f59e0b 14%, var(--panel2));color:color-mix(in srgb, #fbbf24 60%, var(--txt))}
 .cp-stage.running .cp-dot{background:transparent}
 .cp-stage:disabled{opacity:.8;cursor:wait}
 .cp-stage-all{display:inline-flex;align-items:center;gap:4px;padding:4px 12px;border-radius:8px;border:none;background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);color:#fff;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 2px 8px rgba(245,158,11,.35);transition:all .2s;font-family:inherit}
 .cp-stage-all:hover{background:linear-gradient(135deg,#fbbf24 0%,#f59e0b 100%)}
 .cp-stage-all.running{opacity:.7;cursor:wait}
-.cp-stage-hint{font-size:10.5px;color:rgba(255,255,255,.4);margin:-2px 0 8px}
+.cp-stage-hint{font-size:10.5px;color:var(--muted);margin:-2px 0 8px}
+
+/* v237/904-4：消息看板 + toast 内嵌看板按钮 */
+.toast{display:flex;align-items:center;gap:8px}
+.toast-msg{flex:1;min-width:0}
+.toast-hist{flex:0 0 auto;border:1px solid rgba(255,255,255,.35);background:transparent;color:#fff;border-radius:6px;font-size:11px;line-height:1;padding:3px 5px;cursor:pointer}
+.toast-hist:hover{background:rgba(255,255,255,.15)}
+.tb-row{display:flex;gap:10px;align-items:flex-start;padding:6px 8px;border-bottom:1px solid var(--line)}
+.tb-ts{flex:0 0 auto;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;padding-top:1px}
+.tb-msg{flex:1;min-width:0;font-size:12.5px;color:var(--txt);line-height:1.5;word-break:break-word}
+/* v237/904-2：管理面板顶部第二行（导入导出统一区） */
+.ws-lib-toprow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:8px 14px;border-bottom:1px solid var(--line)}
+.ws-lib-toprow .btn{height:24px;line-height:22px;box-sizing:border-box}
 
 /* v10.14 章节标题管理块 */
 .ct-block{margin:10px 0 14px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:color-mix(in srgb, var(--accent2) 6%, var(--panel2))}
