@@ -942,6 +942,12 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
       if(!streaming){
         const data = await res.json();
         const out = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+        // v249/930（方案一修正版）：中转/上游把冷启动异常包装成 HTTP 200（缺 choices 或空 content）时，
+        // 旧逻辑静默返回空文本，上层只能报「未解析到书名/简介」这类模糊错误——现改为抛可重试错误，
+        // 进外层退避通道（网络层同款重试），且失败原因在请求日志中可见。这是「会话第一枪首败、重试必成」的最对症修复。
+        if(!data.choices || !String(out).trim()){
+          throw new Error('响应异常（HTTP 200 但无 choices/content）：' + JSON.stringify(data).slice(0, 160));
+        }
         const finishReason = (data.choices && data.choices[0] && data.choices[0].finish_reason) || '';
         const usage = data.usage || null;
         _rec.resp = String(out).slice(0,50000); _rec.respLen = String(out).length; _rec.ms = Date.now()-_t0; _rec.ok = true;
@@ -977,17 +983,26 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
         feed(decoder.decode(value, {stream:true}));
       }
       feed(decoder.decode());
+      // v249/930（方案一修正版）：流式路径同款保护——全程无有效内容即抛可重试错误（进外层退避通道），不再静默返回空文本
+      if(!String(full).trim()){
+        throw new Error('响应异常（流式全程无有效内容）');
+      }
       _rec.resp = String(full).slice(0,50000); _rec.respLen = String(full).length; _rec.ms = Date.now()-_t0; _rec.ok = true;
       aiLogPush(_rec);
       // 4.5 P0：流式最后也返回 {text, finishReason, usage:null}（4.9 起 finishReason 为真实结束原因，供上层识别截断）
       return { text: full, finishReason, usage: null };
     }catch(e){
       lastErr = e;
+      // v249/930（方案一修正版）：调用方主动停止（如点击 ⏹，传入 signal 已 abort）不消耗重试、立即退出；
+      // 超时（AbortSignal.timeout）不受此影响——调用方 signal 未 aborted，照常退避重试
+      if(signal && signal.aborted){ break; }
       if(attempt >= retry) break;
-      await new Promise(r=>setTimeout(r, 1000*Math.pow(2, attempt)));
+      // v249/930（方案一修正版）：退避 1s/2s → 2s/6s——首轮 3 连重试总跨度从约 3 秒拉到约 8 秒以上，
+      // 让「会话第一枪」的重试跳出服务商/中转 10-20 秒冷态窗口（429 的 Retry-After 专用通道不受影响）
+      await new Promise(r=>setTimeout(r, attempt === 0 ? 2000 : 6000));
     }
   }
-  _rec.ms = Date.now()-_t0; _rec.ok = false; _rec.err = String(lastErr.message||lastErr).slice(0,200);
+  _rec.ms = Date.now()-_t0; _rec.ok = false; _rec.err = (String(lastErr.message||lastErr).slice(0,170) + `（内部已重试 ${retry} 次）`);
   aiLogPush(_rec);
   throw lastErr;
 }
@@ -7583,8 +7598,11 @@ function chapterPlanBlock(){
       <div class="cp-stagebar">
         ${PLANNER_STAGES.map(st=>{
           const done = plannerStageDone(st.id);
+          // v250/933-T1A：伏笔网完成态显示条数（用户反馈：只看到 ✓ 不知道生成了什么）
+          const _fsN = (st.id==='foreshadow' && state.outline._foreshadowLedger) ? (state.outline._foreshadowLedger.planted||[]).length : 0;
+          const _dot = done ? (st.id==='foreshadow' && _fsN ? '✓'+_fsN : '✓') : '·';
           return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；五步可任意顺序单独点击，无需按顺序完成">
-            <i class="cp-dot">${done?'✓':'·'}</i>${st.num}${st.label}
+            <i class="cp-dot">${_dot}</i>${st.num}${st.label}
           </button>`;
         }).join('')}
       </div>
@@ -9715,7 +9733,7 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
   renderChapters();
   // 用事件委托处理章节区内部点击：分页/折叠会重建部分按钮，委托在 #chaptersWrap 上保证始终生效（Bug2 修复）
   const chaptersDelegate = (e)=>{
-    const t = e.target.closest('[data-regen],[data-toggle],[data-read],[data-fold],[data-page],[data-ver],[data-undo],[data-ch-raw],[data-ch-sum],[data-style-ok],[data-ne-resume-ch],[data-ne-sandbox-ch]');
+    const t = e.target.closest('[data-regen],[data-toggle],[data-read],[data-fold],[data-page],[data-ver],[data-undo],[data-ch-raw],[data-ch-sum],[data-style-ok],[data-ne-resume-ch],[data-ne-sandbox-ch],[data-ne-draft-review],[data-ne-partial-adopt]');
     if(!t) return;
     if(t.hasAttribute('data-ver')){ openChapterVersionPanel(+t.dataset.ver); }
     else if(t.hasAttribute('data-undo')){ undoChapterEdit(+t.dataset.undo); }
@@ -9727,6 +9745,8 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
     else if(t.hasAttribute('data-toggle')){ const i=+t.dataset.toggle; state.chapters[i].confirmed=!state.chapters[i].confirmed; persist(); render(); }
     else if(t.hasAttribute('data-read')){ openReader(+t.dataset.read); }
     else if(t.hasAttribute('data-ne-resume-ch')){ const i=+t.dataset.neResumeCh; continueAndFinalizeChapter(i, '继续生成'); }
+    else if(t.hasAttribute('data-ne-draft-review')){ openDraftReview(+t.dataset.neDraftReview); }   // v250/933-T2P1
+    else if(t.hasAttribute('data-ne-partial-adopt')){ adoptChapterPartial(+t.dataset.nePartialAdopt); }   // v250/933-T2P2
     else if(t.hasAttribute('data-ne-sandbox-ch')){ const i=+t.dataset.neSandboxCh; renderBranchSandbox(i); }
     else if(t.hasAttribute('data-fold')){ const i=+t.dataset.fold; const body=t.closest('.ch-card').querySelector('.ch-body'); const ico=t.querySelector('.ch-fold-ico'); const on = body.classList.toggle('folded'); t.setAttribute('aria-expanded', String(!on)); if(ico) ico.textContent = on?'▸':'▾'; }
     else if(t.hasAttribute('data-page')){ chPage = +t.dataset.page; renderChapters(); }   // v240/906-1 分页恢复（v238 蓝本）
@@ -10279,7 +10299,7 @@ function refreshPlannerStageBar(running, failed){
     if(st.id === running){ b.classList.add('running'); dot.innerHTML = '<span class="spinner"></span>'; b.disabled = true; }
     else { b.disabled = false;
       if(st.id === failed){ b.classList.add('fail'); dot.textContent = '✕'; }
-      else if(plannerStageDone(st.id)){ b.classList.add('done'); dot.textContent = '✓'; }
+      else if(plannerStageDone(st.id)){ b.classList.add('done'); dot.textContent = (st.id==='foreshadow' && o._foreshadowLedger && (o._foreshadowLedger.planted||[]).length) ? ('✓'+o._foreshadowLedger.planted.length) : '✓'; }   // v250/933-T1A：伏笔网带条数
       // v225/P4：半程态——进度持久化显示"进行到 N/M 批"（琥珀色，样式 .cp-dot.partial）
       else if((o._plannerProgress||{})[st.id] && o._plannerProgress[st.id].done > 0 && o._plannerProgress[st.id].done < o._plannerProgress[st.id].total){
         b.classList.add('partial'); dot.textContent = `${o._plannerProgress[st.id].done}/${o._plannerProgress[st.id].total}`;
@@ -10730,10 +10750,13 @@ async function genPlannerAll(btn){
   // v241/907-1 自锁修复：原给总控按钮走 busy() 加 .is-busy，而各阶段的 plannerGate→genBusy() 扫描
   // .is-busy 会命中总控自身 → 每步 0 进度即被拦截（单步正常、一键必断，v238 起历史问题）。改用
   // .cp-stage-all.running 视觉态（refreshPlannerStageBar 本就维护该类）+ textContent 文案，不进 genBusy 扫描面。
-  const setTxt = t=>{ if(btn){ if(btn._txt === undefined) btn._txt = btn.innerHTML; btn.textContent = t; } };
+  // v250/933-T3A：每步完成后阶段函数内部 render() 重建视图，「⚡ 一键五步」按钮 DOM 被替换——
+  // 闭包持有旧节点导致进度停在 1/N（2/5-5/5 全部写进孤立节点）。改为每次现查 DOM。
+  const allBtn = ()=> document.querySelector('[data-cp-all]');
+  const setTxt = t=>{ const b = allBtn(); if(b){ if(b._txt === undefined) b._txt = b.innerHTML; b.textContent = t; } };
   const finish = ()=>{
-    if(btn && btn._txt !== undefined){ btn.innerHTML = btn._txt; delete btn._txt; }
-    if(btn) btn.classList.remove('running');
+    const b = allBtn();
+    if(b){ if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; } b.classList.remove('running'); }
   };
   if(btn){ btn.classList.add('running'); setTxt(`五步生成中（0/${stages.length}）…`); }
   try{
@@ -10743,8 +10766,10 @@ async function genPlannerAll(btn){
       refreshPlannerStageBar(st, null);
       // v241/908-2：每步开始把 ⏹ 挂到「⚡ 一键五步」所在动作行（阶段收到的 btn=null，其内部不再自建停止按钮，
       // 全程共用这里的一个 AbortController）；cp-stopping 类给 ⚡ 让位；abort 事件置 stopped，区分「用户停止」与「阶段失败」
-      const stopParent = btn ? (btn.closest('.cp-head-row.action-row') || btn.parentNode)
-                             : document.querySelector('.cp-card .cp-head-row.action-row');
+      // v250/933-T3A：⏹ 挂载点同样现查（同源问题——render 后旧 btn.closest 是 detached 子树）
+      const _allNow = allBtn();
+      const stopParent = _allNow ? (_allNow.closest('.cp-head-row.action-row') || _allNow.parentNode)
+                                 : document.querySelector('.cp-card .cp-head-row.action-row');
       let stopped = false;
       if(stopParent){
         showStopBtn(stopParent);
@@ -11398,19 +11423,7 @@ async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride,
 // 章节标题列表（v9 曾全列；v2.4 起不再注入章节生成——用户要求全部章节标题零夹带，主线简述生成自行拼标题列表）
 // 承接来源（v10）：只提供「上一章真实正文」，取代旧的全量前文（cumulativeChapters）。恒定内容块承载全书脉络。
 // 上一章标签统一为【上一章（第 N 章《标题》）】，i 为当前章 0 基下标；第 1 章（i<=0）无前文返回空。
-// v247/924-Q8（拍板）：prevChapter（零调用点死代码，v10 起被 L2 结构化承接替代）已删除。
-// 批间累积前缀（v9）：拼接第 1..(i-1) 章完整正文，放进恒定前缀区（从第0个token起与前序请求完整复用 → 缓存命中，见 安排token.md §14）。
-// 每写一章只在末尾追加上一章，前缀部分整段命中；为尽量减少宽占用可根据体量不超上下文，单章下限亦覆盖。
-// 本函数保留供阅读/导出等仍用全量文本的地方复用。
-function cumulativeChapters(i){
-  const out = [];
-  const start = 0;
-  for(let k=start; k<i; k++){
-    const c = state.chapters[k];
-    if(c && c.content && String(c.content).trim()) out.push(`【第${k+1}章】${c.title||''}\n${c.content}`);
-  }
-  return out.join('\n\n');
-}
+// v247/924-Q8（拍板）：prevChapter（零调用点死代码）已删除；v248/930（用户指令）：cumulativeChapters（零调用点死代码）一并删除。
 // v2.4 章节 User 组装：按用户指定优先级（人工干预 > 写作风格 > 词典）——
 // ① 写作风格（第一优先）② 上一章真实正文（必须接着写）③ 本章任务+主线简述 ④ 本章/下一章边界（禁越界，末章收束）⑤ 大纲/结构/词典 ⑥ 人工干预（重生成，最高优先）
 // 不注入"全部章节标题"（v2.3 零夹带）；词典全字段经 chapterGlossaryBlock 注入。
@@ -12212,6 +12225,61 @@ const chState = {};
 // v240/906-1：长篇分页已恢复（chPage/CH_PAGE_SIZE 回归，见 renderChapters 与 chaptersDelegate）——每页 10 章，v238 蓝本
 
 // 新卡片界面：章节状态徽章与操作按钮 HTML（供 renderChapters / patchChapter 复用）
+/* ---------- v250/933-T2：失败正文可见与转正（质检草稿审阅 / 流式残留采用） ---------- */
+// 打开质检草稿审阅弹层：全文 + 质检问题清单 + 手动转正/丢弃
+function openDraftReview(i){
+  const c = state.chapters[i]; if(!c) return;
+  const d = String(c._draft||'').trim();
+  if(!d){ toast('本章暂无待审草稿'); return; }
+  const q = c._qualityIssue;
+  const errs = (q && Array.isArray(q.errors)) ? q.errors : [];
+  const body = `
+    <div class="ne-draft-review">
+      ${errs.length?`<div style="border:1px solid var(--warn,#d9a441);border-radius:8px;padding:8px 10px;margin-bottom:8px"><b>⚠️ 质检问题（${errs.length}）</b><ul style="margin:6px 0 0 18px;padding:0">${errs.map(e=>`<li style="font-size:12px;color:var(--muted,#888)">${esc(String(e))}</li>`).join('')}</ul></div>`:''}
+      <div style="max-height:50vh;overflow:auto;white-space:pre-wrap;line-height:1.75;border:1px solid var(--line,#e0e0e0);border-radius:8px;padding:10px;font-size:13px">${esc(d)}</div>
+      <p class="hint">转正即跳过质检：本章将作为正式正文（进入词典提取/滚动摘要链），上述质检问题不再提示。</p>
+    </div>`;
+  const actions = `
+    <button class="btn primary" data-ne-draft-adopt="${i}">✓ 审阅通过，转正为正文</button>
+    <button class="btn ghost" data-ne-draft-discard="${i}">✕ 丢弃草稿</button>
+    <button class="btn ghost" data-ne-close>关闭</button>`;
+  openNeModal(`第 ${i+1} 章 · 草稿审阅（${countWords(d).total.toLocaleString()} 字）`, body, actions);
+}
+// 草稿转正：写入正式 content，清 _draft/_qualityIssue/修复队列条目（走版本快照，可回退）
+function adoptChapterDraft(i){
+  const c = state.chapters[i]; if(!c) return;
+  const d = String(c._draft||'').trim();
+  if(!d){ toast('本章暂无待审草稿'); return; }
+  snapshotChapterVersion(i);
+  c.content = d;
+  delete c._draft; delete c._qualityIssue;
+  state._fixQueue = (state._fixQueue||[]).filter(x=>x.ch!==i);
+  if(state._chapterPartial) delete state._chapterPartial[i];
+  chState[i] = 'done';
+  persist(); patchChapter(i); closeNeModal();
+  toast(`第 ${i+1} 章草稿已转正为正文（${countWords(d).total.toLocaleString()} 字）` + qcTail());
+}
+// 丢弃草稿：清 _draft/_qualityIssue/修复队列条目；无正式正文时回到未生成态
+function discardChapterDraft(i){
+  const c = state.chapters[i]; if(!c) return;
+  delete c._draft; delete c._qualityIssue;
+  state._fixQueue = (state._fixQueue||[]).filter(x=>x.ch!==i);
+  if(!(c.content && String(c.content).trim())) chState[i] = '';
+  persist(); patchChapter(i); closeNeModal();
+  toast(`第 ${i+1} 章草稿已丢弃`);
+}
+// 流式残留直接采用：已缓存部分作为正式正文（不再 AI 续写）
+function adoptChapterPartial(i){
+  const p = String((state._chapterPartial||{})[i]||'').trim();
+  if(!p){ toast('本章暂无已缓存文本'); return; }
+  snapshotChapterVersion(i);
+  state.chapters[i].content = p;
+  delete state._chapterPartial[i];
+  chState[i] = 'done';
+  persist(); patchChapter(i);
+  toast(`第 ${i+1} 章已采用已生成部分（${countWords(p).total.toLocaleString()} 字）` + qcTail());
+}
+
 function chapterBadgesHtml(i){
   const c = state.chapters[i] || {};
   const hasC = !!(c.content && String(c.content).trim());
@@ -12242,6 +12310,12 @@ function chapterBadgesHtml(i){
   // 续写按钮
   if(partialW>=50 && chState[i]!=='generating'){
     parts.push(`<button class="btn small primary" data-ne-resume-ch="${i}" title="利用已缓存的 ${partialW.toLocaleString()} 字继续生成">▶️ 继续生成</button>`);
+    // v250/933-T2P2：流式残留直接采用（用户可绕过 AI 续写，把已生成部分直接转正）
+    parts.push(`<button class="btn small ghost" data-ne-partial-adopt="${i}" title="直接把已缓存的 ${partialW.toLocaleString()} 字作为本章正文（不再续写）">⬇ 采用已生成部分</button>`);
+  }
+  // v250/933-T2P1：质检草稿审阅入口（独立于主状态 pill——error 态并存时主 pill 显示「生成失败」，草稿入口仍需可见）
+  if(c._draft && String(c._draft).trim() && chState[i]!=='generating'){
+    parts.push(`<button class="btn small ghost" data-ne-draft-review="${i}" title="查看质检失败的草稿全文，可手动转正为正文">📝 审阅草稿</button>`);
   }
   // 中间件状态徽章
   if(personaViol) parts.push(`<span class="pill tag-persona" title="发现 ${personaViol} 处人设矛盾">🛡️ ${personaViol}</span>`);
@@ -13751,6 +13825,9 @@ function rebindNarrativeEngine(){
     // 流式续写
     const resume=e.target.closest('[data-ne-resume]'); if(resume){ const i=+resume.dataset.neResume; closeNeModal(); continueAndFinalizeChapter(i, '从中断处继续'); return; }
     const discard=e.target.closest('[data-ne-discard]'); if(discard){ const i=+discard.dataset.neDiscard; delete state._chapterPartial[i]; toast('已丢弃第 '+(i+1)+' 章缓存'); renderResumePanel(); renderNarrativeEngineMenu(); return; }
+    // v250/933-T2P1：草稿审阅弹层内的转正/丢弃
+    const dAdopt=e.target.closest('[data-ne-draft-adopt]'); if(dAdopt){ adoptChapterDraft(+dAdopt.dataset.neDraftAdopt); return; }
+    const dDiscard=e.target.closest('[data-ne-draft-discard]'); if(dDiscard){ discardChapterDraft(+dDiscard.dataset.neDraftDiscard); return; }
     // 伏笔看板
     const fsRes=e.target.closest('[data-ne-fs-resolve]'); if(fsRes){ const idx=+fsRes.dataset.neFsResolve; resolveForeshadow(idx, state.chapters.length-1); renderForeshadowLedger(); renderNarrativeEngineMenu(); return; }
     const fsDelay=e.target.closest('[data-ne-fs-delay]'); if(fsDelay){ const idx=+fsDelay.dataset.neFsDelay; delayForeshadow(idx); renderForeshadowLedger(); renderNarrativeEngineMenu(); return; }
