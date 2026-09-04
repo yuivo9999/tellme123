@@ -1418,7 +1418,7 @@ function showPolishResult(out, multi){
       }));
       state.polishAdopted = null;   // 新方案列表，尚未采用
       persist();
-      renderPolishCards(cards);
+      render(); openPolishBox();   // v233 修复：keepBar（查看全部/重新优化/清除/📚优化版本入口）是 render() 时拼接的静态模板，原来只局部刷卡片它永远不出现——收起后死角
       return;
     }
     // JSON 解析失败降级：整体当单稿文本
@@ -1430,22 +1430,24 @@ function showPolishResult(out, multi){
         state.polishOptions = segs;
         state.polishAdopted = null;
         persist();
-        renderPolishCards(cards);
+        render(); openPolishBox();   // v233 修复：同上——整视图刷新让 keepBar 与历史入口出现
         return;
       }
     }
+    snapshotPolishBatch('重新优化前');   // v233：单卡降级路径补归档（与上方两分支对齐，空批时本函数自动跳过）
     state.polishOptions = [{ name:'方案1', text: String(typeof out==='object' ? ((out&&out.optimizedIdea)||'') : out).trim(), _v45: pickV45(typeof out==='object'?out:{}) }];
     state.polishAdopted = null;
     persist();
-    renderPolishCards(cards);
+    render(); openPolishBox();   // v233 修复：同上
     return;
   }
   // 单稿：直接作为单个方案展示（4.5：结构化对象 → optimizedIdea 为主体 + _v45 附加数据）
   const single = (out && typeof out === 'object') ? out : { optimizedIdea: String(out||'').trim() };
+  snapshotPolishBatch('重新优化前');   // v233：单稿覆盖前补归档（与多方案分支对齐）
   state.polishOptions = [{ name:'方案1', text: String(single.optimizedIdea||single.text||'').trim(), _v45: pickV45(single) }];
   state.polishAdopted = null;
   persist();
-  renderPolishCards(cards);
+  render(); openPolishBox();   // v233 修复：同上
 }
 
 // 4.9 修复：把「导入设定」的 _v45 结构化设定写入一个真实存在的 outline（词典幂等合并 + navBeacon）。
@@ -9098,8 +9100,14 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
 function snapshotOutlineLabel(o, label){
   if(!o || typeof o !== 'object') return;
   const copy = JSON.parse(JSON.stringify(o));
+  const sig = JSON.stringify(copy);
+  // v233 修复：内容去重——历史里已存在完全相同内容的大纲就不再叠加（修复"恢复一个历史就多出一条重复历史、可无限叠加"）；
+  // 旧条目无 _sig 时现场 stringify 对比，新条目缓存 _sig
+  state.outlineHistory = Array.isArray(state.outlineHistory) ? state.outlineHistory : [];
+  if(state.outlineHistory.some(h => h && (h._sig ? h._sig === sig : JSON.stringify(h.outline) === sig))) return;
   const item = { outline: copy, ts: Date.now() };
   if(label) item.label = String(label);
+  item._sig = sig;
   state.outlineHistory.unshift(item);
   if(state.outlineHistory.length > 50) state.outlineHistory.splice(50);
 }
@@ -9269,17 +9277,26 @@ async function genOutlineMulti(btn){
       const ang = OUTLINE_CANDIDATE_ANGLES[i % OUTLINE_CANDIDATE_ANGLES.length];
       const tag = '候选' + String.fromCharCode(65 + (i % OUTLINE_CANDIDATE_ANGLES.length));
       if(st){ st.className='status'; st.textContent = `${tag}（${ang.tag}）生成中…（${i+1}/${N}）`; }
-      let cand = null;
-      try{
-        // 角度差异化：经 getSystemPrompt('outline', {angleNote}) 追加到系统提示词尾部
+      // v233 修复：单候选失败不再一次定生死——同角度自动重试一次（覆盖偶发的截断/解析失败），仍失败才跳过；
+      // 重试过程写入状态栏（原来 toast 一闪而过，失败原因不可见）
+      const attempt = async ()=>{
         const txt = await callAIGuarded('outline', { angleNote: `【本候选创意角度】${ang.note}` },
           {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal});
-        cand = extractJsonObject(txt);
-        if(!cand || !String(cand.title||'').trim() || !String(cand.logline||'').trim()) throw new Error('未解析到书名/简介');
-      }catch(e){
-        if(e.name === 'AbortError') throw e;
-        toast(`${tag}（${ang.tag}）未通过校验，已跳过：${e.message}`);
+        const o = extractJsonObject(txt);
+        if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()) throw new Error('未解析到书名/简介');
+        return o;
+      };
+      let cand = null, lastErr = null;
+      for(let k=0; k<2 && !cand; k++){
+        try{
+          cand = await attempt();
+        }catch(e){
+          if(e.name === 'AbortError') throw e;
+          lastErr = e;
+          if(k===0 && st){ st.textContent = `${tag}（${ang.tag}）首次未通过（${e.message}），自动重试一次…`; }
+        }
       }
+      if(!cand){ toast(`${tag}（${ang.tag}）重试后仍未通过校验，已跳过：${(lastErr && lastErr.message) || '未知错误'}`); }
       if(cand) items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand });
     }
     if(!items.length) throw new Error('全部候选均未通过校验');
