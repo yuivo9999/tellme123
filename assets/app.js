@@ -433,6 +433,7 @@ function projectSnapshot(){
     _lastPolishBrief: state._lastPolishBrief || null,   // 4.7 Pro 优化构想结构化简报（供大纲 AI 经 formatNavBeaconForOutline 注入）
     _lastPolishIdeaText: state._lastPolishIdeaText || '',   // v230/1-C：纯文本优化稿存档（新 PRO 无 JSON brief 时构想→大纲的上下文通道）
     _outlineCandidates: state._outlineCandidates || null,   // v230/3.1：多大纲候选 {batchTs, items:[{id,label,outline}], chosenId}
+    _outlineCandsFolded: !!state._outlineCandsFolded,   // v239/905-2：候选大纲区折叠状态（选择完成后可手动折叠，随项目持久化）
     _chapterPartial: state._chapterPartial || {},   // 4.8 旗舰版（板块一-3）：流式中断续写缓存（刷新不丢）
     _tensionCurve: state._tensionCurve || [],   // 4.8 旗舰版（板块三-3）：张力曲线
     _personaCards: state._personaCards || {},   // 4.8 旗舰版（板块三-2）：人设一致性防火墙
@@ -465,6 +466,8 @@ function applyProject(p){
   state.coverPrompt = p.coverPrompt || '';
   state.coverWithTitle = !!p.coverWithTitle;
   state.outline = p.outline || null;
+  // v240/906-2：规划师历史版本功能已移除——旧存档残留的 chapterPlansHistory 数据静默清除（存档瘦身，下次 persist 即落盘生效）
+  if(state.outline && state.outline.chapterPlansHistory) delete state.outline.chapterPlansHistory;
   state.outlineConfirmed = !!p.outlineConfirmed;
   state.glossAdherence = (typeof p.glossAdherence === 'number') ? p.glossAdherence : 60;
   state.glossAllowFill = !!p.glossAllowFill;
@@ -525,6 +528,7 @@ function applyProject(p){
   state._lastPolishBrief = (p._lastPolishBrief && typeof p._lastPolishBrief === 'object') ? p._lastPolishBrief : null;   // 4.7 Pro 优化构想简报恢复
   state._lastPolishIdeaText = (typeof p._lastPolishIdeaText === 'string') ? p._lastPolishIdeaText : '';   // v230/1-C 纯文本优化稿恢复
   state._outlineCandidates = (p._outlineCandidates && typeof p._outlineCandidates === 'object' && Array.isArray(p._outlineCandidates.items)) ? p._outlineCandidates : null;   // v230/3.1 多大纲候选恢复
+  state._outlineCandsFolded = !!p._outlineCandsFolded;   // v239/905-2 候选大纲区折叠状态恢复
   state._chapterPartial = (p._chapterPartial && typeof p._chapterPartial === 'object') ? p._chapterPartial : {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存恢复
   // 4.8 旗舰版（板块三）：创新核弹中间件恢复
   state._tensionCurve = Array.isArray(p._tensionCurve) ? p._tensionCurve : [];
@@ -555,6 +559,7 @@ function clearState(){
   state._lastPolishBrief = null;   // 4.7 Pro 优化构想简报重置
   state._lastPolishIdeaText = '';   // v230/1-C 纯文本优化稿重置
   state._outlineCandidates = null;   // v230/3.1 多大纲候选重置
+  state._outlineCandsFolded = false;   // v239/905-2 候选大纲区折叠状态重置
   state._chapterPartial = {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存重置
   state.aiNetwork = { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络重置
   // 4.8 旗舰版（板块三）：创新核弹中间件重置
@@ -5422,13 +5427,12 @@ function openStyleLibPanel(){
           <button class="btn small ghost" data-lib-reset>恢复默认</button>
           <button class="gs-x" data-lib-close>✕</button>
         </span></div>
-      <!-- v238/反馈②：第二行整合为 4 按钮——旧「⬇ 导出词条」整包直下按钮退役（exportWsStyleBundle 同步退役），交互式「📦 选择导出」替代 -->
+      <!-- v239/905-1：管理第二行去掉「📜 消息看板」（看板入口保留在「叙事」菜单与 toast 📋 按钮）；「📦 选择导出」改为仅导出写作风格卡片内容（组合配方/我的配方/五大类词条） -->
       <div class="ws-lib-toprow">
         <span class="muted" style="font-size:11px;flex:0 0 auto">导入 / 导出：</span>
-        <button type="button" class="btn small ghost" data-lib-rexcenter title="打开导出中心：平铺勾选配方与词条，打包导出（配方自动附带其引用词条🔒）">📦 选择导出</button>
+        <button type="button" class="btn small ghost" data-lib-rexcenter title="打开导出中心：平铺勾选组合配方、我的配方与五大类词条，打包导出">📦 选择导出</button>
         <button type="button" class="btn small ghost" data-lib-import title="导入风格词条包（合并式：只添加我没有的）">⬆ 导入词条</button>
         <button type="button" class="btn small ghost" data-lib-rimport title="导入配方包 JSON（先预览勾选，再确认导入；词条自动合并进词库）">⬆ 导入配方包</button>
-        <button type="button" class="btn small ghost" data-lib-tboard title="回看全部历史提示消息（底部悬浮提示消失后仍可查）">📜 消息看板</button>
         <input type="file" id="wsLibImportFile" accept=".json,application/json" hidden />
         <input type="file" id="wsRecipeImportFile" accept=".json,application/json" hidden />
       </div>
@@ -5455,11 +5459,10 @@ function openStyleLibPanel(){
   // v238/反馈②：旧「⬇ 导出词条」按钮与 exportWsStyleBundle 整包直下能力退役；「⬆ 导入词条」触发隐藏文件选择（v237/904-2 上移至顶部第二行，绑定不变）
   ov.querySelector('[data-lib-import]').onclick = ()=>{ const f=$('#wsLibImportFile'); if(f) f.click(); };
   const wlImp = ov.querySelector('#wsLibImportFile'); if(wlImp) wlImp.onchange = e=>{ const file=e.target.files && e.target.files[0]; if(file) importWsStyleBundle(file); e.target.value=''; };
-  // v237/904-2：配方包入口（选择导出中心 / 导入配方包）+ 消息看板入口——与配方历史面板同源，双入口不互斥
+  // v237/904-2：配方包入口（选择导出中心 / 导入配方包）——v239/905-1 移除管理面板内「📜 消息看板」按钮（入口在叙事菜单与 toast 📋）
   const rexc = ov.querySelector('[data-lib-rexcenter]'); if(rexc) rexc.onclick = ()=> openExportCenter();
   ov.querySelector('[data-lib-rimport]').onclick = ()=>{ const f=$('#wsRecipeImportFile'); if(f) f.click(); };
   const rImp = ov.querySelector('#wsRecipeImportFile'); if(rImp) rImp.onchange = e=>{ const file=e.target.files && e.target.files[0]; if(file) importRecipeBundle(file); e.target.value=''; };
-  const tbd = ov.querySelector('[data-lib-tboard]'); if(tbd) tbd.onclick = ()=> openToastBoard();
   ov.addEventListener('click', e=>{ if(e.target===ov) closeStyleLibPanel(); });
   // v10.17 分组/我的收藏折叠开关（默认折叠，点击展开）
   ov.querySelectorAll('[data-lib-fold]').forEach(h=> h.onclick = ()=>{
@@ -5528,6 +5531,28 @@ function importWsStyleBundle(file){
     let data;
     try{ data = JSON.parse(reader.result); }
     catch(e){ toast('导入失败：文件不是合法 JSON'); return; }
+    // v239/905-1：兼容新「写作风格包」（wsStylePack v2：combos/myCombos/entries）——映射为 styleCustom 合并式导入。
+    // 内置词条/内置组合对方环境代码自带：内置词条仅迁移「已改指令」（note 与内置默认不同→写入 notes）；非内置词条并入 added；
+    // 我的配方全部并入 customCombos；导出包里的内置组合若本环境不存在（版本差），也并入 customCombos 保证可用。
+    if(data && data.kind === 'wsStylePack'){
+      const builtinEntryIds = new Set((WRITE_STYLES||[]).map(s=> s && s.id).filter(Boolean));
+      const builtinComboIds = new Set((WRITE_COMBOS||[]).map(c=> c && c.id).filter(Boolean));
+      const CATS = ['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'];
+      const entries = Array.isArray(data.entries) ? data.entries : [];
+      const added = entries
+        .filter(x=> x && x.id && x.name && !builtinEntryIds.has(String(x.id)))
+        .map(x=>({ id:String(x.id), group: CATS.includes(x.cat)?x.cat:(CATS.includes(x.group)?x.group:'custom'), name:String(x.name), note:String(x.note||''), demo:x.demo?String(x.demo):'', seal:(x.seal===undefined?0:x.seal), warning:x.warning?String(x.warning):'' }));
+      const notes = {};
+      entries.forEach(x=>{
+        if(x && x.id && builtinEntryIds.has(String(x.id))){
+          const b = (WRITE_STYLES||[]).find(s=> s && s.id===x.id);
+          if(b && String(x.note||'') !== String(b.note||'')) notes[String(x.id)] = String(x.note||'');
+        }
+      });
+      const myC = (Array.isArray(data.myCombos)?data.myCombos:[]).filter(c=> c && c.id && c.name);
+      const extraC = (Array.isArray(data.combos)?data.combos:[]).filter(c=> c && c.id && c.name && !builtinComboIds.has(String(c.id)));
+      data = { styleCustom: { notes, added, removed:[], comboRemoved:[], customCombos: myC.concat(extraC) } };
+    }
     if(!data || typeof data !== 'object' || !data.styleCustom || typeof data.styleCustom !== 'object'){
       toast('导入失败：不是合法的写作风格配方 JSON'); return;
     }
@@ -6588,7 +6613,6 @@ function openAiHistPanel(){
     <div class="gs-modal">
       <div class="gs-modal-head"><b>📖 AI 配方历史（${hist.length}）</b>
         <span style="display:flex;gap:6px">
-          <button class="btn small ghost" data-ah-excenter title="跨批挑选个别配方/词条，勾选后打包导出">📦 选择导出</button>
           <button class="btn small ghost" data-ah-import title="导入配方包 JSON（先预览勾选，再确认导入；词条自动合并进词库）">⬆ 导入配方包</button>
           <button class="btn small ghost" data-ah-clear>清空</button>
           <button class="gs-x" data-ah-close>✕</button>
@@ -6605,8 +6629,7 @@ function openAiHistPanel(){
     const cl = e.target.closest('[data-ah-close]'); if(cl){ close(); return; }
     const imp = e.target.closest('[data-ah-import]');
     if(imp){ const f2=$('#aiRecipeImportFile'); if(f2) f2.click(); return; }
-    const exc = e.target.closest('[data-ah-excenter]');
-    if(exc){ close(); openExportCenter(); return; }
+    // v239/905-1：配方历史面板内「📦 选择导出」入口移除——导出中心改为写作风格导出，仅从「⚙️ 管理」进入
     const exp = e.target.closest('[data-ah-export]');
     if(exp){ exportRecipeBundle(hist[+exp.dataset.ahExport]); return; }
     const fold = e.target.closest('[data-ah-fold]');
@@ -6660,16 +6683,8 @@ function exportRecipeBundle(entry){
   const desc = String((entry&&entry.desc)||'配方').replace(/[\\/:*?"<>|]/g,'').slice(0,20) || '配方';
   downloadBundleFile(data, `配方_${desc}-${bundleStamp()}.json`, `已导出 ${cands.length} 个配方（附词条 ${data.bundled.length} 个）`);
 }
-// v236/F2：选择导出中心提交——cands 与 manualElIds 至少一个非空；纯词条时出 recipes 空的合法包
-function exportSelection(cands, manualElIds){
-  const hasR = Array.isArray(cands) && cands.length;
-  const hasE = manualElIds && manualElIds.size;
-  if(!hasR && !hasE){ toast('请先勾选要导出的配方或词条'); return; }
-  const data = buildRecipeBundle(hasR?cands:[], hasE?manualElIds:null);
-  const msg = hasR ? `已导出 ${cands.length} 个配方（附词条 ${data.bundled.length} 个）` : `已导出词条 ${data.bundled.length} 个`;
-  const fname = hasR ? `配方_选择导出-${bundleStamp()}.json` : `词条_${data.bundled.length}个-${bundleStamp()}.json`;
-  downloadBundleFile(data, fname, msg);
-}
+// v239/905-1：exportSelection（配方历史选择导出）退役——「📦 选择导出」中心改为写作风格导出（openExportCenter → exportStylePack），
+// 仅导出写作风格卡片内容：组合配方（内置）/ 我的配方 / 五大类词条；配方历史的单条快捷导出（exportRecipeBundle）保留。
 /* v236/F3：导入分类——配方 新/重复(禁勾)；词条 新(默认勾)/已有同id(默认不勾,勾=覆盖我的)/内置(跳过) */
 function classifyImportBundle(data){
   const cfg = getCfg();
@@ -6798,103 +6813,106 @@ function applyBundleSelection(st, ov){
   const p = $('#impPrevPanel'); if(p) p.remove();
   toast(`导入完成：配方 ${cands.length} · 新增词条 ${elAdded} · 覆盖词条 ${elRepl}`);
 }
-/* ---------- v238/反馈③+C：📦 选择导出中心——平铺清单：默认全部展开、无折叠分支、名字完整不截断，底部汇总条 ---------- */
-// 引用锁：已勾候选 tags 引用的词条强制勾选且锁定（防导出残缺包）；解锁后状态保留可手动取消；更新底部汇总
-function refreshExLocks(ov){
-  const locked = new Set();
-  ov.querySelectorAll('[data-ex-cand]:checked').forEach(cb=>{
-    const parts = String(cb.dataset.exCand).split(':');
-    const e = getAiHist()[+parts[0]];
-    const c = e && Array.isArray(e.list) ? e.list[+parts[1]] : null;
-    (Array.isArray(c&&c.tags)?c.tags:[]).forEach(id=>locked.add(String(id)));
-  });
-  ov.querySelectorAll('[data-ex-el]').forEach(cb=>{
-    if(locked.has(cb.dataset.exEl)){ cb.checked = true; cb.disabled = true; }
-    else cb.disabled = false;
-  });
-  const nc = ov.querySelectorAll('[data-ex-cand]:checked').length;
+/* ---------- v239/905-1：📦 选择导出中心——仅导出「写作风格」卡片内容：组合配方（内置）/ 我的配方 / 五大类词条（平铺勾选，与配方历史无关） ---------- */
+// 底部汇总条实时刷新（v239 引用锁随历史导出一并退役：三类内容全量自含，无需附带锁定）
+function refreshExSum(ov){
+  const nc = ov.querySelectorAll('[data-ex-combo]:checked').length;
+  const nm = ov.querySelectorAll('[data-ex-mycombo]:checked').length;
   const ne = ov.querySelectorAll('[data-ex-el]:checked').length;
-  const sum = ov.querySelector('[data-ex-sum]'); if(sum) sum.textContent = `已选 配方 ${nc} · 词条 ${ne}`;
-  const go = ov.querySelector('[data-ex-go]'); if(go) go.disabled = (nc+ne)===0;
+  const sum = ov.querySelector('[data-ex-sum]'); if(sum) sum.textContent = `已选 组合配方 ${nc} · 我的配方 ${nm} · 词条 ${ne}`;
+  const go = ov.querySelector('[data-ex-go]'); if(go) go.disabled = (nc+nm+ne)===0;
+}
+// 提交导出：写作风格包 v2（wsStylePack）——combos=内置组合配方 / myCombos=我的配方 / entries=五大类词条（含内置与自定义完整数据）
+function exportStylePack(sel){
+  const comboIds = new Set(sel.combos || []);
+  const myIds = new Set(sel.myCombos || []);
+  const elIds = new Set(sel.els || []);
+  if(!(comboIds.size + myIds.size + elIds.size)){ toast('请先勾选要导出的内容'); return; }
+  const combos = (WRITE_COMBOS||[]).filter(c=> c && comboIds.has(String(c.id))).map(c=> JSON.parse(JSON.stringify(c)));
+  const myCombos = ((getCfg().styleCustom||{}).customCombos||[]).filter(c=> c && myIds.has(String(c.id))).map(c=> JSON.parse(JSON.stringify(c)));
+  const entries = writeStyleLib().filter(s=> s && elIds.has(String(s.id))).map(s=> JSON.parse(JSON.stringify(s)));
+  const data = { ver:2, kind:'wsStylePack', exportedAt:Date.now(), combos, myCombos, entries };
+  downloadBundleFile(data, `写作风格_${bundleStamp()}.json`, `已导出 组合配方 ${combos.length} · 我的配方 ${myCombos.length} · 词条 ${entries.length}`);
 }
 function openExportCenter(){
-  const hist = getAiHist();
-  const cfg = getCfg();
-  const added = (cfg.styleCustom && Array.isArray(cfg.styleCustom.added)) ? cfg.styleCustom.added : [];
+  const sc = getCfg().styleCustom || {};
+  const comboRemoved = Array.isArray(sc.comboRemoved) ? sc.comboRemoved : [];
+  const builtinCombos = (WRITE_COMBOS||[]).filter(c=> c && c.id && !comboRemoved.includes(c.id));
+  const myCombos = Array.isArray(sc.customCombos) ? sc.customCombos.filter(c=> c && c.id) : [];
   const GROUPS = ['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'];
-  let totalCands = 0; hist.forEach(e=> totalCands += (Array.isArray(e&&e.list)?e.list.length:0));
-  // v238/反馈③+C：平铺清单——批头「第 N 批 · N 条 · 日期」勾选=全选该批；候选名完整显示不截断、只显示名字
-  const batchHtml = hist.map((e,ei)=>{
-    const list = Array.isArray(e.list)?e.list:[];
-    if(!list.length) return '';
-    const cands = list.map((c,ci)=>{
-      const nm = String(c&&c.name||'').trim() || ('候选'+(ci+1));
-      return `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(nm)}"><input type="checkbox" data-ex-cand="${ei}:${ci}"> ${esc(nm)}</label>`;
-    }).join('');
-    return `<div style="margin:4px 0">
-      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600" title="勾选=全选该批候选">
-        <input type="checkbox" data-ex-batch="${ei}"> ${e.src==='outline'?'📑':'📝'} 第 ${ei+1} 批 <span class="muted" style="font-size:11px">· ${list.length} 条 · ${new Date(e.ts).toLocaleDateString('zh-CN')}</span>
-      </label>
-      <div data-ex-body style="display:flex;padding:2px 0 6px 22px;flex-wrap:wrap">${cands}</div>
-    </div>`;
-  }).join('');
-  // v238/反馈③+C：词条平铺——分组头全选框（data-ex-gall）一键全选该组；词条名完整显示不截断
+  const lib = writeStyleLib().filter(s=> s && s.id);
+  // 平铺行：完整名字、点名字前的框勾选（延续 v238 平铺交互）
+  const row = (attr, id, name, tip) => `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(tip||String(name))}"><input type="checkbox" ${attr}="${esc(String(id))}"> ${esc(String(name))}</label>`;
+  // 段落 1：组合配方（内置，写作风格卡片「全部配方」里的 🎬 部分）
+  const comboHtml = builtinCombos.map(c=> row('data-ex-combo', c.id, c.name, `${c.name||''}：${c.desc||''}`)).join('') || '<p class="muted">暂无。</p>';
+  // 段落 2：我的配方（customCombos，🏷 部分）
+  const myHtml = myCombos.length
+    ? myCombos.map(c=> row('data-ex-mycombo', c.id, c.name, `${c.name||''}：${c.desc||''}`)).join('')
+    : '<p class="muted">暂无我的配方。</p>';
+  // 段落 3：五大类词条（writeStyleLib：内置（去停用）+ 自定义，含已改指令）
   const byGroup = {};
-  added.forEach(x=>{ if(!x||!x.id) return; const g = GROUPS.includes(x.group)?x.group:'custom'; (byGroup[g]=byGroup[g]||[]).push(x); });
-  const gKeys = GROUPS.filter(g=>byGroup[g]&&byGroup[g].length); if(byGroup.custom&&byGroup.custom.length) gKeys.push('custom');
+  lib.forEach(x=>{ const g = GROUPS.includes(x.cat) ? x.cat : 'custom'; (byGroup[g]=byGroup[g]||[]).push(x); });
+  const gKeys = GROUPS.filter(g=> byGroup[g] && byGroup[g].length); if(byGroup.custom && byGroup.custom.length) gKeys.push('custom');
   const elHtml = gKeys.map(g=>{
-    const items = byGroup[g].map(x=>`<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(String(x.note||'').slice(0,80))}"><input type="checkbox" data-ex-el="${esc(String(x.id))}"> ${esc(String(x.name||''))}</label>`).join('');
+    const items = byGroup[g].map(x=> row('data-ex-el', x.id, x.name, `${x.name||''}：${String(x.note||'').slice(0,80)}`)).join('');
     return `<div style="margin:4px 0">
       <label style="display:flex;align-items:center;gap:6px;cursor:pointer" title="勾选=全选该组词条">
-        <input type="checkbox" data-ex-gall="${esc(g)}"> <b style="font-size:12px">${g==='custom'?'其他':g}（${byGroup[g].length}）</b>
+        <input type="checkbox" data-ex-gall="${esc(g)}"> <b style="font-size:12px">${g==='custom'?'自定义':g}（${byGroup[g].length}）</b>
       </label>
       <div data-ex-group="${esc(g)}" style="display:flex;padding:2px 0 6px 22px;flex-wrap:wrap">${items}</div>
     </div>`;
-  }).join('');
+  }).join('') || '<p class="muted">暂无词条。</p>';
   const ov = document.createElement('div'); ov.id='exCenterPanel'; ov.className='gs-overlay';
   ov.innerHTML = `
     <div class="gs-modal">
-      <div class="gs-modal-head"><b>📦 选择导出</b><button class="gs-x" data-ex-close title="关闭">✕</button></div>
+      <div class="gs-modal-head"><b>📦 选择导出 · 写作风格</b><button class="gs-x" data-ex-close title="关闭">✕</button></div>
       <div class="cv-body">
-        <div style="margin:6px 0 2px"><b>配方历史</b> <span class="muted" style="font-size:12px">${hist.length} 批 · 共 ${totalCands} 条候选（默认全部展开，点名字前的框勾选）</span></div>
-        ${batchHtml || '<p class="muted">暂无配方历史。</p>'}
-        <div style="margin:10px 0 2px"><b>我的自定义词条</b> <span class="muted" style="font-size:12px">${added.length} 个（勾选配方时其引用词条自动附带🔒）</span></div>
-        ${elHtml || '<p class="muted">暂无自定义词条。</p>'}
+        <div style="margin:6px 0 2px"><b>🎬 组合配方</b> <span class="muted" style="font-size:12px">内置 ${builtinCombos.length} 个（勾段头框全选）</span></div>
+        <div data-ex-group="__combo" style="display:flex;padding:2px 0 6px 22px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;flex-basis:100%" title="勾选=全选组合配方">
+            <input type="checkbox" data-ex-selall="__combo"> 全选（${builtinCombos.length}）
+          </label>
+          ${comboHtml}
+        </div>
+        <div style="margin:10px 0 2px"><b>🏷 我的配方</b> <span class="muted" style="font-size:12px">${myCombos.length} 个</span></div>
+        <div data-ex-group="__my" style="display:flex;padding:2px 0 6px 22px;flex-wrap:wrap">
+          ${myCombos.length?`<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-weight:600;flex-basis:100%" title="勾选=全选我的配方"><input type="checkbox" data-ex-selall="__my"> 全选（${myCombos.length}）</label>`:''}
+          ${myHtml}
+        </div>
+        <div style="margin:10px 0 2px"><b>📚 五大类词条</b> <span class="muted" style="font-size:12px">共 ${lib.length} 条（内置+自定义，含已改指令）</span></div>
+        ${elHtml}
       </div>
       <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid rgba(128,128,128,.2)">
-        <span data-ex-sum class="muted" style="flex:1">已选 配方 0 · 词条 0</span>
-        <button type="button" class="btn small" data-ex-go disabled title="跨批勾选候选与词条后打包导出">⬇ 导出所选</button>
+        <span data-ex-sum class="muted" style="flex:1">已选 组合配方 0 · 我的配方 0 · 词条 0</span>
+        <button type="button" class="btn small" data-ex-go disabled title="勾选后打包导出写作风格包（.json）">⬇ 导出所选</button>
         <button type="button" class="btn small ghost" data-ex-close>取消</button>
       </div>
     </div>`;
   const close = ()=>{ const p=$('#exCenterPanel'); if(p) p.remove(); };
   ov.addEventListener('change', e=>{
     const t = e.target;
-    if(t.matches('[data-ex-batch]')){
-      ov.querySelectorAll(`[data-ex-cand^="${t.dataset.exBatch}:"]`).forEach(cb=>{ cb.checked = t.checked; });
-      refreshExLocks(ov); return;
+    // 段头/组头全选：__combo=组合配方段 / __my=我的配方段 / 五大类=data-ex-gall 组
+    if(t.matches('[data-ex-selall]')){
+      const scope = ov.querySelector(`[data-ex-group="${t.dataset.exSelall}"]`);
+      if(scope) scope.querySelectorAll('[data-ex-combo],[data-ex-mycombo]').forEach(cb=>{ cb.checked = t.checked; });
+      refreshExSum(ov); return;
     }
-    // v238/反馈③+C：分组头全选框——一键全选/取消该组词条（引用锁词条保持勾选且禁用）
     if(t.matches('[data-ex-gall]')){
       const body = ov.querySelector(`[data-ex-group="${t.dataset.exGall}"]`);
-      if(body) body.querySelectorAll('[data-ex-el]').forEach(cb=>{ if(!cb.disabled) cb.checked = t.checked; });
-      refreshExLocks(ov); return;
+      if(body) body.querySelectorAll('[data-ex-el]').forEach(cb=>{ cb.checked = t.checked; });
+      refreshExSum(ov); return;
     }
-    if(t.matches('[data-ex-cand], [data-ex-el]')) refreshExLocks(ov);
+    if(t.matches('[data-ex-combo], [data-ex-mycombo], [data-ex-el]')) refreshExSum(ov);
   });
   ov.addEventListener('click', e=>{
     const cl = e.target.closest('[data-ex-close]'); if(cl){ close(); return; }
     const go = e.target.closest('[data-ex-go]');
     if(go){
-      const cands = [];
-      ov.querySelectorAll('[data-ex-cand]:checked').forEach(cb=>{
-        const parts = String(cb.dataset.exCand).split(':');
-        const e2 = getAiHist()[+parts[0]];
-        const c = e2 && Array.isArray(e2.list) ? e2.list[+parts[1]] : null;
-        if(c) cands.push(c);
+      exportStylePack({
+        combos:   [...ov.querySelectorAll('[data-ex-combo]:checked')].map(cb=>cb.dataset.exCombo),
+        myCombos: [...ov.querySelectorAll('[data-ex-mycombo]:checked')].map(cb=>cb.dataset.exMycombo),
+        els:      [...ov.querySelectorAll('[data-ex-el]:checked')].map(cb=>cb.dataset.exEl)
       });
-      const elIds = new Set([...ov.querySelectorAll('[data-ex-el]:checked')].map(cb=>cb.dataset.exEl));
-      exportSelection(cands, elIds);
       close(); return;
     }
     if(e.target===ov) close();
@@ -7485,15 +7503,18 @@ function chapterPlanBlock(){
         <div class="cp-head-left">
           <h3>🧭 全书规划师 <span class="cp-arrow">${collapsed?'▸':'▾'}</span></h3>
         </div>
+        <!-- v240/906-4：「🔧 原始数据」上移第一行最右 -->
+        <div class="cp-head-tools">
+          <button type="button" class="btn ghost" data-cp-raw title="手动提取 AI 原始响应数据，当自动更新失败时使用">🔧</button>
+        </div>
       </div>
+      <!-- v240/906-4：「⚡ 一键五步」从卡身 stagebar 上移第二行最右；「📚 版本」按钮已随历史功能移除 -->
       <div class="cp-head-row action-row">
-        <button type="button" class="btn ghost" data-cp-raw title="手动提取 AI 原始响应数据，当自动更新失败时使用">🔧</button>
-        ${hasChapterPlansHistory()?`<button type="button" class="btn ghost" data-cp-hist>📚 版本(${chapterPlansHistoryCount()})</button>`:''}
+        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键五步</button>
       </div>
     </div>
     <div class="cp-body"${collapsed?' hidden':''}>
       <div class="cp-stagebar">
-        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键五步</button>
         ${PLANNER_STAGES.map(st=>{
           const done = plannerStageDone(st.id);
           return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；五步可任意顺序单独点击，无需按顺序完成">
@@ -7501,7 +7522,7 @@ function chapterPlanBlock(){
           </button>`;
         }).join('')}
       </div>
-      <div class="cp-stage-hint muted">五步可任意顺序单独点击，无需按顺序完成（点任意一步直接生成该步）；一键五步默认跳过已完成步骤。</div>
+      <div class="cp-stage-hint muted">五步可任意顺序单独点击，无需按顺序完成（点任意一步直接生成该步）；「⚡ 一键五步」在卡片标题区，默认跳过已完成步骤。</div>
       ${hasPlans ? `<div class="cp-list">${items}</div>
         <p class="muted" style="margin:6px 0 0">每条主线简述可编辑，失焦即存；写正文时注入为【本章主线简述】（辅助参考）。</p>`
         : `<p class="sub">可选步骤：分五步规划全书——①每章主线简述（本书叙事第一层骨架）、②定稿全书章节标题、③每章四段节拍表、④初期万物词典、⑤跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
@@ -7514,7 +7535,7 @@ function bindChapterPlanFold(){
   const head = $('[data-cp-fold]');
   if(!head) return;
   head.onclick = (e)=>{
-    if(e.target.closest('[data-cp-hist]') || e.target.closest('[data-cp-all]') || e.target.closest('[data-cp-stage]') || e.target.closest('[data-cp-raw]') || e.target.closest('.stop-btn')) return;   // 不拦截版本/生成/原始数据/停止按钮
+    if(e.target.closest('[data-cp-all]') || e.target.closest('[data-cp-stage]') || e.target.closest('[data-cp-raw]') || e.target.closest('.stop-btn')) return;   // v240/906-2：不拦截生成/原始数据/停止按钮（版本按钮已移除）
     state.cpCollapsed = !state.cpCollapsed;
     persist();
     const body = $('.cp-body'); if(body) body.hidden = state.cpCollapsed;
@@ -7532,8 +7553,6 @@ function bindChapterPlan(){
       genPlannerStage(btn, stage);
     };
   });
-  const hist = $('[data-cp-hist]');
-  if(hist) hist.onclick = ()=> openChapterPlansHistoryPanel();
   const rawBtn = $('[data-cp-raw]');
   if(rawBtn) rawBtn.onclick = ()=> openCpRawPanel();
   $$('[data-cp-set]').forEach(inp=>{
@@ -8430,21 +8449,30 @@ function openChapterVersionPanel(i){
 }
 function closeChapterVersionPanel(){ const p=$('#cvPanel'); if(p) p.remove(); }
 
-function renderChapters(){
-  const wrap = $('#chaptersWrap'); if(!wrap) return;
-  const total = state.chapters.length;
-  if(isLong()){
-    // 建议3：长篇每页 10 章，分页渲染；chPage 对齐到有效页
-    const maxPage = Math.max(0, Math.ceil(total / CH_PAGE_SIZE) - 1);
-    if(chPage > maxPage) chPage = maxPage;
-    const from = chPage * CH_PAGE_SIZE;
-    const slice = state.chapters.slice(from, from + CH_PAGE_SIZE);
-    const html = slice.map((c,offset)=>{
-      const i = from + offset;
-      const hasC = !!(c.content && c.content.trim());
-      // v238/A：长篇恒展开——无正文的卡片也保留正文框（矮空框+占位提示），不再默认折叠成细标题条藏框；
-      // 点标题行仍可手动折叠（data-fold 切换逻辑不变，见 9571 行）
-      return `<div class="card ch-card" data-ch-card="${i}" style="background:var(--panel);border:1px solid var(--line)">
+// v240/906-1：恢复长篇分页（每页 10 章，v238 蓝本回填）——905-3 的"常显"撤销；
+// 分页每页只渲染 10 张卡，渲染量天然受控，v239 的 CH_RENDER_CAP 防御随之退役；
+// 保留：尚未生成章节但已填章节数时显示第一章空框占位（用户 17:53 定夺）。
+let chPage = 0;
+const CH_PAGE_SIZE = 10;
+// 第一章空框占位卡（无数据绑定：只读空框，生成大纲后由真实卡片接管）
+function chPlaceholderCardHtml(){
+  return `<div class="card ch-card" data-ch-card="0" style="background:var(--panel);border:1px solid var(--line)">
+    <div class="ch-head" role="button" tabindex="0" aria-expanded="true">
+      <span class="ch-fold-ico">▾</span>
+      <h3 style="margin:0;flex:1;word-break:break-word;line-height:1.35">第1章</h3>
+      ${wcBadge('', 'data-wc-ch="0"')}
+    </div>
+    <div class="ch-body">
+      <textarea readonly data-ch-ph="0" class="ch-ta-empty" style="margin-top:8px" placeholder="第一章空框（占位）：完成大纲并生成正文后，这里会显示真实章节卡。"></textarea>
+    </div>
+  </div>`;
+}
+// v239/905-3：长篇章节卡模板（v240 起供分页切片渲染复用）
+function chCardHtml(c, i){
+  const hasC = !!(c.content && c.content.trim());
+  // v238/A：长篇恒展开——无正文的卡片也保留正文框（矮空框+占位提示），不再默认折叠成细标题条藏框；
+  // 点标题行仍可手动折叠（data-fold 切换逻辑不变）
+  return `<div class="card ch-card" data-ch-card="${i}" style="background:var(--panel);border:1px solid var(--line)">
         <div class="ch-head" data-fold="${i}" role="button" tabindex="0" aria-expanded="true">
           <span class="ch-fold-ico">▾</span>
           <h3 style="margin:0;flex:1;word-break:break-word;line-height:1.35" title="第${i+1}章 · ${esc(cleanChapterTitle(c.title))}">第${i+1}章 · ${esc(cleanChapterTitle(c.title))}${c._titleByAI?'<i class="tbd-title-tag" style="font-style:normal;font-size:11px;font-weight:400;opacity:.55;margin-left:6px" title="本章标题已由章节正文 AI 定稿">正文定稿</i>':(!state.plannerFinalized?'<i class="tbd-title-tag" style="font-style:normal;font-size:11px;font-weight:400;opacity:.55;margin-left:6px" title="标题尚未由全书规划师定稿，当前沿用第二步参考稿">参考稿</i>':'')}</h3>
@@ -8466,8 +8494,27 @@ function renderChapters(){
           </div>
         </div>
       </div>`;
-    }).join('');
-    // 分页条
+}
+function renderChapters(){
+  const wrap = $('#chaptersWrap'); if(!wrap) return;
+  const total = state.chapters.length;
+  if(isLong()){
+    if(!total){
+      // 未生成章节：已填章节数 → 第一章空框占位（v240 保留）；未填 → 提示行
+      const wantN = chapterCountVal();
+      if(wantN > 0){
+        wrap.innerHTML = `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：完成大纲后即可生成正文，下方为第一章空框占位。</span></div>${chPlaceholderCardHtml()}`;
+      } else {
+        wrap.innerHTML = `<div class="ch-pager"><span class="muted">共 0 章：先在第②步生成大纲。</span></div>`;
+      }
+      return;
+    }
+    // v240/906-1：长篇每页 10 章分页渲染；chPage 对齐到有效页（v238 蓝本）
+    const maxPage = Math.max(0, Math.ceil(total / CH_PAGE_SIZE) - 1);
+    if(chPage > maxPage) chPage = maxPage;
+    const from = chPage * CH_PAGE_SIZE;
+    const slice = state.chapters.slice(from, from + CH_PAGE_SIZE);
+    const html = slice.map((c,offset)=> chCardHtml(c, from + offset)).join('');
     const pageCount = Math.max(1, Math.ceil(total / CH_PAGE_SIZE));
     const pages = Array.from({length:pageCount},(_,p)=>p)
       .map(p=>`<button type="button" class="ch-page${p===chPage?' active':''}" data-page="${p}">${p+1}</button>`).join('');
@@ -8548,6 +8595,7 @@ function openReader(i){
   // 构建目录并定位当前章
   renderToc(i);
   readerCur = i;
+  randomizeReaderGradient();   // v240/906-3：每次打开阅读器随机换一组渐变色（此前从未被调用，功能一直未生效）
   ov.classList.remove('hidden');
   document.body.classList.add('reader-lock'); // 锁定背景滚动
   // P3-3 续读进度（fixed8 修订）：打开时先归零——首开/切到未读过的章一律从开头显示，不再残留上一章滚动位置；
@@ -8592,9 +8640,11 @@ function updateReaderProgress(){
   }
 }
 // v1.0.133 阅读进度条随机渐变：每次打开阅读器/导出全文时生成一组随机色相渐变，内联覆盖主题变量（.reader-progress i 的 var(--accent/--accent2) 作为兜底）
+// v240/906-3：接通调用（openReader / 导出阅读入口此前从未调用过本函数，渐变一直未生效）；并保证两色相差 ≥40° 防止渐变退化为纯色
 function randomizeReaderGradient(){
   const fill = $('#readerProgressFill'); if(!fill) return;
-  const h1 = Math.floor(Math.random()*360), h2 = Math.floor(Math.random()*360);
+  const h1 = Math.floor(Math.random()*360);
+  const h2 = (h1 + 40 + Math.floor(Math.random()*140)) % 360;   // 色相差 40°~180°
   fill.style.background = `linear-gradient(90deg, hsl(${h1} 78% 62%), hsl(${h2} 78% 62%))`;
 }
 function closeReader(){
@@ -9151,6 +9201,7 @@ function openExportReader(){
   const body0 = $('#readerBody');
   if(body0) body0.scrollTop = 0;
   updateReaderProgress();   // v10.42 导出全文阅读打开时复位进度条
+  randomizeReaderGradient();   // v240/906-3：导出全文阅读同样随机渐变
   ov.dataset.exportReader = '1';   // 标记为导出阅读模式
   ov.classList.remove('hidden');
   document.body.classList.add('reader-lock');
@@ -9398,6 +9449,8 @@ function bindView(){
   // v230/3.3+3.5：候选大纲 选用/预览 + 「🔄 重生成大纲」
   $$('[data-cand-adopt]').forEach(b=> b.onclick = ()=> adoptOutlineCandidate(b.dataset.candAdopt));
   $$('[data-cand-prev]').forEach(b=> b.onclick = ()=> previewOutlineCandidate(b.dataset.candPrev));
+  // v239/905-2：候选区折叠/展开切换（状态随项目持久化）
+  $$('[data-cand-fold]').forEach(b=> b.onclick = ()=>{ state._outlineCandsFolded = !state._outlineCandsFolded; persist(); render(); });
   const btnRegen = $('#btnOutlineRegen'); if(btnRegen) btnRegen.onclick = ()=> regenOutlineBatch(btnRegen);
   const btnRO = $('#btnReOutline'); if(btnRO) btnRO.onclick = ()=>{ state.outline=null; state.outlineConfirmed=false; state.chapters=[]; persist(); render(); };
   // 短片：一键生成全部章节（从头生成全部，保留原「生成全部」覆盖语义）
@@ -9549,7 +9602,7 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
     else if(t.hasAttribute('data-ne-resume-ch')){ const i=+t.dataset.neResumeCh; continueAndFinalizeChapter(i, '继续生成'); }
     else if(t.hasAttribute('data-ne-sandbox-ch')){ const i=+t.dataset.neSandboxCh; renderBranchSandbox(i); }
     else if(t.hasAttribute('data-fold')){ const i=+t.dataset.fold; const body=t.closest('.ch-card').querySelector('.ch-body'); const ico=t.querySelector('.ch-fold-ico'); const on = body.classList.toggle('folded'); t.setAttribute('aria-expanded', String(!on)); if(ico) ico.textContent = on?'▸':'▾'; }
-    else if(t.hasAttribute('data-page')){ chPage = +t.dataset.page; renderChapters(); }
+    else if(t.hasAttribute('data-page')){ chPage = +t.dataset.page; renderChapters(); }   // v240/906-1 分页恢复（v238 蓝本）
   };
   const cw = $('#chaptersWrap');
   if(cw && !cw.dataset.delegated){
@@ -9856,9 +9909,17 @@ async function genOutlineMulti(btn){
 }
 
 // v230/3.3：候选大纲卡片区（未生成大纲页与已生成大纲页共用；chosenId 标注当前采用者）
+// v239/905-2：选择完成后用户可把候选区折叠起来——标题行「收起候选 ▴ / 展开候选 ▾」手动切换；
+// 折叠状态 state._outlineCandsFolded 随项目持久化（projectSnapshot/applyProject 透传），刷新不丢。
 function outlineCandidatesHtml(){
   const cands = state._outlineCandidates;
   if(!cands || !Array.isArray(cands.items) || !cands.items.length) return '';
+  const folded = !!state._outlineCandsFolded;
+  const head = `<div style="display:flex;align-items:center;gap:8px;margin:10px 0 0">
+    <p class="muted" style="margin:0;flex:1">🧭 本批候选大纲（${cands.items.length} 个，${new Date(cands.batchTs).toLocaleString()}）：选用后未选候选自动存入「📚 大纲版本」历史，可随时切回。</p>
+    <button type="button" class="btn small ghost" data-cand-fold style="white-space:nowrap" title="${folded?'展开本批候选大纲卡片':'把本批候选大纲卡片折叠成一行（已选用的版本不受影响）'}">${folded?'展开候选 ▾':'收起候选 ▴'}</button>
+  </div>`;
+  if(folded) return `<div id="outlineCands">${head}</div>`;
   const cards = cands.items.map(it=>{
     const od = (it && it.outline) || {};
     const mainLine = (od.structure && od.structure.mainLine) || '';
@@ -9875,10 +9936,7 @@ function outlineCandidatesHtml(){
       </div>
     </div>`;
   }).join('');
-  return `<div id="outlineCands">
-    <p class="muted" style="margin:10px 0 0">🧭 本批候选大纲（${cands.items.length} 个，${new Date(cands.batchTs).toLocaleString()}）：选用后未选候选自动存入「📚 大纲版本」历史，可随时切回。</p>
-    ${cards}
-  </div>`;
+  return `<div id="outlineCands">${head}${cards}</div>`;
 }
 
 // v230/3.3：采用候选大纲（点击 → confirm 确认 → 生效；被替换的当前大纲与未选候选均入历史）
@@ -10192,8 +10250,7 @@ async function genPlannerSummary(btn, opts){
   try{
     const totalN = (o.chapters||[]).length;
     if(!totalN){ if(!opts.silent) toast('请先生成章节标题'); return false; }
-    // 覆盖前归档旧版（旧版存入版本历史，可回退）
-    if(Array.isArray(o.chapterPlans) && o.chapterPlans.some(Boolean)) pushChapterPlansSnapshot();
+    // v240/906-2：版本历史已移除，重生成直接覆盖主线简述
     const batches = [];
     for(let start=0; start<totalN; start+=PLAN_BATCH_SIZE) batches.push({start, end: Math.min(start+PLAN_BATCH_SIZE, totalN)});
     let wrote = 0;
@@ -10473,10 +10530,10 @@ async function genPlannerAll(btn){
     skipDone = confirm(
       `已完成：${doneList.join('、')}\n\n` +
       `【确定】智能执行：跳过已完成，只跑 ${PLANNER_STAGES.filter(s=>!plannerStageDone(s.id)).map(s=>stageLabel(s.id)).join('、') || '（全部已完成，无事可做）'}\n` +
-      `【取消】全部重跑：五步按顺序覆盖生成（旧版存入历史）`
+      `【取消】全部重跑：五步按顺序覆盖生成（直接覆盖现有内容）`
     );
     if(!skipDone){
-      if(!confirm('全部重跑将按顺序生成：①主线简述→②章节标题→③节拍表→④万物词典→⑤伏笔网，会覆盖现有规划内容（旧版存入历史），继续？')) return;
+      if(!confirm('全部重跑将按顺序生成：①主线简述→②章节标题→③节拍表→④万物词典→⑤伏笔网，会覆盖现有规划内容，继续？')) return;
     }
   }
   const stages = skipDone ? PLANNER_STAGES.map(s=>s.id).filter(id=>!plannerStageDone(id)) : PLANNER_STAGES.map(s=>s.id);
@@ -10647,82 +10704,8 @@ function chapterPlanText(p){
   return String(p||'').trim();
 }
 
-/* ---------- P1-1v3 主线简述批量版本（整批快照 ≤5 份，应用后生效） ---------- */
-function chapterPlansHistory(){ const o=state.outline; return (o && Array.isArray(o.chapterPlansHistory)) ? o.chapterPlansHistory : []; }
-function hasChapterPlansHistory(){ return chapterPlansHistory().length > 0; }
-function chapterPlansHistoryCount(){ return chapterPlansHistory().length; }
-// 把「当前全部主线简述」整批压入版本栈（最新在前、去重、上限50）；空则不记
-function pushChapterPlansSnapshot(){
-  const o = state.outline;
-  if(!Array.isArray(o.chapterPlans) || !o.chapterPlans.some(Boolean)) return;
-  if(!Array.isArray(o.chapterPlansHistory)) o.chapterPlansHistory = [];
-  const snap = o.chapterPlans.slice();
-  if(o.chapterPlansHistory.length && JSON.stringify(o.chapterPlansHistory[0].plans) === JSON.stringify(snap)) return;
-  o.chapterPlansHistory.unshift({ plans: snap, ts: Date.now() });
-  if(o.chapterPlansHistory.length > 50) o.chapterPlansHistory.length = 50;
-}
-// 整批应用某版：先把当前态归档（保留再回退机会），再覆盖全部主线简述
-function applyChapterPlansVersion(idx){
-  const o = state.outline; const hist = chapterPlansHistory(); const h = hist[idx]; if(!h) return;
-  if(!window.confirm(`整批应用「${idx+1}. 主线简述」版本（共 ${(h.plans||[]).filter(Boolean).length} 条）？将覆盖当前主线简述。`)) return;
-  pushChapterPlansSnapshot();
-  o.chapterPlans = (h.plans||[]).slice();
-  persist(); closeChapterPlansHistoryPanel(); render();
-  toast('已整批应用该版主线简述');
-}
-function deleteChapterPlansVersion(idx){
-  const o = state.outline; const hist = chapterPlansHistory(); if(!hist.length) return;
-  hist.splice(idx,1);
-  if(!hist.length) delete o.chapterPlansHistory; else o.chapterPlansHistory = hist;
-  persist(); closeChapterPlansHistoryPanel(); openChapterPlansHistoryPanel();
-  toast('已删除该版本');
-}
-function openChapterPlansHistoryPanel(){
-  closeChapterPlansHistoryPanel();
-  const hist = chapterPlansHistory(); if(!hist.length){ toast('暂无历史版本'); return; }
-  const o = state.outline;
-  const fmtTs = ts=>{ const d=new Date(ts); return (d.getMonth()+1)+'-'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
-  const rows = hist.map((h,idx)=>{
-    const n = (h.plans||[]).filter(Boolean).length;
-    const first = (h.plans||[]).slice(0,2).filter(Boolean).join(' / ');
-    return `<div class="cv-row">
-      <div class="cv-meta" style="flex:1;min-width:0"><div class="cv-time">${idx+1}. ${fmtTs(h.ts)} · ${n} 条</div><div class="cv-t" style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(first||'')}</div></div>
-      <div class="cv-actions" style="display:flex;gap:6px;flex-shrink:0">
-        <button type="button" class="btn ghost cv-b" data-cph-prev="${idx}">👁 预览</button>
-        <button type="button" class="btn primary cv-b" data-cph-apply="${idx}">应用</button>
-        <button type="button" class="btn ghost cv-b" data-cph-del="${idx}">🗑</button>
-      </div>
-    </div>`;
-  }).join('');
-  const ov = document.createElement('div'); ov.id='cphPanel'; ov.className='gs-overlay';
-  ov.innerHTML = `
-    <div class="gs-modal">
-      <div class="gs-modal-head"><b>🧭 主线简述 · 批量版本（${hist.length}/50）</b>
-        <button class="gs-x" data-cph-close>✕</button></div>
-      <div class="cv-body">
-        <div class="cv-row cur"><div class="cv-meta"><span class="cv-time">当前版本</span><span class="cv-wc">${(Array.isArray(o.chapterPlans)?o.chapterPlans:[]).filter(Boolean).length} 条</span></div></div>
-        <div class="cv-div">「生成/重生成主线简述」会把改动前后的整批各归档一份（≤5 份可回退）；可👁预览切换，点「应用」整批生效——只有应用后才覆盖当前梗概。</div>
-        ${rows}
-        <div class="cv-preview hidden" id="cphPreview">
-          <div class="cv-prev-head"><b id="cphPrevTitle">版本预览</b><button class="gs-x" data-cph-prev-close>✕</button></div>
-          <div class="cv-pre" id="cphReader"></div>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(ov);
-  ov.querySelector('[data-cph-close]').onclick = closeChapterPlansHistoryPanel;
-  ov.addEventListener('click', e=>{ if(e.target===ov) closeChapterPlansHistoryPanel(); });
-  ov.addEventListener('click', e=>{
-    const p = e.target.closest('[data-cph-prev]'); if(!p) return;
-    const h = hist[+p.dataset.cphPrev]; if(!h) return;
-    const pr=$('#cphPreview'), rd=$('#cphReader'), pt=$('#cphPrevTitle');
-    if(pr && rd){ pt.textContent = '预览 · '+fmtTs(h.ts); rd.textContent = (h.plans||[]).map((t,i)=>`第${i+1}章 ${t||''}`).join('\n'); pr.classList.remove('hidden'); }
-  });
-  ov.querySelector('[data-cph-prev-close]').onclick = ()=>{ const pr=$('#cphPreview'); if(pr) pr.classList.add('hidden'); };
-  ov.querySelectorAll('[data-cph-apply]').forEach(b=> b.onclick = ()=> applyChapterPlansVersion(+b.dataset.cphApply));
-  ov.querySelectorAll('[data-cph-del]').forEach(b=> b.onclick = ()=> deleteChapterPlansVersion(+b.dataset.cphDel));
-}
-function closeChapterPlansHistoryPanel(){ const p=$('#cphPanel'); if(p) p.remove(); }
+// v240/906-2：规划师「主线简述批量版本」整套历史功能按用户决定移除（pushChapterPlansSnapshot / applyChapterPlansVersion /
+// deleteChapterPlansVersion / openChapterPlansHistoryPanel / closeChapterPlansHistoryPanel 均已删）；旧存档残留数据在 applyProject 恢复时静默清除（见 applyProject 内 delete）。
 
 /* ---------- P1-1v4 手动提取 AI 原始响应（自动更新失败时手工救急） ---------- */
 // 打开原始响应面板
@@ -10846,8 +10829,7 @@ function applyCpRawResponse(raw){
     if(!arr.length || !arr.some(Boolean)){ toast('解析失败：未找到 chapterPlans 数组'); return; }
     const n = (o.chapters||[]).length;
     const plans = Array.from({length:n},(_,i)=> arr[i] || '');
-    // 覆盖前先归档
-    pushChapterPlansSnapshot();
+    // v240/906-2：版本历史已移除，手动解析直接覆盖主线简述
     o.chapterPlans = plans;
     persist();
     closeCpRawPanel();
@@ -10878,12 +10860,6 @@ function applyCpRawResponse(raw){
           persist();
         };
       });
-    }
-    // 刷新版本按钮
-    const actionRow = document.querySelector('.cp-card .action-row');
-    if(actionRow){
-      const histBtn = actionRow.querySelector('[data-cp-hist]');
-      if(histBtn) histBtn.innerHTML = '📚 版本('+chapterPlansHistoryCount()+')';
     }
     bindChapterPlanFold();
     toast('✅ 已手动解析并应用 '+plans.filter(Boolean).length+' 条主线简述');
@@ -11857,9 +11833,7 @@ async function generateRollingSummaries(){
 }
 // 章节生成状态机：chState[i] = 'idle'|'generating'|'done'|'error'（健壮性契约）
 const chState = {};
-// 章节所在页数（建议3：每页 10 章），供渲染与跳转定位
-let chPage = 0;
-const CH_PAGE_SIZE = 10;
+// v240/906-1：长篇分页已恢复（chPage/CH_PAGE_SIZE 回归，见 renderChapters 与 chaptersDelegate）——每页 10 章，v238 蓝本
 
 // 新卡片界面：章节状态徽章与操作按钮 HTML（供 renderChapters / patchChapter 复用）
 function chapterBadgesHtml(i){
@@ -12729,9 +12703,11 @@ async function genManyChapters(count, fromStart){
       ? (rem > 0 ? `本批共 ${n} 章已生成，全书还剩 ${rem} 章未写。` : `全部章节已写完（共 ${totalCh} 章）。`)
       : '全部章节已生成，请审阅并标记确认。'; }
     if(rem <= 0 && isLong()) toast(`已全部写完（共 ${totalCh} 章）`);
-    // 若生成落在当前页之外，切到其所在页以便用户看到
-    const targetPage = Math.floor(start / CH_PAGE_SIZE);
-    if(Math.abs(chPage - targetPage) >= 1){ chPage = targetPage; renderChapters(); }
+    // v240/906-1：分页恢复（v238 蓝本）——生成落点不在当前页时切过去，让用户看到新卡
+    if(isLong()){
+      const targetPage = Math.floor(start / CH_PAGE_SIZE);
+      if(Math.abs(chPage - targetPage) >= 1){ chPage = targetPage; renderChapters(); }
+    }
   }catch(e){
     for(let k=0;k<n;k++){ if(chState[start+k] === 'generating'){ chState[start+k]='error'; } patchChapter(start+k); }
     if(st){ st.className='status err'; st.textContent = `第${start+1}~${start+n}章生成失败（${e.message}）。已停止本批，请修复后重试。`; }
