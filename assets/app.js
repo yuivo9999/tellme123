@@ -2984,7 +2984,7 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 1. title ≤ 12 字；不得使用高频套路书名（如《重生之xxx》《xxx系统》《xxx的xxx》）。
 2. logline 必须点明核心冲突与深层命题，篇幅严格落在末尾【简介字数约束】区间内，偏差不得超过 5%。
 3. structure.mainLine 必填；subLines / hiddenLine / pivotPlan 有才填、无则空字符串或空数组，绝不硬造。
-4. structure.chapterPlan 是"主题维度 → 章节段落"的归纳性分组骨架（v230/T3 与章数解耦）：维度名按主题/起承转合/人物线自由拟定，每组概括该阶段的章节走向即可；不必与全书预设章数严格对齐，允许合并或跨章概括。
+4. structure.chapterPlan 是"主题维度 → 章节段落"的归纳性分组骨架（v230/T3 与章数解耦）：维度名按主题/起承转合/人物线自由拟定，每组概括该阶段的章节走向即可；章节分组不必严格对齐某个总章数（v235/E1：总章数以用户实际填写为准，未填写时不预设），允许合并或跨章概括。
 5. genreTags 只能出现 2-4 个，且必须与 logline 一致。
 6. anchor 必须包含 题材+主角+核心冲突 三要素，≤50字；thesis 必须点出作品的核心主题/情感内核，≤80字；二者均不得为空。
 7. 忠实度硬约束：用户构想中出现的专名、称谓、设定、意象与关键情节点，必须在输出中原样保留；不得替换、改名或省略；如需调整须以用户原文为基准做增量扩展。
@@ -3476,12 +3476,8 @@ const AIBus = {
       longMode: isLong(),
       navBeacon: nb,
       styleContract: sc,
-      idea: state.idea || '',
-      userParams: {
-        chapterCount: chapterCountVal() || 30,
-        loglineMin: state.loglineRange?.min ?? 100,
-        loglineMax: state.loglineRange?.max ?? 300
-      }
+      idea: state.idea || ''
+      // v235/E3：删除 userParams 死配置（chapterCount||30 等，全库零消费者，且避免"||30"误导后来维护者）
     };
     switch(kind){
       case 'idea': return { ...base, rawIdea: state.idea || '', loglineRange: state.loglineRange };
@@ -4122,9 +4118,11 @@ function buildOutlineSys(){
   const _m = Number.isFinite(lr&&lr.min)?Math.max(1,Math.floor(lr.min)):100;
   const _x = Number.isFinite(lr&&lr.max)?Math.min(5000,Math.max(1,Math.floor(lr.max))):300;
   const _lo = Math.min(_m,_x), _hi = Math.max(_m,_x);
-  const N = chapterCountVal() || 30;        // 若未填，按默认 30 章
+  const N = chapterCountVal();              // v235/E1：未填时不取默认 30，避免"30 章"提示词污染（AI 误以为真是 30 章）
   // v230/T3：章数从"硬性覆盖"软化为"参考体量"——chapterPlan 是归纳性分组骨架，无程序消费者，与预设章数解耦
-  parts.push(`\n\n【简介字数约束】本作小说简介总字数必须控制在 ${_lo}—${_hi} 字之间，严格遵守区间，不得超出。全书预设 ${N} 章仅供 chapterPlan 分组时参考体量，不必严格对齐。`);
+  parts.push(`\n\n【简介字数约束】本作小说简介总字数必须控制在 ${_lo}—${_hi} 字之间，严格遵守区间，不得超出。` + (N
+    ? `全书 ${N} 章仅供 chapterPlan 分组时参考体量，不必严格对齐。`
+    : `用户尚未确定全书总章数，不要预设具体章数：chapterPlan 按故事需要自行归纳分组，体量自定。`));
   const banNote = banListBlockFor('outline');
   if(banNote) parts.push(banNote);
   return parts.join('\n\n');
@@ -5649,8 +5647,11 @@ function viewStory(){
       <div class="so-fold-head" data-so-toggle role="button" tabindex="0" title="展开/收起小说简介">
         <span class="so-fold">${state.soCollapsed?'▸':'▾'}</span><b>📌 小说简介</b>
       </div>
-      <p class="sub so-logline" ${state.soCollapsed?'hidden':''}>${esc(o.logline||'')}</p>
-      <div class="btn-row" style="margin-top:6px"><button type="button" class="btn small ghost" id="btnOutlineRegen" title="再生成一批 3 个候选大纲供选择；当前大纲与旧候选自动存入历史版本，不会丢失">🔄 重生成大纲</button></div>
+      <div style="position:relative">
+        <p class="sub so-logline" ${state.soCollapsed?'hidden':''}>${esc(o.logline||'')}</p>
+        <button type="button" class="btn small ghost" id="btnLoglineEdit" title="编辑小说简介" ${state.soCollapsed?'hidden':''} style="position:absolute;top:-4px;right:0;padding:1px 8px;font-size:12px">✎ 编辑</button>
+      </div>
+      <div class="btn-row" style="margin-top:6px"><button type="button" class="btn small ghost" id="btnOutlineRegen" title="再生成一批 ${OUTLINE_CANDIDATE_N} 个候选大纲供选择；当前大纲与旧候选自动存入历史版本，不会丢失">🔄 重生成大纲</button></div>
       ${ isLong() ? anchorEditHtml() : '' }
       ${ isLong() ? structureCardHtml() : '' }
       ${ chapterTitleBlock() }
@@ -6336,11 +6337,45 @@ function bindOrigIdea(){
 function bindOutlineFold(){
   const h = $('[data-so-toggle]'); if(!h) return;
   h.onclick = ()=>{
-    const body = $('.so-logline'); if(!body) return;
+    const body = $('.so-logline, .logline-ta'); if(!body) return;   // v235/E4：兼容编辑态（textarea）
     const on = !body.hidden;
     body.hidden = on;
     const f = h.querySelector('.so-fold'); if(f) f.textContent = on ? '▸' : '▾';
     if(state){ state.soCollapsed = on; if(typeof persist==='function') persist(); }
+  };
+}
+// v235/E4 小说简介笔图标编辑：✎ → 原位 textarea → 失焦/Ctrl+Enter 保存写回 o.logline（单数据源）；Esc 取消；空值视为取消
+function bindLoglineEdit(){
+  const eb = $('#btnLoglineEdit'); if(!eb) return;
+  eb.onclick = ()=>{
+    const p = $('.so-logline'); if(!p) return;
+    const ta = document.createElement('textarea');
+    ta.className = 'logline-ta';
+    ta.value = String((state.outline||{}).logline||'');
+    ta.rows = 4;
+    ta.style.width = '100%';
+    ta.style.marginTop = '6px';
+    ta.spellcheck = false;
+    ta.placeholder = '编辑小说简介（点击卡片其他位置或 Ctrl+Enter 保存，Esc 取消）';
+    p.replaceWith(ta);
+    ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    let done = false;
+    const finish = (save)=>{
+      if(done) return; done = true;
+      const v = String(ta.value||'').trim();
+      if(save && v){
+        state.outline = state.outline || {};
+        if(v !== state.outline.logline){ state.outline.logline = v; if(typeof persist==='function') persist(); toast('小说简介已更新'); }
+      }
+      // 空值/取消均不写回；render() 把 textarea 还原为只读 <p>（v !== 判断避免无改动时多余 persist）
+      if(typeof render==='function') render();
+    };
+    ta.onblur = ()=>finish(true);
+    ta.onkeydown = (ev)=>{
+      if(ev.key==='Escape'){ ev.preventDefault(); ta.onblur=null; finish(false); }
+      else if(ev.key==='Enter' && (ev.ctrlKey||ev.metaKey)){ ev.preventDefault(); ta.onblur=null; finish(true); }
+    };
   };
 }
 // v1.0.116 小说核心锚点辅助：下游 AI 提示词统一「锚点在前、完整简介在后」；(anchor/thesis) 为可空字段
@@ -6517,7 +6552,8 @@ function openAiHistPanel(){
     <div class="gs-modal">
       <div class="gs-modal-head"><b>📖 AI 配方历史（${hist.length}）</b>
         <span style="display:flex;gap:6px">
-          <button class="btn small ghost" data-ah-import title="导入配方包 JSON（词条自动合并进词库，配方去重后加入历史）">⬆ 导入配方包</button>
+          <button class="btn small ghost" data-ah-excenter title="跨批挑选个别配方/词条，勾选后打包导出">📦 选择导出</button>
+          <button class="btn small ghost" data-ah-import title="导入配方包 JSON（先预览勾选，再确认导入；词条自动合并进词库）">⬆ 导入配方包</button>
           <button class="btn small ghost" data-ah-clear>清空</button>
           <button class="gs-x" data-ah-close>✕</button>
         </span></div>
@@ -6533,6 +6569,8 @@ function openAiHistPanel(){
     const cl = e.target.closest('[data-ah-close]'); if(cl){ close(); return; }
     const imp = e.target.closest('[data-ah-import]');
     if(imp){ const f2=$('#aiRecipeImportFile'); if(f2) f2.click(); return; }
+    const exc = e.target.closest('[data-ah-excenter]');
+    if(exc){ close(); openExportCenter(); return; }
     const exp = e.target.closest('[data-ah-export]');
     if(exp){ exportRecipeBundle(hist[+exp.dataset.ahExport]); return; }
     const fold = e.target.closest('[data-ah-fold]');
@@ -6551,61 +6589,281 @@ function openAiHistPanel(){
 }
 function closeAiHistPanel(){ const p=$('#aiHistPanel'); if(p) p.remove(); }
 /* ---------- v234/W3：AI 配方导出/导入（打包 tags 引用的自定义词条 + gap 新词条，跨设备可用） ---------- */
-// 导出：{kind:'aiRecipeBundle', recipes:[配方条目], bundled:[自定义词条完整定义+gap词条]}；内置词条不打包（两端都有）
+/* v236/F1+F3：导出构建抽取共用（单条快捷导出与「📦 选择导出」中心同一构建）；导入拆 解析→预览确认→落库 三段 */
+// 包构建：bundled = tags 引用词条 ∪ gap 词条 ∪ 手动勾选词条（extraElIds，选择导出中心用）
+function buildRecipeBundle(cands, extraElIds){
+  const cfg = getCfg();
+  const added = (cfg.styleCustom && Array.isArray(cfg.styleCustom.added)) ? cfg.styleCustom.added : [];
+  const addedById = {};
+  added.forEach(x=>{ if(x&&x.id) addedById[String(x.id)]=x; });
+  const bundled = []; const seen = new Set();
+  const pushEl = (el)=>{ if(el && el.id && String(el.name||'').trim() && !seen.has(String(el.id))){ seen.add(String(el.id)); bundled.push(JSON.parse(JSON.stringify(el))); } };
+  (Array.isArray(cands)?cands:[]).forEach(c=>{
+    (Array.isArray(c && c.tags) ? c.tags : []).forEach(id=>{ if(addedById[String(id)]) pushEl(addedById[String(id)]); });   // 自定义词条打包
+    (Array.isArray(c && c.gap) ? c.gap : []).forEach(g=> pushEl(g));                                        // gap 新词条五维齐全直接打包
+  });
+  if(extraElIds) added.forEach(x=>{ if(x && x.id && extraElIds.has(String(x.id))) pushEl(x); });            // 手动勾选词条（不被配方引用也能单独导出）
+  return { ver:1, exportedAt:Date.now(), kind:'aiRecipeBundle', recipes: JSON.parse(JSON.stringify(Array.isArray(cands)?cands:[])), bundled };
+}
+function bundleStamp(){
+  const ts = new Date(); const pad = n=>String(n).padStart(2,'0');
+  return `${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`;
+}
+function downloadBundleFile(data, filename, doneMsg){
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+  URL.revokeObjectURL(a.href);
+  if(doneMsg) toast(doneMsg);
+}
+// 单条历史快捷导出（入口不变：openAiHistPanel 内 data-ah-export）
 function exportRecipeBundle(entry){
   const cands = Array.isArray(entry && entry.list) ? entry.list : [];
   if(!cands.length){ toast('该历史条目没有可导出的配方'); return; }
-  const cfg = getCfg();
-  const addedById = {};
-  ((cfg.styleCustom && Array.isArray(cfg.styleCustom.added)) ? cfg.styleCustom.added : []).forEach(x=>{ if(x&&x.id) addedById[x.id]=x; });
-  const bundled = []; const seen = new Set();
-  const pushEl = (el)=>{ if(el && el.id && String(el.name||'').trim() && !seen.has(el.id)){ seen.add(el.id); bundled.push(el); } };
-  cands.forEach(c=>{
-    (Array.isArray(c && c.tags) ? c.tags : []).forEach(id=>{ if(addedById[id]) pushEl(addedById[id]); });   // 自定义词条打包
-    (Array.isArray(c && c.gap) ? c.gap : []).forEach(g=> pushEl(g));                                        // gap 新词条五维齐全直接打包
-  });
-  const data = { ver:1, exportedAt:Date.now(), kind:'aiRecipeBundle', recipes: JSON.parse(JSON.stringify(cands)), bundled };
-  const ts = new Date(); const pad = n=>String(n).padStart(2,'0');
-  const stamp = `${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`;
+  const data = buildRecipeBundle(cands);
   const desc = String((entry&&entry.desc)||'配方').replace(/[\\/:*?"<>|]/g,'').slice(0,20) || '配方';
-  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json;charset=utf-8'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = `配方_${desc}-${stamp}.json`; a.click();
-  URL.revokeObjectURL(a.href);
-  toast(`已导出 ${cands.length} 个配方（附词条 ${bundled.length} 个）`);
+  downloadBundleFile(data, `配方_${desc}-${bundleStamp()}.json`, `已导出 ${cands.length} 个配方（附词条 ${data.bundled.length} 个）`);
 }
-// 导入：bundled 词条先合并进词库（按 id 去重，同名保留我的）→ 配方去重（同名+同tags）后追加进配方历史
+// v236/F2：选择导出中心提交——cands 与 manualElIds 至少一个非空；纯词条时出 recipes 空的合法包
+function exportSelection(cands, manualElIds){
+  const hasR = Array.isArray(cands) && cands.length;
+  const hasE = manualElIds && manualElIds.size;
+  if(!hasR && !hasE){ toast('请先勾选要导出的配方或词条'); return; }
+  const data = buildRecipeBundle(hasR?cands:[], hasE?manualElIds:null);
+  const msg = hasR ? `已导出 ${cands.length} 个配方（附词条 ${data.bundled.length} 个）` : `已导出词条 ${data.bundled.length} 个`;
+  const fname = hasR ? `配方_选择导出-${bundleStamp()}.json` : `词条_${data.bundled.length}个-${bundleStamp()}.json`;
+  downloadBundleFile(data, fname, msg);
+}
+/* v236/F3：导入分类——配方 新/重复(禁勾)；词条 新(默认勾)/已有同id(默认不勾,勾=覆盖我的)/内置(跳过) */
+function classifyImportBundle(data){
+  const cfg = getCfg();
+  const haveIds = new Set(((cfg.styleCustom && cfg.styleCustom.added)||[]).map(x=>x&&String(x.id)));
+  const libIds = new Set(writeStyleLib().map(x=>x&&String(x.id)));
+  const elStates = [];
+  (Array.isArray(data.bundled)?data.bundled:[]).forEach(el=>{
+    const id = String(el&&el.id||''); const nm = String(el&&el.name||'').trim();
+    if(!id || !nm) return;
+    elStates.push({ el, mode: libIds.has(id) ? 'skip' : (haveIds.has(id) ? 'repl' : 'new') });
+  });
+  const hist = getAiHist();
+  const sigOf = c => JSON.stringify([String(c&&c.name||''), Array.isArray(c&&c.tags)?c.tags.map(String):[]]);
+  const existSigs = new Set();
+  hist.forEach(e=> (Array.isArray(e&&e.list)?e.list:[]).forEach(x=> existSigs.add(sigOf(x))));
+  const candStates = [];
+  (Array.isArray(data.recipes)?data.recipes:[]).forEach(c=>{
+    if(!c || !String(c&&c.name||'').trim()) return;
+    candStates.push({ c, dup: existSigs.has(sigOf(c)) });
+  });
+  return { candStates, elStates };
+}
+// 入口（file input 不变）：解析 → 校验（v236：纯词条包 recipes 空合法）→ 预览确认
 function importRecipeBundle(file){
   const reader = new FileReader();
   reader.onload = ()=>{
     let data;
     try{ data = JSON.parse(reader.result); }catch(e){ toast('导入失败：文件不是合法 JSON'); return; }
-    if(!data || typeof data!=='object' || data.kind!=='aiRecipeBundle' || !Array.isArray(data.recipes) || !data.recipes.length){
+    if(!data || typeof data!=='object' || data.kind!=='aiRecipeBundle' || !Array.isArray(data.recipes) || !Array.isArray(data.bundled) || (!data.recipes.length && !data.bundled.length)){
       toast('导入失败：不是合法的 AI 配方包'); return;
     }
-    const cfg = getCfg(); cfg.styleCustom = cfg.styleCustom || { notes:{}, added:[], removed:[], comboRemoved:[] };
-    let elAdded=0, elKept=0;
-    const haveIds = new Set((cfg.styleCustom.added||[]).map(x=>x&&x.id));
-    const libIds = new Set(writeStyleLib().map(x=>x&&x.id));
-    (Array.isArray(data.bundled)?data.bundled:[]).forEach(el=>{
-      const id = String(el&&el.id||''); if(!id || !String(el&&el.name||'').trim()) return;
-      if(libIds.has(id) || haveIds.has(id)){ elKept++; return; }   // 内置或已有：保留我的
-      cfg.styleCustom.added.push({ id, group:['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'].includes(el.group)?el.group:'custom',
-        name:String(el.name), note:String(el.note||''), demo:el.demo?String(el.demo):'', seal:(el.seal===undefined?0:el.seal), warning:el.warning?String(el.warning):'' });
-      haveIds.add(id); libIds.add(id); elAdded++;
-    });
-    const hist = getAiHist();
-    const sigOf = c => JSON.stringify([String(c&&c.name||''), Array.isArray(c&&c.tags)?c.tags.map(String):[]]);
-    const existSigs = new Set();
-    hist.forEach(e=> (Array.isArray(e&&e.list)?e.list:[]).forEach(x=> existSigs.add(sigOf(x))));
-    const valid = data.recipes.filter(c=> c && String(c&&c.name||'').trim());
-    let rAdded=0, rKept=0;
-    const fresh = valid.filter(c=>{ const s=sigOf(c); if(existSigs.has(s)){ rKept++; return false; } existSigs.add(s); rAdded++; return true; });
-    if(fresh.length) addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'desc', desc:'📥 导入配方包', list: JSON.parse(JSON.stringify(fresh)), applied:[] });
-    saveCfg(cfg); refreshAiHistBadge();
-    toast(`配方导入完成：新增配方 ${rAdded} · 重复跳过 ${rKept} · 补入词条 ${elAdded} · 已有词条 ${elKept}`);
+    const st = classifyImportBundle(data);
+    if(!st.candStates.length && !st.elStates.length){ toast('导入包内没有有效内容'); return; }
+    showImportPreview(st);
   };
   reader.readAsText(file);
+}
+/* v236/F3：导入预览确认——重复配方禁勾、同名词条勾=覆盖、内置跳过、引用反向锁、全选新条目 */
+function showImportPreview(st){
+  const ov = document.createElement('div'); ov.id='impPrevPanel'; ov.className='gs-overlay';
+  const nNew = st.candStates.filter(x=>!x.dup).length, nDup = st.candStates.length - nNew;
+  const elNew = st.elStates.filter(x=>x.mode==='new').length;
+  const elRepl = st.elStates.filter(x=>x.mode==='repl').length;
+  const elSkip = st.elStates.filter(x=>x.mode==='skip').length;
+  ov.innerHTML = `
+    <div class="gs-modal">
+      <div class="gs-modal-head"><b>📥 导入预览</b><button class="gs-x" data-ip-close title="取消导入">✕</button></div>
+      <div class="cv-body">
+        <p class="muted" style="margin:4px 0;font-size:12px">配方 ${st.candStates.length} 条（新 ${nNew} / 重复 ${nDup}）· 词条 ${st.elStates.length} 个（新 ${elNew} / 可覆盖 ${elRepl} / 内置跳过 ${elSkip}）</p>
+        ${st.candStates.length ? `<div style="margin:8px 0 2px;display:flex;align-items:center;gap:10px"><b>配方</b>${nNew?`<label class="muted" style="font-size:12px;display:inline-flex;align-items:center;gap:4px"><input type="checkbox" data-ip-all checked> 全选新条目</label>`:''}</div>` : ''}
+        ${st.candStates.map((x,i)=> x.dup
+          ? `<label class="muted" style="display:block;margin:2px 0" title="与已有配方重复（同名+同标签），无法重复导入">☐ ${esc(String(x.c.name||'').slice(0,30))} · 重复</label>`
+          : `<label style="display:block;margin:2px 0"><input type="checkbox" data-ip-cand="${i}" checked> ${esc(String(x.c.name||'').slice(0,30))}${Array.isArray(x.c.tags)?` <span class="muted" style="font-size:11px">· 标签 ${x.c.tags.length} 个</span>`:''}</label>`
+        ).join('')}
+        ${st.elStates.length ? '<div style="margin:10px 0 2px"><b>随附词条</b></div>' : ''}
+        ${st.elStates.map((x,i)=>{
+          const nm = esc(String(x.el.name||'').slice(0,24));
+          if(x.mode==='skip') return `<label class="muted" style="display:block;margin:2px 0" title="内置词条两端都有，无需导入">☒ ${nm} · 内置</label>`;
+          if(x.mode==='repl') return `<label style="display:block;margin:2px 0"><input type="checkbox" data-ip-el="${i}"> ${nm} <span class="muted" style="font-size:11px">· 已有（勾选=以导入版覆盖）</span></label>`;
+          return `<label style="display:block;margin:2px 0"><input type="checkbox" data-ip-el="${i}" checked> ${nm} <span class="muted" style="font-size:11px">· ${esc(String(x.el.group||'custom'))} · 新增</span></label>`;
+        }).join('')}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid rgba(128,128,128,.2)">
+        <span data-ip-sum class="muted" style="flex:1"></span>
+        <button type="button" class="btn small" data-ip-go>✓ 导入所选</button>
+        <button type="button" class="btn small ghost" data-ip-close>取消</button>
+      </div>
+    </div>`;
+  const close = ()=>{ const p=$('#impPrevPanel'); if(p) p.remove(); };
+  // v236/F3：引用反向锁——已勾配方 tags 引用的包内词条强制勾选且锁定；解锁后未手动改过的恢复默认勾态
+  const refreshIpLocks = ()=>{
+    const locked = new Set();
+    ov.querySelectorAll('[data-ip-cand]:checked').forEach(cb=>{
+      const x = st.candStates[+cb.dataset.ipCand];
+      (Array.isArray(x&&x.c&&x.c.tags)?x.c.tags:[]).forEach(id=>locked.add(String(id)));
+    });
+    ov.querySelectorAll('[data-ip-el]').forEach(cb=>{
+      const x = st.elStates[+cb.dataset.ipEl]; if(!x) return;
+      const id = String(x.el&&x.el.id||'');
+      if(locked.has(id)){ cb.checked = true; cb.disabled = true; }
+      else { cb.disabled = false; if(cb.dataset.ipManual!=='1') cb.checked = (x.mode==='new'); }
+    });
+    const nc = ov.querySelectorAll('[data-ip-cand]:checked').length;
+    const ne = ov.querySelectorAll('[data-ip-el]:checked').length;
+    const sum = ov.querySelector('[data-ip-sum]'); if(sum) sum.textContent = `已选 配方 ${nc} · 词条 ${ne}`;
+    const go = ov.querySelector('[data-ip-go]'); if(go) go.disabled = (nc+ne)===0;
+  };
+  refreshIpLocks();
+  ov.addEventListener('change', e=>{
+    const t = e.target;
+    if(t.matches('[data-ip-all]')){
+      ov.querySelectorAll('[data-ip-cand]').forEach(cb=>{ cb.checked = t.checked; });
+      refreshIpLocks(); return;
+    }
+    if(t.matches('[data-ip-el]')){ t.dataset.ipManual = '1'; refreshIpLocks(); return; }
+    if(t.matches('[data-ip-cand]')) refreshIpLocks();
+  });
+  ov.addEventListener('click', e=>{
+    const cl = e.target.closest('[data-ip-close]'); if(cl){ close(); return; }
+    const go = e.target.closest('[data-ip-go]');
+    if(go){ applyBundleSelection(st, ov); return; }
+    if(e.target===ov) close();
+  });
+  document.body.appendChild(ov);
+}
+// v236/F3：预览确认落库——新增词条 push、覆盖词条按 id 替换 added 内同 id 项；配方按勾选加入历史
+function applyBundleSelection(st, ov){
+  const cfg = getCfg(); cfg.styleCustom = cfg.styleCustom || { notes:{}, added:[], removed:[], comboRemoved:[] };
+  const normEl = el=>({ id:String(el.id), group:['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'].includes(el.group)?el.group:'custom',
+    name:String(el.name), note:String(el.note||''), demo:el.demo?String(el.demo):'', seal:(el.seal===undefined?0:el.seal), warning:el.warning?String(el.warning):'' });
+  let elAdded=0, elRepl=0;
+  ov.querySelectorAll('[data-ip-el]:checked').forEach(cb=>{
+    const x = st.elStates[+cb.dataset.ipEl]; if(!x || !x.el) return;
+    if(x.mode==='new'){ cfg.styleCustom.added.push(normEl(x.el)); elAdded++; }
+    else if(x.mode==='repl'){
+      const i = cfg.styleCustom.added.findIndex(y=>y && String(y.id)===String(x.el.id));
+      if(i>=0){ cfg.styleCustom.added[i] = normEl(x.el); elRepl++; }
+    }
+  });
+  const cands = [];
+  ov.querySelectorAll('[data-ip-cand]:checked').forEach(cb=>{
+    const x = st.candStates[+cb.dataset.ipCand]; if(x && x.c) cands.push(x.c);
+  });
+  if(cands.length) addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'desc', desc:'📥 导入所选配方', list: JSON.parse(JSON.stringify(cands)), applied:[] });
+  saveCfg(cfg); refreshAiHistBadge();
+  const p = $('#impPrevPanel'); if(p) p.remove();
+  toast(`导入完成：配方 ${cands.length} · 新增词条 ${elAdded} · 覆盖词条 ${elRepl}`);
+}
+/* ---------- v236/F2：📦 选择导出中心——跨批挑候选 + 挑自定义词条，两段折叠默认收起，底部汇总条 ---------- */
+// 引用锁：已勾候选 tags 引用的词条强制勾选且锁定（防导出残缺包）；解锁后状态保留可手动取消；更新底部汇总
+function refreshExLocks(ov){
+  const locked = new Set();
+  ov.querySelectorAll('[data-ex-cand]:checked').forEach(cb=>{
+    const parts = String(cb.dataset.exCand).split(':');
+    const e = getAiHist()[+parts[0]];
+    const c = e && Array.isArray(e.list) ? e.list[+parts[1]] : null;
+    (Array.isArray(c&&c.tags)?c.tags:[]).forEach(id=>locked.add(String(id)));
+  });
+  ov.querySelectorAll('[data-ex-el]').forEach(cb=>{
+    if(locked.has(cb.dataset.exEl)){ cb.checked = true; cb.disabled = true; }
+    else cb.disabled = false;
+  });
+  const nc = ov.querySelectorAll('[data-ex-cand]:checked').length;
+  const ne = ov.querySelectorAll('[data-ex-el]:checked').length;
+  const sum = ov.querySelector('[data-ex-sum]'); if(sum) sum.textContent = `已选 配方 ${nc} · 词条 ${ne}`;
+  const go = ov.querySelector('[data-ex-go]'); if(go) go.disabled = (nc+ne)===0;
+}
+function openExportCenter(){
+  const hist = getAiHist();
+  const cfg = getCfg();
+  const added = (cfg.styleCustom && Array.isArray(cfg.styleCustom.added)) ? cfg.styleCustom.added : [];
+  const GROUPS = ['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'];
+  let totalCands = 0; hist.forEach(e=> totalCands += (Array.isArray(e&&e.list)?e.list.length:0));
+  // 批次树（默认收起）：批头复选=全选该批；候选行级勾选
+  const batchHtml = hist.map((e,ei)=>{
+    const list = Array.isArray(e.list)?e.list:[];
+    if(!list.length) return '';
+    const cands = list.map((c,ci)=>{
+      const nm = String(c&&c.name||'').trim() || ('候选'+(ci+1));
+      return `<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(nm)}"><input type="checkbox" data-ex-cand="${ei}:${ci}"> ${esc(nm.slice(0,18))}</label>`;
+    }).join('');
+    return `<div style="margin:4px 0">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="sc-fold-ico" data-ex-fold style="cursor:pointer;user-select:none">▸</span>
+        <label style="flex:1;display:flex;align-items:center;gap:6px;cursor:pointer" title="勾选=全选该批候选">
+          <input type="checkbox" data-ex-batch="${ei}"> ${e.src==='outline'?'📑':'📝'} ${esc(String(e.desc||'').slice(0,20))} <span class="muted" style="font-size:11px">· ${list.length} 条 · ${new Date(e.ts).toLocaleDateString('zh-CN')}</span>
+        </label>
+      </div>
+      <div data-ex-body style="display:none;padding:2px 0 6px 22px;flex-wrap:wrap">${cands}</div>
+    </div>`;
+  }).join('');
+  // 词条树（按分组折叠，默认收起）
+  const byGroup = {};
+  added.forEach(x=>{ if(!x||!x.id) return; const g = GROUPS.includes(x.group)?x.group:'custom'; (byGroup[g]=byGroup[g]||[]).push(x); });
+  const gKeys = GROUPS.filter(g=>byGroup[g]&&byGroup[g].length); if(byGroup.custom&&byGroup.custom.length) gKeys.push('custom');
+  const elHtml = gKeys.map(g=>{
+    const items = byGroup[g].map(x=>`<label style="display:inline-flex;align-items:center;gap:4px;margin:3px 12px 3px 0" title="${esc(String(x.note||'').slice(0,80))}"><input type="checkbox" data-ex-el="${esc(String(x.id))}"> ${esc(String(x.name||'').slice(0,16))}</label>`).join('');
+    return `<div style="margin:4px 0">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="sc-fold-ico" data-ex-fold style="cursor:pointer;user-select:none">▸</span>
+        <b class="muted" style="font-size:12px;flex:1">${g==='custom'?'其他':g}（${byGroup[g].length}）</b>
+      </div>
+      <div data-ex-body style="display:none;padding:2px 0 6px 22px;flex-wrap:wrap">${items}</div>
+    </div>`;
+  }).join('');
+  const ov = document.createElement('div'); ov.id='exCenterPanel'; ov.className='gs-overlay';
+  ov.innerHTML = `
+    <div class="gs-modal">
+      <div class="gs-modal-head"><b>📦 选择导出</b><button class="gs-x" data-ex-close title="关闭">✕</button></div>
+      <div class="cv-body">
+        <div style="margin:6px 0 2px"><b>配方历史</b> <span class="muted" style="font-size:12px">${hist.length} 批 · 共 ${totalCands} 条候选（点批名展开）</span></div>
+        ${batchHtml || '<p class="muted">暂无配方历史。</p>'}
+        <div style="margin:10px 0 2px"><b>我的自定义词条</b> <span class="muted" style="font-size:12px">${added.length} 个（勾选配方时其引用词条自动附带🔒）</span></div>
+        ${elHtml || '<p class="muted">暂无自定义词条。</p>'}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-top:1px solid rgba(128,128,128,.2)">
+        <span data-ex-sum class="muted" style="flex:1">已选 配方 0 · 词条 0</span>
+        <button type="button" class="btn small" data-ex-go disabled title="跨批勾选候选与词条后打包导出">⬇ 导出所选</button>
+        <button type="button" class="btn small ghost" data-ex-close>取消</button>
+      </div>
+    </div>`;
+  const close = ()=>{ const p=$('#exCenterPanel'); if(p) p.remove(); };
+  ov.addEventListener('change', e=>{
+    const t = e.target;
+    if(t.matches('[data-ex-batch]')){
+      ov.querySelectorAll(`[data-ex-cand^="${t.dataset.exBatch}:"]`).forEach(cb=>{ cb.checked = t.checked; });
+      refreshExLocks(ov); return;
+    }
+    if(t.matches('[data-ex-cand], [data-ex-el]')) refreshExLocks(ov);
+  });
+  ov.addEventListener('click', e=>{
+    const cl = e.target.closest('[data-ex-close]'); if(cl){ close(); return; }
+    const f = e.target.closest('[data-ex-fold]');
+    if(f){ const body = f.parentElement.nextElementSibling; if(body){ const open = body.style.display!=='none'; body.style.display = open?'none':'flex'; f.textContent = open?'▸':'▾'; } return; }
+    const go = e.target.closest('[data-ex-go]');
+    if(go){
+      const cands = [];
+      ov.querySelectorAll('[data-ex-cand]:checked').forEach(cb=>{
+        const parts = String(cb.dataset.exCand).split(':');
+        const e2 = getAiHist()[+parts[0]];
+        const c = e2 && Array.isArray(e2.list) ? e2.list[+parts[1]] : null;
+        if(c) cands.push(c);
+      });
+      const elIds = new Set([...ov.querySelectorAll('[data-ex-el]:checked')].map(cb=>cb.dataset.exEl));
+      exportSelection(cands, elIds);
+      close(); return;
+    }
+    if(e.target===ov) close();
+  });
+  document.body.appendChild(ov);
 }
 // 更新卡片书本徽标（按当前快照数）
 function refreshAiHistBadge(){
@@ -9090,6 +9348,7 @@ function bindView(){
   bindGlossary();
   bindOrigIdea();     // v10.2 原始构想只读卡绑定
   bindOutlineFold();  // v1.0.107 故事大纲卡「小说简介」折叠绑定
+  bindLoglineEdit();  // v235/E4 小说简介笔图标编辑绑定
   bindAnchors();     // v1.0.116 简介区核心定位/深层命题可编辑 + 重新提取
   bindAiRecipe();     // v10.30 AI配方助手绑定
   bindChapterPlan();  // v10.11 主线简述区块绑定
@@ -9395,11 +9654,15 @@ function applyOutlineObject(o, opts){
   opts = opts || {};
   // v230/T3：章数软检查——structure.chapterPlan 是"主题维度→章节段落"归纳分组，无程序消费者，数量仅参考；
   // 分组缺失（covered=0）静默放行；有值但与预设不符时 toast 提醒一次，不再 throw 作废整份大纲
-  const _N = chapterCountVal() || 30;
+  const _N = chapterCountVal();             // v235/E2：未填不取默认 30，toast 不再误导"预设 30 章"
   const covered = (o.structure && o.structure.chapterPlan)
     ? Object.values(o.structure.chapterPlan).flat().length : 0;
-  if(covered && covered !== _N && !opts.silent){
-    toast(`提示：大纲章节分组覆盖 ${covered} 章（预设 ${_N} 章），仅作参考不作拦截；正式章节以「章节标题」步骤为准。`);
+  if(covered && !opts.silent){
+    if(_N && covered !== _N){
+      toast(`提示：大纲章节分组覆盖 ${covered} 章（你填写的章数为 ${_N} 章），仅作参考不作拦截；正式章节以「章节标题」步骤为准。`);
+    } else if(!_N){
+      toast(`提示：大纲章节分组覆盖 ${covered} 章（未填章数，分组体量由 AI 自定），仅作参考不作拦截。`);
+    }
   }
   // 保留旧章节标题（如果数量一致）
   const oldChapters = (state.outline && state.outline.chapters) || [];
@@ -9449,12 +9712,15 @@ function applyOutlineObject(o, opts){
 }
 
 // —— v230/3.1：多大纲候选（3 个角度差异化候选，供比选；未选候选入历史可切回） ——
-const OUTLINE_CANDIDATE_N = 3;   // 每批候选数（1 = 退化为单发行为）
+const OUTLINE_CANDIDATE_N = 6;   // v235/E5：每批候选数 3→6（角度池同步扩到 6 个，1:1 无撞角度；1 = 退化为单发行为）
 // state._outlineCandidates = { batchTs, items:[{id,label,outline}], chosenId }（随项目持久化，见 projectSnapshot/applyProject/clearState）
 const OUTLINE_CANDIDATE_ANGLES = [
   { tag:'稳健商业向',   note:'本候选走「稳健商业向」：类型要素齐全、市场成熟度高，主线清晰不冒险，适合大众读者口味。', temp:0.75 },
   { tag:'高概念反差向', note:'本候选走「高概念反差向」：围绕一个抓人的"如果……会怎样"设定展开，敢做反差与新奇组合。', temp:0.85 },
-  { tag:'情感人物向',   note:'本候选走「情感人物向」：人物关系与内心弧光优先，主线为情感服务，重视人物动机与代价。', temp:0.95 }
+  { tag:'情感人物向',   note:'本候选走「情感人物向」：人物关系与内心弧光优先，主线为情感服务，重视人物动机与代价。', temp:0.95 },
+  { tag:'快节奏钩子向', note:'本候选走「快节奏钩子向」（v235/E5 新增）：以追读红利优先——开场即冲突，章章留钩，节拍快，信息密度高，牺牲部分铺陈换取一口气读完的推进感。', temp:0.80 },
+  { tag:'世界观设定向', note:'本候选走「世界观设定向」（v235/E5 新增）：以设定红利优先——世界观规则、体系与组织结构是核心卖点，主线让设定有层次地展开，靠"新奇且自洽"取胜。', temp:0.90 },
+  { tag:'综合均衡向',   note:'本候选走「综合均衡向」（v235/E5 新增）：取稳健商业的市场骨架、高概念反差的记忆点、情感人物的动力，三者各取其一融合；各维度取"最稳的一档"，防止平均化平庸稿。', temp:0.80 }
 ];
 
 // v230/3.2：多候选生成——串行逐个（沿用 _abortCtl 可中断），角度差异化 + 温度阶梯；
