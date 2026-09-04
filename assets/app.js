@@ -1393,7 +1393,12 @@ function showPolishResult(out, multi){
     suggestedChapterCount: (o && o.suggestedChapterCount!=null && Number.isFinite(+o.suggestedChapterCount)) ? +o.suggestedChapterCount : null
   });
   if(multi){
-    const j = (out && typeof out === 'object') ? out : (parseJson(String(out)) || {});
+    // v230/1-B 修复：parseJson 是 throw 型（robustParseJson 解析失败直接 throw「返回不是合法 JSON」），
+    // 多方案纯文本（v230/1-B 新输出格式）会在此炸断——方案卡未写入、收起后无「查看全部」入口。
+    // 改为捕获后置 null → 走下方 splitPolishMultiText 切卡，切不出 ≥2 张再降级单卡。
+    let j = null;
+    if(out && typeof out === 'object'){ j = out; }
+    else { try{ j = parseJson(String(out)); }catch(e){ j = null; } }
     const opts = Array.isArray(j.options) ? j.options.filter(o=>o && String(o.optimizedIdea||o.text||'').trim()) : [];
     if(opts.length){
       snapshotPolishBatch('重新优化前');   // 覆盖前把旧整批方案归档为可回退版本（≤5）
@@ -9241,9 +9246,9 @@ async function genOutlineMulti(btn){
   if(ideaIn) state.idea = ideaIn.value.trim();   // 仅第②步页面有输入框；「重生成大纲」入口直接用已存 state.idea
   if(!state.idea){ toast('先写几句构想'); return; }
   if(!canRunAI('outline')){ toast('请先完成上游步骤：优化构想'); return; }
-  if(!state.outline || !state.outline.navBeacon){
-    toast('建议先「优化构想」生成结构化设定，再生成大纲');
-  }
+  // v230/1-B 修复：移除"建议先优化构想"toast——构想改纯文本后 navBeacon 不再回填，此提示变成每点必弹，
+  // 且被误解为阻断（生成实际继续）；大纲 AI 的构想上下文已由 buildOutlineUser→formatNavBeaconForOutline 的
+  // 纯文本 fallback 注入，无信息损失。允许用户跳过优化构想直接生成大纲。
   markAIRunning('outline');
   if(btn) busy(btn,true,'生成候选大纲中…');
   if(btn && btn.parentNode) showStopBtn(btn.parentNode);
@@ -9374,10 +9379,7 @@ async function genOutline(){
   if(!canRunAI('outline')){ toast('请先完成上游步骤：优化构想'); if(btn) busy(btn,false); return; }
   markAIRunning('outline');
   if(btn) busy(btn,true,'生成大纲中…');
-  // 如果还没有 navBeacon，提示用户先优化构想
-  if(!state.outline || !state.outline.navBeacon){
-    toast('建议先「优化构想」生成结构化设定，再生成大纲');
-  }
+  // v230/1-B 修复：移除"建议先优化构想"toast（同 genOutlineMulti——纯文本构想时代该提示每点必弹且被误解为阻断）
   const stopParent = btn.parentNode;
   showStopBtn(stopParent);
   try{
