@@ -199,7 +199,7 @@ function uid(p){ return (p||'id')+(++uidSeq)+'-'+Date.now().toString(36)+Math.ra
 // v227「使用不同AI」分任务模型：任务档键清单（UI 分组渲染与 resolveActiveSpec 覆盖解析共用）。
 // 档位语义与 UI 分组见《使用不同ai.md》§3.2；调用点标注映射见同文 §1.3；测试连接（恒用全局）不在清单内。
 const TM_KEYS = ['chapter','outline','planSummary','planBeats','plannerTitles','plannerAux',
-  'idea','titleAdvice','contentAdvice','sandbox',
+  'idea','titleAdvice','contentAdvice','sandbox','chapterCount',
   'glossary','subplot','strip','rolling','audit',
   'assets','recipe'];
 
@@ -3362,8 +3362,9 @@ const AIValidators = {
   chapterPlan: validateChapterPlanOutput,
   chapter: validateChapterContent,  // 4.5 已有
   subplot: validateSubplotOutput,
-  glossary: validateGlossaryExtract,
-  strip: validateStripLen
+    glossary: validateGlossaryExtract,
+    strip: validateStripLen,
+    chapterCount: validateChapterCountAdvice   // v234/C1：章数建议轻校验
 };
 
 // 4.8 适配修复：4.7 Pro 优化构想 AI 输出 {diagnosis, brief, advice}（非 4.5 的 optimizedIdea 结构），
@@ -3523,6 +3524,7 @@ function getSystemPrompt(kind, extra){
     case 'recipe': return AI_RECIPE_SYS_PRO;
     // v230/3.2：outline 支持多候选角度尾注（genOutlineMulti 经 extra.angleNote 注入【本候选创意角度】）
     case 'outline': return buildOutlineSys() + ((extra && extra.angleNote) ? '\n\n' + extra.angleNote : '');
+    case 'chapterCount': return CH_COUNT_ADVICE_SYS;   // v234/C1：章数建议
     case 'titles': return REGEN_TITLES_SYS;
     case 'chapterPlan': return CHAPTER_PLAN_SYS;
     case 'chapter': return longChapterSys();
@@ -3541,6 +3543,49 @@ function getSystemPrompt(kind, extra){
 // 4.8 旗舰版（第 4 章 4.3）：prompt 组装统一路由——所有 AI 的 user 都经 buildAIPrompt(kind, extra) 产出
 // 适配说明（相对 md 原码）：titles/chapterPlan/chapter 复用项目 4.7 已有组装函数（titlesGenUser/chapterPlanUser/buildChapterUser）；
 // idea/recipe/outline/subplot/glossary/strip 由下方新增的 build*User(ctx) 承接（与项目既有内联拼装等价）。
+/* ---------- v234/C1：全书章节数 AI 建议（方案见《大纲ai.md》十/十一节；kind='chapterCount' 已入分任务模型） ---------- */
+const CH_COUNT_ADVICE_SYS = `你是长篇小说的「章集体量顾问」。根据用户的小说构想与大纲信息，给出最适合这个故事的全书章节数建议。
+
+【输出格式·硬性约束】只输出一个 JSON 对象，禁止输出任何其他文字、注释或 markdown 代码块标记：
+{
+  "suggested": 120,
+  "range": [90, 160],
+  "reason": "……",
+  "pacing": "……"
+}
+字段规范：suggested=建议章数（1-200 整数）；range=合理弹性区间 [min,max]，1 ≤ min ≤ suggested ≤ max ≤ 200 且 min<max；reason=建议理由（≤80字，点出最关键的1-2个判断依据）；pacing=节奏提示（≤40字，一句话说明该体量下的节奏策略，如每卷章数/爽点间隔/换地图节奏）。
+
+【判断规范】综合以下维度，reason 中只点最关键的 1-2 个：
+1. 故事容量：主线冲突的层级数（单冲突 / 双冲突 / 多势力博弈），层级越多需要越多章铺开；
+2. 类型惯例：按故事最接近的题材取网文常见体量中位（如都市日常 30-80、悬疑单元案 20-60、玄幻升级流 120-200、言情 40-100）；
+3. 线索数量：副线/暗线越多章数越多（结构里已有多线则向上取）；
+4. 单章承载力：网文单章通常 2000-4000 字、一章承载 1-2 个场景，用「预计总字数 ÷ 单章字数」交叉验证；
+5. 不鼓动膨胀：宁可精炼不注水；构想撑不起长篇就明确给小体量建议并在 reason 说明。
+【禁止】suggested 超出 1-200；range 跨度为 0 或包含 suggested 之外的建议；输出 JSON 以外任何内容；用"建议咨询编辑"之类空话搪塞。`;
+// v234/C1：轻校验（只把守"有数"这一关；1-200 与区间合理性由调用方 clamp 收敛，降低弱模型失败率）
+function validateChapterCountAdvice(j){
+  if(!j || typeof j !== 'object') return '返回不是对象';
+  const s = Number(j.suggested);
+  if(!Number.isFinite(s) || s <= 0) return '缺少有效的 suggested 数值';
+  return '';
+}
+// v234/C1：user 组装——构想（800字）+ 大纲信息 + 优化稿开头（无构想时）+ 用户当前倾向
+function buildCountAdviceUser(ctx){
+  const o = state.outline || {};
+  const s = o.structure || {};
+  const parts = [];
+  const idea = String(ctx.idea || '').trim();
+  if(idea) parts.push(`【用户构想】\n${idea.slice(0, 800)}`);
+  if(o.title || o.logline || String(s.mainLine||'').trim()){
+    parts.push(`【大纲信息】\n书名：${o.title||'（未定）'}\n简介：${String(o.logline||'').slice(0,200)}${String(s.mainLine||'').trim()?`\n主线：${s.mainLine}`:''}${String(s.pivotPlan||'').trim()?`\n汇合/逆转点：${s.pivotPlan}`:''}`);
+  }
+  const opt = String(state._lastPolishIdeaText||'').trim();
+  if(opt && !idea) parts.push(`【优化稿开头】\n${opt.slice(0, 300)}`);
+  const cur = chapterCountVal();
+  if(cur) parts.push(`【用户当前倾向】${cur} 章。请判断该体量是否合适：合适则 suggested 直接采用该值并说明理由；不合适再给出你的建议。`);
+  return parts.join('\n\n') || '（用户暂未填写构想，请按通用长篇给出稳健建议）';
+}
+
 function buildAIPrompt(kind, extra){
   const ctx = AIBus.get(kind, extra);
   switch(kind){
@@ -3553,6 +3598,7 @@ function buildAIPrompt(kind, extra){
     case 'subplot': return buildSubplotUser(ctx);
     case 'glossary': return buildGlossaryExtractUser(ctx);
     case 'strip': return buildStripUser(ctx);
+    case 'chapterCount': return buildCountAdviceUser(ctx);   // v234/C1：章数建议
     default: throw new Error('未知 AI kind: '+kind);
   }
 }
@@ -3699,7 +3745,8 @@ function canRunAI(kind){
     chapter: ['outline','titles','chapterPlan'],
     subplot: ['chapter'],
     glossary: ['chapter'],
-    strip: ['chapter']
+    strip: ['chapter'],
+    chapterCount: []   // v234/C1：章数建议无上游依赖（随时可问）
   };
   const net = state.aiNetwork;
   return (deps[kind]||[]).every(d => d === 'idea' || net.completed?.includes(d) || d === kind);
@@ -5447,7 +5494,8 @@ function exportWsStyleBundle(){
   URL.revokeObjectURL(a.href);
   toast('已导出词条与组合配方');
 }
-// v10.32 整套导入（覆盖式）：整体替换 styleCustom 的词条/组合定制字段，附结构校验与词条悬挂引用过滤
+// v234/W2：整套导入改合并式——不再整体替换。added/customCombos 按 id 去重追加（已有的保留我的），
+// removed/comboRemoved 取并集，notes 逐 id 合并（已有 id 保留当前批注）；tags 过滤在合并 added 之后执行
 function importWsStyleBundle(file){
   const reader = new FileReader();
   reader.onload = ()=>{
@@ -5460,24 +5508,33 @@ function importWsStyleBundle(file){
     const sc = data.styleCustom;
     const strArr = v => Array.isArray(v) ? v.map(String).filter(x=> !!x) : [];
     const builtinIds = [].concat(WRITE_STYLES || []).map(s=> s && s.id).filter(Boolean);
-    const libNowIds = writeStyleLib().map(s=> s.id);
     const cfg = getCfg(); cfg.styleCustom = cfg.styleCustom || { notes:{}, added:[], removed:[], comboRemoved:[] };
-    // 词条 notes：覆盖式整体替换
-    cfg.styleCustom.notes = (sc.notes && typeof sc.notes==='object') ? sc.notes : {};
-    // added：逐项校验 id/name；group 归入五大类否则 custom 兜底
-    cfg.styleCustom.added = (Array.isArray(sc.added) ? sc.added : [])
+    let addedN=0, keptN=0;
+    // notes：逐 id 合并——导入方新 id 补入，已有 id 保留当前批注
+    const notes = (sc.notes && typeof sc.notes==='object') ? sc.notes : {};
+    Object.keys(notes).forEach(id=>{ if(!(id in cfg.styleCustom.notes)) cfg.styleCustom.notes[id] = notes[id]; });
+    // added：按 id 去重追加
+    const haveIds = new Set((cfg.styleCustom.added||[]).map(x=> x && x.id));
+    (Array.isArray(sc.added) ? sc.added : [])
       .filter(x=> x && x.id && x.name)
-      .map(x=>({ id:String(x.id), group:['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'].includes(x.group)?x.group:'custom', name:String(x.name), note:String(x.note||''), demo:x.demo?String(x.demo):'', seal:(x.seal===undefined?0:x.seal), warning:x.warning?String(x.warning):'' }));
-    // removed：仅保留存在于内置词条中的 id
-    cfg.styleCustom.removed = strArr(sc.removed).filter(id=> builtinIds.includes(id));
-    // comboRemoved：仅保留存在于内置组合中的 id
-    cfg.styleCustom.comboRemoved = strArr(sc.comboRemoved).filter(id=> (WRITE_COMBOS||[]).some(c=> c.id === id));
-    // customCombos：保留合法条目，tags 过滤为当前库内仍存在的词条 id
-    cfg.styleCustom.customCombos = (Array.isArray(sc.customCombos) ? sc.customCombos : [])
+      .map(x=>({ id:String(x.id), group:['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'].includes(x.group)?x.group:'custom', name:String(x.name), note:String(x.note||''), demo:x.demo?String(x.demo):'', seal:(x.seal===undefined?0:x.seal), warning:x.warning?String(x.warning):'' }))
+      .forEach(x=>{ if(haveIds.has(x.id)){ keptN++; return; } cfg.styleCustom.added.push(x); haveIds.add(x.id); addedN++; });
+    // removed / comboRemoved：并集（只保留合法 id）
+    const rmSet = new Set(strArr(cfg.styleCustom.removed));
+    strArr(sc.removed).filter(id=> builtinIds.includes(id)).forEach(id=> rmSet.add(id));
+    cfg.styleCustom.removed = Array.from(rmSet);
+    const crSet = new Set(strArr(cfg.styleCustom.comboRemoved));
+    strArr(sc.comboRemoved).filter(id=> (WRITE_COMBOS||[]).some(c=> c.id === id)).forEach(id=> crSet.add(id));
+    cfg.styleCustom.comboRemoved = Array.from(crSet);
+    // customCombos：按 id 去重追加；tags 过滤在 added 合并之后（导入的 combos 可引用刚导入的词条）
+    const libNowIds = new Set(writeStyleLib().map(s=> s.id));
+    const haveCombo = new Set((cfg.styleCustom.customCombos||[]).map(x=> x && x.id));
+    (Array.isArray(sc.customCombos) ? sc.customCombos : [])
       .filter(x=> x && x.id && x.name)
-      .map(x=>({ id:String(x.id), name:String(x.name), desc:String(x.desc||''), tags:strArr(x.tags).filter(id=> libNowIds.includes(id)) }));
+      .map(x=>({ id:String(x.id), name:String(x.name), desc:String(x.desc||''), tags:strArr(x.tags).filter(id=> libNowIds.has(id)) }))
+      .forEach(x=>{ if(haveCombo.has(x.id)){ keptN++; return; } cfg.styleCustom.customCombos.push(x); haveCombo.add(x.id); addedN++; });
     saveCfg(cfg); render();
-    toast('已导入词条与组合配方');
+    toast(`已合并导入：新增 ${addedN} 项 · 已有保留 ${keptN} 项`);
     closeStyleLibPanel(); openStyleLibPanel();   // 重建面板，导入内容立即可见
   };
   reader.readAsText(file);
@@ -6448,6 +6505,7 @@ function openAiHistPanel(){
       <div class="ws-lib-fold-body" style="display:none">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 8px">
           <button type="button" class="btn small ghost" data-ah-apply="${ei}">✔ 重新采用首个</button>
+          <button type="button" class="btn small ghost" data-ah-export="${ei}" title="导出该批配方为 JSON（自动附带其引用的自定义词条与 gap 新词条，导入方即可正常使用）">⬇ 导出</button>
           <button type="button" class="btn small ghost" data-ah-del="${ei}">删</button>
         </div>
         ${ (Array.isArray(e.list)&&e.list.length) ? e.list.map((c,i)=>aiHistCandHtml(c,i)).join('<hr style="margin:6px 0;opacity:.2">') : '<p class="muted">无候选。</p>' }
@@ -6459,16 +6517,24 @@ function openAiHistPanel(){
     <div class="gs-modal">
       <div class="gs-modal-head"><b>📖 AI 配方历史（${hist.length}）</b>
         <span style="display:flex;gap:6px">
+          <button class="btn small ghost" data-ah-import title="导入配方包 JSON（词条自动合并进词库，配方去重后加入历史）">⬆ 导入配方包</button>
           <button class="btn small ghost" data-ah-clear>清空</button>
           <button class="gs-x" data-ah-close>✕</button>
         </span></div>
       <div class="cv-body">
         ${ list.length ? list.map(entHtml).join('') : '<p class="muted">暂无历史。用「✨ 生成配方」生成后即自动保存于此，可随时回看。</p>' }
       </div>
+      <input type="file" id="aiRecipeImportFile" accept=".json,application/json" style="display:none">
     </div>`;
   const close = ()=>{ const p=$('#aiHistPanel'); if(p) p.remove(); };
+  const fi = ov.querySelector('#aiRecipeImportFile');
+  if(fi) fi.onchange = e=>{ const file = e.target.files && e.target.files[0]; if(file) importRecipeBundle(file); e.target.value=''; };
   ov.addEventListener('click', (e)=>{
     const cl = e.target.closest('[data-ah-close]'); if(cl){ close(); return; }
+    const imp = e.target.closest('[data-ah-import]');
+    if(imp){ const f2=$('#aiRecipeImportFile'); if(f2) f2.click(); return; }
+    const exp = e.target.closest('[data-ah-export]');
+    if(exp){ exportRecipeBundle(hist[+exp.dataset.ahExport]); return; }
     const fold = e.target.closest('[data-ah-fold]');
     if(fold){ const body = fold.closest('.ws-lib-group').querySelector('.ws-lib-fold-body'); if(body){ const open = body.style.display!=='none'; body.style.display = open?'none':'block'; fold.querySelector('.sc-fold-ico').textContent = open?'▸':'▾'; } return; }
     const apply = e.target.closest('[data-ah-apply]');
@@ -6484,6 +6550,63 @@ function openAiHistPanel(){
   document.body.appendChild(ov);
 }
 function closeAiHistPanel(){ const p=$('#aiHistPanel'); if(p) p.remove(); }
+/* ---------- v234/W3：AI 配方导出/导入（打包 tags 引用的自定义词条 + gap 新词条，跨设备可用） ---------- */
+// 导出：{kind:'aiRecipeBundle', recipes:[配方条目], bundled:[自定义词条完整定义+gap词条]}；内置词条不打包（两端都有）
+function exportRecipeBundle(entry){
+  const cands = Array.isArray(entry && entry.list) ? entry.list : [];
+  if(!cands.length){ toast('该历史条目没有可导出的配方'); return; }
+  const cfg = getCfg();
+  const addedById = {};
+  ((cfg.styleCustom && Array.isArray(cfg.styleCustom.added)) ? cfg.styleCustom.added : []).forEach(x=>{ if(x&&x.id) addedById[x.id]=x; });
+  const bundled = []; const seen = new Set();
+  const pushEl = (el)=>{ if(el && el.id && String(el.name||'').trim() && !seen.has(el.id)){ seen.add(el.id); bundled.push(el); } };
+  cands.forEach(c=>{
+    (Array.isArray(c && c.tags) ? c.tags : []).forEach(id=>{ if(addedById[id]) pushEl(addedById[id]); });   // 自定义词条打包
+    (Array.isArray(c && c.gap) ? c.gap : []).forEach(g=> pushEl(g));                                        // gap 新词条五维齐全直接打包
+  });
+  const data = { ver:1, exportedAt:Date.now(), kind:'aiRecipeBundle', recipes: JSON.parse(JSON.stringify(cands)), bundled };
+  const ts = new Date(); const pad = n=>String(n).padStart(2,'0');
+  const stamp = `${ts.getFullYear()}${pad(ts.getMonth()+1)}${pad(ts.getDate())}-${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`;
+  const desc = String((entry&&entry.desc)||'配方').replace(/[\\/:*?"<>|]/g,'').slice(0,20) || '配方';
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json;charset=utf-8'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = `配方_${desc}-${stamp}.json`; a.click();
+  URL.revokeObjectURL(a.href);
+  toast(`已导出 ${cands.length} 个配方（附词条 ${bundled.length} 个）`);
+}
+// 导入：bundled 词条先合并进词库（按 id 去重，同名保留我的）→ 配方去重（同名+同tags）后追加进配方历史
+function importRecipeBundle(file){
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    let data;
+    try{ data = JSON.parse(reader.result); }catch(e){ toast('导入失败：文件不是合法 JSON'); return; }
+    if(!data || typeof data!=='object' || data.kind!=='aiRecipeBundle' || !Array.isArray(data.recipes) || !data.recipes.length){
+      toast('导入失败：不是合法的 AI 配方包'); return;
+    }
+    const cfg = getCfg(); cfg.styleCustom = cfg.styleCustom || { notes:{}, added:[], removed:[], comboRemoved:[] };
+    let elAdded=0, elKept=0;
+    const haveIds = new Set((cfg.styleCustom.added||[]).map(x=>x&&x.id));
+    const libIds = new Set(writeStyleLib().map(x=>x&&x.id));
+    (Array.isArray(data.bundled)?data.bundled:[]).forEach(el=>{
+      const id = String(el&&el.id||''); if(!id || !String(el&&el.name||'').trim()) return;
+      if(libIds.has(id) || haveIds.has(id)){ elKept++; return; }   // 内置或已有：保留我的
+      cfg.styleCustom.added.push({ id, group:['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'].includes(el.group)?el.group:'custom',
+        name:String(el.name), note:String(el.note||''), demo:el.demo?String(el.demo):'', seal:(el.seal===undefined?0:el.seal), warning:el.warning?String(el.warning):'' });
+      haveIds.add(id); libIds.add(id); elAdded++;
+    });
+    const hist = getAiHist();
+    const sigOf = c => JSON.stringify([String(c&&c.name||''), Array.isArray(c&&c.tags)?c.tags.map(String):[]]);
+    const existSigs = new Set();
+    hist.forEach(e=> (Array.isArray(e&&e.list)?e.list:[]).forEach(x=> existSigs.add(sigOf(x))));
+    const valid = data.recipes.filter(c=> c && String(c&&c.name||'').trim());
+    let rAdded=0, rKept=0;
+    const fresh = valid.filter(c=>{ const s=sigOf(c); if(existSigs.has(s)){ rKept++; return false; } existSigs.add(s); rAdded++; return true; });
+    if(fresh.length) addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'desc', desc:'📥 导入配方包', list: JSON.parse(JSON.stringify(fresh)), applied:[] });
+    saveCfg(cfg); refreshAiHistBadge();
+    toast(`配方导入完成：新增配方 ${rAdded} · 重复跳过 ${rKept} · 补入词条 ${elAdded} · 已有词条 ${elKept}`);
+  };
+  reader.readAsText(file);
+}
 // 更新卡片书本徽标（按当前快照数）
 function refreshAiHistBadge(){
   const n = getAiHist().length;
@@ -6538,8 +6661,10 @@ function chapterTitleBlock(){
       <div class="tw-row">
         <input type="number" id="totalWordsIn" class="tw-in cc-in" min="1" max="200" step="1" inputmode="numeric" placeholder="如 30" value="${cc||''}" ${ccOn?'':'data-first'} />
         <span class="tw-unit">章</span>
+        <button type="button" class="btn small ghost" id="btnCcAdvice" title="AI 根据构想与大纲信息，建议最适合这个故事的全书章数">🤖 AI 建议几章</button>
         ${cc ? `<span class="pill tag-ok">${chapterCountHint()}</span>` : ''}
       </div>
+      <div id="ccAdviceCard"></div>
     </div>`;
   // v225/P5-B：无标题时纯展示——仅章节数输入 + 序号占位列表；标题生成统一归「全书规划师」，卡片不再提供任何 AI 生成入口
   if(!arr.length){
@@ -6574,6 +6699,61 @@ function chapterTitleBlock(){
     ${nIn}
     <div class="ct-list">${rows}</div>
   </div>`;
+}
+
+/* ---------- v234/C3：章数建议交互（两选项采纳卡 + 同构想缓存；方案见《大纲ai.md》十/十一节） ---------- */
+function renderCcAdvice(advice, cached){
+  const el = $('#ccAdviceCard'); if(!el) return;
+  if(!advice){ el.innerHTML = ''; return; }
+  const cur = chapterCountVal();
+  const same = cur && cur === advice.suggested;
+  el.innerHTML = `
+    <div class="cc-adv" style="border:1px solid var(--line,#e0e0e0);border-radius:8px;padding:8px 10px;margin-top:8px">
+      <b>🤖 AI 建议约 ${advice.suggested} 章</b>（合理区间 ${advice.range[0]}–${advice.range[1]}）${cached?'<span class="muted" style="font-size:11px"> · 上次建议缓存</span>':''}
+      ${advice.reason?`<div class="muted" style="font-size:12px;margin-top:4px">理由：${esc(advice.reason)}</div>`:''}
+      ${advice.pacing?`<div class="muted" style="font-size:12px">节奏：${esc(advice.pacing)}</div>`:''}
+      <div class="btn-row" style="margin-top:6px">
+        <button type="button" class="btn small primary" id="btnCcAdopt">✓ ${same?'维持':'采纳'}（${advice.suggested} 章）</button>
+        <button type="button" class="btn small ghost" id="btnCcDismiss">✕ 不用了</button>
+      </div>
+    </div>`;
+  $('#btnCcAdopt').onclick = ()=>{
+    const inp = $('#totalWordsIn'); if(!inp) return;
+    inp.value = advice.suggested;
+    inp.dispatchEvent(new Event('change'));   // 走现有 totalWordsIn commit 链（锁定检查/占位重建/persist 全复用，不另写落盘）
+    renderCcAdvice(null);
+  };
+  $('#btnCcDismiss').onclick = ()=> renderCcAdvice(null);
+}
+async function requestCountAdvice(btn){
+  const ideaSig = String(state.idea||'').trim().slice(0,200);
+  // C4：同构想缓存——构想没变直接复用上次建议，不重复请求
+  if(state._ccAdvice && state._ccAdvice.ideaSig === ideaSig && state._ccAdvice.advice){ renderCcAdvice(state._ccAdvice.advice, true); return; }
+  if(!canRunAI('chapterCount')){ toast('章数建议暂不可运行'); return; }
+  markAIRunning('chapterCount');
+  if(btn) busy(btn, true, 'AI 评估章数中…');
+  try{
+    const txt = await callAIGuarded('chapterCount', {}, {temperature:0.5, maxTokens:512});
+    const j = extractJsonObject(txt);
+    if(!j) throw new Error('未解析到建议 JSON');
+    // 调用方 clamp：1-200 收敛 + 区间兜底（校验器只把守"有数"关，弱模型友好）
+    const s = Math.max(1, Math.min(200, Math.round(Number(j.suggested))));
+    let rg = Array.isArray(j.range) ? j.range.map(x=>Math.round(Number(x))) : [];
+    rg = rg.filter(x=>Number.isFinite(x));
+    if(rg.length !== 2 || rg[0] >= rg[1]) rg = [Math.max(1, s-20), Math.min(200, s+20)];
+    rg[0] = Math.max(1, Math.min(200, rg[0])); rg[1] = Math.max(1, Math.min(200, rg[1]));
+    if(rg[0] >= rg[1] || s < rg[0] || s > rg[1]) rg = [Math.max(1, s-20), Math.min(200, s+20)];
+    const advice = { suggested: s, range: rg, reason: String(j.reason||'').slice(0,120), pacing: String(j.pacing||'').slice(0,80) };
+    state._ccAdvice = { ideaSig, advice };
+    persist();
+    renderCcAdvice(advice);
+    toast('AI 章数建议已给出，请选择采纳或忽略');
+  }catch(e){
+    toast('AI 建议获取失败，可手动填写：' + e.message);   // 轻功能不进修复队列（不阻塞主流程）
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='chapterCount');
+    if(btn) busy(btn, false);
+  }
 }
 
 // v10.14 章节标题绑定：复制全部 / ✎ 进入编辑态（失焦或回车存、Esc 还原、同刻单行互斥）
@@ -7019,15 +7199,15 @@ function chapterPlanBlock(){
     </div>
     <div class="cp-body"${collapsed?' hidden':''}>
       <div class="cp-stagebar">
-        <button type="button" class="cp-stage-all" data-cp-all title="按顺序一键执行 5 个规划师阶段（①主线简述→②章节标题→③节拍表→④万物词典→⑤伏笔网）">⚡ 一键五步</button>
+        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键五步</button>
         ${PLANNER_STAGES.map(st=>{
           const done = plannerStageDone(st.id);
-          return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}">
+          return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；五步可任意顺序单独点击，无需按顺序完成">
             <i class="cp-dot">${done?'✓':'·'}</i>${st.num}${st.label}
           </button>`;
         }).join('')}
       </div>
-      <div class="cp-stage-hint muted">按顺序生成效果最佳；任一步失败可单独点该步重跑，不影响已完成步骤。</div>
+      <div class="cp-stage-hint muted">五步可任意顺序单独点击，无需按顺序完成（点任意一步直接生成该步）；一键五步默认跳过已完成步骤。</div>
       ${hasPlans ? `<div class="cp-list">${items}</div>
         <p class="muted" style="margin:6px 0 0">每条主线简述可编辑，失焦即存；写正文时注入为【本章主线简述】（辅助参考）。</p>`
         : `<p class="sub">可选步骤：分五步规划全书——①每章主线简述（本书叙事第一层骨架）、②定稿全书章节标题、③每章四段节拍表、④初期万物词典、⑤跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
@@ -7699,6 +7879,8 @@ function normalizeGlossaryJSON(j){
   }).filter(Boolean);
   return { characters: src.characters, places: src.places, propernouns: src.propernouns, subplots: subs };
 }
+// v234/W1：词典导入改合并式——不再整体覆盖。同名词条默认保留当前版（只添加我没有的），
+// 存在同名时弹 confirm 二选一（确定=同名以导入版覆盖 / 取消=同名保留当前）；导入前记录词典历史可回退。
 function importGlossaryJson(file, target){
   const r = new FileReader();
   r.onload = ()=>{
@@ -7706,13 +7888,32 @@ function importGlossaryJson(file, target){
       const j = JSON.parse(r.result);
       const g = normalizeGlossaryJSON(j);
       if(!g) throw 0;
-      if(state.outline && state.outline.glossary){
-        state.outline.glossary = g;
-        persist(); render();
-        toast('词典已导入');
-      } else {
-        toast('请先生成大纲后再导入词典');
-      }
+      if(!(state.outline && state.outline.glossary)){ toast('请先生成大纲后再导入词典'); return; }
+      const cur = state.outline.glossary;
+      const CATS = [['characters','人物'],['places','地点'],['propernouns','专名']];
+      let hasDup = false;
+      CATS.forEach(([k])=>{
+        const names = new Set((cur[k]||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
+        (g[k]||[]).forEach(it=>{ const nm=String(it&&it.name||'').trim(); if(nm && names.has(nm)) hasDup = true; });
+      });
+      const overwrite = hasDup && confirm('导入内容与当前词典存在同名条目。\n【确定】同名以导入版覆盖\n【取消】同名保留当前版（只添加我没有的新词条）');
+      glossaryHistoryPush('导入词典（合并）前');
+      let added=0, kept=0, repl=0;
+      const mergeCat = (key)=>{
+        const arr = Array.isArray(cur[key]) ? cur[key] : (cur[key] = []);
+        const names = new Set(arr.map(x=>String(x&&x.name||'').trim()).filter(Boolean));
+        (g[key]||[]).forEach(it=>{
+          const nm = String(it&&it.name||'').trim(); if(!nm) return;
+          if(names.has(nm)){
+            if(overwrite){ const i = arr.findIndex(x=>String(x&&x.name||'').trim()===nm); if(i>=0){ arr[i] = it; repl++; } }
+            else kept++;
+          } else { arr.push(it); names.add(nm); added++; }
+        });
+      };
+      CATS.forEach(([k])=> mergeCat(k));
+      if(Array.isArray(g.subplots) && g.subplots.length) mergeCat('subplots');   // 副线同逻辑（按 name）
+      persist(); render();
+      toast(`词典已合并导入：新增 ${added} · 同名保留 ${kept} · 同名覆盖 ${repl}`);
     }catch(e){ toast('导入失败：JSON 结构须含 characters/places/propernouns'); }
   };
   r.readAsText(file);
@@ -8884,6 +9085,8 @@ function bindView(){
       persist(); render();
     });
   }
+  // v234/C3：章数建议按钮绑定
+  const btnCcA = $('#btnCcAdvice'); if(btnCcA) btnCcA.onclick = ()=> requestCountAdvice(btnCcA);
   bindGlossary();
   bindOrigIdea();     // v10.2 原始构想只读卡绑定
   bindOutlineFold();  // v1.0.107 故事大纲卡「小说简介」折叠绑定
@@ -9301,6 +9504,7 @@ async function genOutlineMulti(btn){
     }
     if(!items.length) throw new Error('全部候选均未通过校验');
     state._outlineCandidates = { batchTs: Date.now(), items, chosenId: null };
+    markAIDone('outline');   // v234 修复：v230 多候选路径漏标 completed——规划师/标题/正文等下游全部被"请先完成上游步骤：生成大纲"误拦（旧单发版 9422 有标，重写时丢失）
     persist(); render();
     if(st){ st.className='status'; st.textContent = `已生成 ${items.length} 个候选大纲，请在候选卡中比选采用`; }
     toast(`已生成 ${items.length} 个候选大纲，请比选采用`);
@@ -9358,6 +9562,7 @@ function adoptOutlineCandidate(id){
     if(x.outline) snapshotOutlineLabel(x.outline, `${x.label||'候选'}·未选用`);
   });
   cands.chosenId = id;
+  markAIDone('outline');   // v234 修复：多候选采用路径补标 completed（幂等；未采用前 genOutlineMulti 已标过）
   persist(); render();
   toast(`已采用「${it.label||'候选'}」`);
 }
@@ -9554,7 +9759,8 @@ function ensureChaptersPlaceholder(){
 // 规划师上游闸门：只需大纲完成即可（标题由阶段②自行生成，不再强制先跑独立标题步）
 function plannerGate(opts){
   if(!isLong() || !state.outline) return false;
-  if(!(state.aiNetwork.completed||[]).includes('outline')){ if(!(opts&&opts.silent)) toast('请先完成上游步骤：生成大纲'); return false; }
+  // v234 修复：删除对 aiNetwork.completed 硬查——completed 只是会话标记，多候选采用路径/导入项目/旧存档都可能缺失，
+  // 而 state.outline 存在即代表大纲在手（上一行已检查），completed 缺失时误报"请先完成上游步骤：生成大纲"阻断全部五步
   if(genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
   ensureChaptersPlaceholder();   // v225/P5-A：占位章节数组就位，五阶段入口共用此闸
   return true;
@@ -9733,6 +9939,10 @@ async function genPlannerTitles(btn, opts){
 async function genPlannerBeats(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
+  // v234/P3：缺上游只提示不阻断——节拍表以简述为锚，跳过①直接跑质量会下降
+  const o0 = state.outline || {};
+  const hasSummary = (o0.chapters||[]).length > 0 && (o0.chapters||[]).every(c=>String(c&&c.summary||'').trim());
+  if(!hasSummary && !opts.silent && !confirm('尚无①主线简述作为锚点，节拍表质量会下降（建议先跑①）。仍要直接生成节拍表吗？')) return false;
   markAIRunning('chapterPlan');
   refreshPlannerStageBar('beats', null);
   let preview = plannerPreview(btn, '正在生成节拍表…'), _streamBuf = '';
@@ -9836,6 +10046,10 @@ async function genPlannerGlossary(btn, opts){
 async function genPlannerForeshadow(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
+  // v234/P3：缺上游只提示不阻断——伏笔网跨章设计依赖简述
+  const o0 = state.outline || {};
+  const hasSum0 = (o0.chapterPlans||[]).some(p=>p && chapterPlanText(p).trim());
+  if(!hasSum0 && !opts.silent && !confirm('尚无①主线简述，伏笔网只能基于标题设计、质量会下降（建议先跑①）。仍要直接生成吗？')) return false;
   markAIRunning('chapterPlan');
   refreshPlannerStageBar('foreshadow', null);
   let preview = plannerPreview(btn, '正在生成伏笔网…'), _streamBuf = '';
@@ -9898,20 +10112,35 @@ async function genPlannerStage(btn, stage){
   const fn = PLANNER_GEN[stage]; if(!fn) return false;
   return await fn(btn, {});
 }
-// 总控：按顺序一键执行 5 阶段；单步失败即停（其余保持原状态，可单独补跑该步）
+// 总控：按顺序执行 5 阶段；v234/P1 智能跳过——confirm 二选一「跳过已完成（默认）/ 全部重跑」，
+// 跳过模式按 plannerStageDone 过滤并列出将执行/跳过清单（修"已有进度仍全量重跑、卡在第一步特别久"）
 async function genPlannerAll(btn){
   const o = state.outline; if(!isLong() || !o) return;
-  const has = Array.isArray(o.chapterPlans) && o.chapterPlans.some(Boolean);
-  if(has && !confirm('一键将按顺序生成：①主线简述→②章节标题→③节拍表→④万物词典→⑤伏笔网，会覆盖现有规划内容（旧版存入历史），继续？')) return;
-  if(btn) busy(btn, true, '五步生成中…');
-  for(const st of PLANNER_STAGES.map(s=>s.id)){
+  const doneList = PLANNER_STAGES.filter(s=>plannerStageDone(s.id)).map(s=>stageLabel(s.id));
+  let skipDone = true;
+  if(doneList.length){
+    skipDone = confirm(
+      `已完成：${doneList.join('、')}\n\n` +
+      `【确定】智能执行：跳过已完成，只跑 ${PLANNER_STAGES.filter(s=>!plannerStageDone(s.id)).map(s=>stageLabel(s.id)).join('、') || '（全部已完成，无事可做）'}\n` +
+      `【取消】全部重跑：五步按顺序覆盖生成（旧版存入历史）`
+    );
+    if(!skipDone){
+      if(!confirm('全部重跑将按顺序生成：①主线简述→②章节标题→③节拍表→④万物词典→⑤伏笔网，会覆盖现有规划内容（旧版存入历史），继续？')) return;
+    }
+  }
+  const stages = skipDone ? PLANNER_STAGES.map(s=>s.id).filter(id=>!plannerStageDone(id)) : PLANNER_STAGES.map(s=>s.id);
+  if(!stages.length){ toast('五步均已完成，无需生成；如需重做请点击对应步骤按钮'); return; }
+  if(btn) busy(btn, true, `五步生成中（0/${stages.length}）…`);
+  for(let si=0; si<stages.length; si++){
+    const st = stages[si];
+    if(btn) busy(btn, true, `五步生成中（${si+1}/${stages.length}）…`);
     refreshPlannerStageBar(st, null);
     const ok = await PLANNER_GEN[st](null, {silent:true});
     if(!ok){ if(btn) busy(btn, false); toast('一键生成中断于「'+stageLabel(st)+'」，可单独点击该步骤按钮重试'); return; }
     refreshPlannerStageBar(null, null);
   }
   if(btn) busy(btn, false);
-  toast('规划师五步全部完成');
+  toast(skipDone ? `智能五步完成（${stages.length} 步）` : '规划师五步全部完成');
 }
 
 // 4.5：前文骨架（供规划师批间衔接）：全部前序标题 + 最近 3 章简述
@@ -13188,31 +13417,33 @@ function updateCfgBadge(){
 
 /* --- v227「使用不同AI」分任务模型二级面板（设计见《使用不同ai.md》§3） --- */
 // 档位分组：顺序=创作流水线；同档默认推荐同模型（§3.2 排列逻辑：按写书流程排、三档分组、全局置顶）
+// v234/T2：任务名后追加单字推荐（强=质量主力模型 / 中=中档 / 弱=flash 省钱），依据任务重量/费用占比/JSON 严谨度
 const TM_GROUPS = [
   { title:'✍️ 重创作（要质量，费用大头，建议主力模型）', keys:[
-    ['chapter','正文生成','全书正文质量与费用大头；所选模型须支持流式（stream）'],
-    ['outline','故事大纲','决定全书骨架，建议质量优先'],
-    ['planSummary','规划师 · 主线简述','JSON，注入每章正文的结构锚'],
-    ['planBeats','规划师 · 节拍表','JSON，逐章情节节拍'],
-    ['plannerTitles','规划师 · 标题定稿','JSON，全书章节标题'],
-    ['plannerAux','规划师 · 词典播种/伏笔','JSON 任务']
+    ['chapter','正文生成（强）','全书正文质量与费用大头；所选模型须支持流式（stream）'],
+    ['outline','故事大纲（强）','决定全书骨架，建议质量优先'],
+    ['planSummary','规划师 · 主线简述（强）','JSON，注入每章正文的结构锚'],
+    ['planBeats','规划师 · 节拍表（强）','JSON，逐章情节节拍'],
+    ['plannerTitles','规划师 · 标题定稿（中）','JSON，全书章节标题；短文本创意，中档够且省费'],
+    ['plannerAux','规划师 · 词典播种/伏笔（中）','JSON 任务；体量小但需严谨']
   ]},
   { title:'💡 建议类（要点子，建议中档模型）', keys:[
-    ['idea','优化构想','对既有构想发散/收敛'],
-    ['titleAdvice','标题 AI 建议','JSON 任务'],
-    ['contentAdvice','章节内容 AI 建议','JSON 任务'],
-    ['sandbox','分支沙盘','JSON 任务']
+    ['idea','优化构想（中）','对既有构想发散/收敛'],
+    ['titleAdvice','标题 AI 建议（中）','JSON 任务；短创意'],
+    ['contentAdvice','章节内容 AI 建议（中）','JSON 任务'],
+    ['sandbox','分支沙盘（中）','JSON 任务'],
+    ['chapterCount','章数 AI 建议（弱）','v234 新增；低频单次 4 字段轻 JSON，弹性区间兜底，flash 足够']
   ]},
   { title:'🔧 轻维护（高频小请求，建议 flash 省钱）', keys:[
-    ['glossary','词典提取','JSON 严谨任务；换弱模型解析失败率会升高（有校验兜底，不阻断）'],
-    ['subplot','副线追踪','JSON 任务'],
-    ['strip','本章梗概（速读）','每章生成后都会调用'],
-    ['rolling','滚动摘要','长篇记忆层，每批正文后调用'],
-    ['audit','一致性巡检（张力/人设/指纹/锚点）','纯 JSON 后台巡检，用户无感']
+    ['glossary','词典提取（中）','JSON 严谨任务；换弱模型解析失败率会升高（有校验兜底，不阻断）'],
+    ['subplot','副线追踪（弱）','小 JSON 追踪任务'],
+    ['strip','本章梗概（速读）（弱）','每章生成后都会调用'],
+    ['rolling','滚动摘要（弱）','长篇记忆层，每批正文后调用'],
+    ['audit','一致性巡检（张力/人设/指纹/锚点）（弱）','纯 JSON 后台巡检，用户无感']
   ]},
   { title:'📦 其他资产', keys:[
-    ['assets','封面/人物/场景/分镜','提示词类产出'],
-    ['recipe','配方产物','AI 配方助手']
+    ['assets','封面/人物/场景/分镜（中）','提示词类产出'],
+    ['recipe','配方产物（中）','AI 配方助手；风格契约设计需判断力']
   ]}
 ];
 let editTM = null;          // 面板暂存：保存前绝不落盘（对齐设置弹窗 editCfg 模式）
