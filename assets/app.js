@@ -1226,14 +1226,14 @@ const LONG_CHAPTER_SYS_PRO = `你是一位资深长篇小说「章节执行导�
 【输入上下文层级（L0→L4，优先级递减）】
 L0 · 写作风格契约（若提供）：句长、对话占比、禁用词、偏好转场——最高优先级，必须执行。
 L1 · 全书导航：书名、简介、核心定位、深层主题、全书主线、结构骨架、当前章在三幕结构中的位置。
-L2 · 本章任务：本章标题、本章主线简述、本章节拍表（setup/rise/climax/hook）、本章情绪弧、本章必须使用实体。
+L2 · 本章任务：本章标题、本章主线简述、本章节拍表（七段固定顺序：setup 铺垫→rise 推进→twist 转折→rise 推进→climax 燃点→fall 余波→hook 悬念）、本章情绪弧、本章必须使用实体。
 L3 · 前后衔接：上一章全文（或摘要）、上一章结尾状态、下一章标题（仅作承接参照）。
 L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词典条目（人物/地点/专名）、未收束伏笔。
 
 【输出要求】
 1. 仅输出本章正文，不得包含标题、章节序号、元评论、分析、json、markdown 代码块。
 2. 正文直接以小说段落呈现，段落之间用空行分隔。
-3. 正文必须覆盖本章节拍表中的四个事件（setup / rise / climax / hook），不得遗漏。
+3. 正文必须覆盖本章节拍表中的全部 7 个节拍事件，每个节拍至少一个完整场景（场景细写/对白/心理/环境细节），不得遗漏、不得合并带过。
 4. 必须使用本章 requiredEntities 中的全部实体；词典既有实体的设定不得改动或相悖。在此基础上允许按剧情需要自然引入新人物/新地点/新专名：新人物须在文中体现身份、年龄、性格、与既有人物的关系等可入典信息；新地名/新专名须体现其含义或用途。禁止引入与剧情无关的冗余实体。【名字定稿（v244/914）】设定词典已收录的人名/地名/专名一律为最终定稿（含用户手动定名）：必须原样使用，禁止改名、增删字、换写法或自造变体；即便名字看似不合常见命名习惯，也照词典原样使用。
 5. 人物言行须符合其性格设定；对话须有辨识度；时间线须与上一章衔接。
 6. 若 L0 风格契约有量化指标，请在输出前自检：平均句长、对话占比是否落在契约区间内。
@@ -3220,7 +3220,10 @@ const CHAPTER_PLAN_SYS_LEGACY = `你是一名全书级叙事规划师（全书�
       "beats": [
         {"type":"setup", "event":"事件", "emotional":"情绪", "requiredEntities":["人物/地点/专名"], "foreshadowing":[]},
         {"type":"rise", "event":"事件", "emotional":"情绪", "requiredEntities":["..."], "foreshadowing":[]},
+        {"type":"twist", "event":"事件", "emotional":"情绪", "requiredEntities":["..."], "foreshadowing":[]},
+        {"type":"rise", "event":"事件", "emotional":"情绪", "requiredEntities":["..."], "foreshadowing":[]},
         {"type":"climax", "event":"事件", "emotional":"情绪", "requiredEntities":["..."], "foreshadowing":[]},
+        {"type":"fall", "event":"事件", "emotional":"情绪", "requiredEntities":["..."], "foreshadowing":[]},
         {"type":"hook", "event":"事件", "emotional":"情绪", "requiredEntities":["..."], "foreshadowing":["下一章伏笔"]}
       ],
       "emotionalArc": "本章情绪曲线：起→承→转→合",
@@ -3233,7 +3236,7 @@ const CHAPTER_PLAN_SYS_LEGACY = `你是一名全书级叙事规划师（全书�
 【硬性约束】
 1. titles 与 chapterPlans 数量必须严格等于本批次章节数，顺序一一对应。
 2. 每章 summary 必须显式引用 structure.acts 中对应幕的 mission 与 mustHappen；若本章属于某幕，必须在 summary 开头注明「第 X 幕」。
-3. 每章 beats 必须包含 setup/rise/climax/hook 四段，不得省略；requiredEntities 必须来自设定词典，禁止自造新名。
+3. 每章 beats 必须恰好 7 段，顺序固定不得改动：第 1 段 setup（铺垫/开篇触发）、第 2 段 rise（推进）、第 3 段 twist（转折）、第 4 段 rise（推进）、第 5 段 climax（燃点/高潮）、第 6 段 fall（余波）、第 7 段 hook（悬念/章末钩子）；requiredEntities 必须来自设定词典，禁止自造新名。
 4. 批次衔接：若提供了【已定稿的前文骨架】，本章情节必须自然承接前文状态，不得推翻已发生事件。
 5. glossary 只在第一批返回；后续批次 glossary 字段可空对象 {}。
 6. 人物字段必须自洽：identity/age/gender/appearance/hobby/relation/trait 齐全，age 与履历年限不得矛盾。
@@ -3243,7 +3246,7 @@ const CHAPTER_PLAN_SYS_LEGACY = `你是一名全书级叙事规划师（全书�
 // 修复 md 原码 bug：硬性约束1 原文为「必须严格等于现有章节数」，与分批生成（每批≤25 章）冲突，
 // 改为「用户提示中指定的章节数」——批次章节数由 genChapterPlans 在 user 侧注入。
 const CHAPTER_PLAN_SYS_PRO = `你是一位资深全书级叙事工程师，同时担任「节拍设计师」。
-【核心任务】基于小说书名、小说简介、结构骨架、全部章节标题、设定词典，产出三样产物：定稿标题、每章主线简述、初期万物词典，并为每章生成四段节拍表。
+【核心任务】基于小说书名、小说简介、结构骨架、全部章节标题、设定词典，产出三样产物：定稿标题、每章主线简述、初期万物词典，并为每章生成七段节拍表。
 
 【必须输出的 JSON 结构】
 {
@@ -3254,7 +3257,10 @@ const CHAPTER_PLAN_SYS_PRO = `你是一位资深全书级叙事工程师，同�
       "beats": [
         {"type": "setup",   "event": "切入本章情境的触发事件", "emotional": "本章起始情绪", "requiredEntities": ["必须出现的人名/地名/专名"], "foreshadowing": ["本章埋下的伏笔（有才填）"]},
         {"type": "rise",    "event": "冲突升级/人物行动推进", "emotional": "情绪变化", "requiredEntities": [], "foreshadowing": []},
+        {"type": "twist",   "event": "剧情逆转/意外揭示", "emotional": "情绪变化", "requiredEntities": [], "foreshadowing": []},
+        {"type": "rise",    "event": "逆转后再度推进/局势加压", "emotional": "情绪变化", "requiredEntities": [], "foreshadowing": []},
         {"type": "climax",  "event": "本章高潮/关键转折", "emotional": "高潮情绪", "requiredEntities": [], "foreshadowing": []},
+        {"type": "fall",    "event": "高潮余波/后果落地", "emotional": "回落情绪", "requiredEntities": [], "foreshadowing": []},
         {"type": "hook",    "event": "章末钩子/悬念/承接下一章的线索", "emotional": "章末情绪落点", "requiredEntities": [], "foreshadowing": []}
       ],
       "emotionalArc": "本章情绪弧：从X到Y，用一句话概括",
@@ -3270,7 +3276,7 @@ const CHAPTER_PLAN_SYS_PRO = `你是一位资深全书级叙事工程师，同�
 
 【硬性约束】
 1. titles 与 chapterPlans 数量必须严格等于用户提示中指定的章节数，顺序一一对应。
-2. 每章 chapterPlans[i].beats 必须恰好包含 4 段，type 严格为 setup / rise / climax / hook，顺序不可变。
+2. 每章 chapterPlans[i].beats 必须恰好包含 7 段，顺序固定不得改动：第 1 段 setup（铺垫/开篇触发）、第 2 段 rise（推进）、第 3 段 twist（转折）、第 4 段 rise（推进）、第 5 段 climax（燃点/高潮）、第 6 段 fall（余波）、第 7 段 hook（悬念/章末钩子）。
 3. summary 80—160 字；每段 beat.event 10—40 字；emotional 1—8 字。
 4. requiredEntities 与 foreshadowing 只能使用设定词典中已有人名/地名/专名，禁止自造新名。
 5. glossary 人物必须 7 字段齐全；人物字段自洽（年龄与履历/居住年限不矛盾）。
@@ -3287,8 +3293,11 @@ const CHAPTER_PLAN_SYS_PRO = `你是一位资深全书级叙事工程师，同�
       "summary": "第七次大雾降临，退休法医沈渔接到女儿失踪前的最后一条语音，决定重返旧案现场。",
       "beats": [
         {"type": "setup",  "event": "大雾降临，沈渔独居小屋接到女儿语音", "emotional": "不安", "requiredEntities": ["沈渔"], "foreshadowing": ["旧信"] },
-        {"type": "rise",   "event": "她重返旧案现场，发现与三十年前案件相同的符号", "emotional": "警觉", "requiredEntities": ["沈渔"], "foreshadowing": [] },
-        {"type": "climax", "event": "她在雾中看见一个与已故凶手身形一致的人", "emotional": "震惊", "requiredEntities": ["沈渔"], "foreshadowing": [] },
+        {"type": "rise",   "event": "她翻出尘封案卷，发现语音背景里有异样杂音", "emotional": "警觉", "requiredEntities": ["沈渔"], "foreshadowing": [] },
+        {"type": "twist",  "event": "杂音经比对竟是三十年前旧案的录音片段", "emotional": "震惊", "requiredEntities": ["沈渔"], "foreshadowing": [] },
+        {"type": "rise",   "event": "她循线索重返旧案现场，发现有人先她一步来过", "emotional": "紧张", "requiredEntities": ["沈渔"], "foreshadowing": [] },
+        {"type": "climax", "event": "雾中那人现身，身形与已故凶手一般无二", "emotional": "惊惧", "requiredEntities": ["沈渔"], "foreshadowing": [] },
+        {"type": "fall",   "event": "追逐落空，她只在现场捡到一封旧信封的一角", "emotional": "恍惚", "requiredEntities": ["沈渔"], "foreshadowing": [] },
         {"type": "hook",   "event": "她回到家，发现门缝里塞着三十年前的旧信封", "emotional": "悬念", "requiredEntities": ["旧信"], "foreshadowing": ["旧信"] }
       ],
       "emotionalArc": "从孤独不安到震惊悬念",
@@ -3333,8 +3342,8 @@ const PLANNER_SUMMARY_SYS = `你是一位资深长篇小说「主线简述规划
 8. requiredEntities 只能使用设定词典中已有人名/地名/专名，禁止自造新名。
 9. 若出现【写作风格】块，措辞必须优先贴合。`;
 
-// ③ 节拍表：每批只返回 4 段节拍（+ 情绪弧 + 核心实体汇总），以既有主线简述为锚。
-const PLANNER_BEATS_SYS = `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于它们已有的【主线简述】与【已定稿的前文骨架】生成四段节拍表。
+// ③ 节拍表：每批只返回 7 段节拍（+ 情绪弧 + 核心实体汇总），以既有主线简述为锚。
+const PLANNER_BEATS_SYS = `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于它们已有的【主线简述】与【已定稿的前文骨架】生成七段节拍表。
 【输入】会给出：本批次每章主线简述、核心定位/深层主题、结构骨架、设定词典。
 【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
 {
@@ -3343,7 +3352,10 @@ const PLANNER_BEATS_SYS = `你是一位资深长篇「节拍设计师」。请�
       "beats": [
         {"type":"setup",  "event":"切入本章情境的触发事件，10—40字", "emotional":"情绪，1—8字", "requiredEntities":["必须出现的人名/地名/专名"], "foreshadowing":["本章埋下的伏笔（有才填）"]},
         {"type":"rise",   "event":"冲突升级/人物行动推进", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
+        {"type":"twist",  "event":"剧情逆转/意外揭示", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
+        {"type":"rise",   "event":"逆转后再度推进/局势加压", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
         {"type":"climax", "event":"本章高潮/关键转折", "emotional":"高潮情绪", "requiredEntities":[], "foreshadowing":[]},
+        {"type":"fall",   "event":"高潮余波/后果落地", "emotional":"回落情绪", "requiredEntities":[], "foreshadowing":[]},
         {"type":"hook",   "event":"章末钩子/悬念/承接下一章的线索", "emotional":"章末情绪落点", "requiredEntities":[], "foreshadowing":[]}
       ],
       "emotionalArc": "本章情绪弧：从X到Y，用一句话概括",
@@ -3353,7 +3365,7 @@ const PLANNER_BEATS_SYS = `你是一位资深长篇「节拍设计师」。请�
 }
 【硬性约束】
 1. chapterPlans 数量必须严格等于用户提示中指定的章节数，顺序一一对应。
-2. 每章 beats 必须恰好 4 段，type 严格为 setup / rise / climax / hook，顺序不可变。
+2. 每章 beats 必须恰好 7 段，顺序固定不得改动：第 1 段 setup（铺垫/开篇触发）、第 2 段 rise（推进）、第 3 段 twist（转折）、第 4 段 rise（推进）、第 5 段 climax（燃点/高潮）、第 6 段 fall（余波）、第 7 段 hook（悬念/章末钩子）。
 3. 节拍事件必须从该章主线简述推导，不得偏离主线、不得自创剧情。
 4. requiredEntities 与 foreshadowing 只能使用设定词典中已有人名/地名/专名，禁止自造新名。
 5. 精简输出（提速）：每段 beat 的 event 只写一句话（≤40 字），不得展开描写；每段 requiredEntities 至多 2 个；emotional ≤6 字。
@@ -4795,7 +4807,7 @@ function sizeChapterInjection(){
   const wr = (state.wordRange && +state.wordRange.min > 0 && +state.wordRange.max > 0) ? state.wordRange : null;
   if(wr){
     const lo = Math.min(+wr.min, +wr.max), hi = Math.max(+wr.min, +wr.max);
-    return `${total}本章正文目标 ${lo.toLocaleString()}—${hi.toLocaleString()} 字（允许 ±10% 浮动）；字数服从剧情：先保证剧情完整与节奏自然，再在此前提下向目标区间靠拢。`;
+    return `${total}本章正文目标 ${lo.toLocaleString()}—${hi.toLocaleString()} 字，为硬性要求，不足即视为未完成。主线简述给出的每个事件都必须充分铺开：用场景细写、人物对白、心理活动、环境与感官细节把篇幅写到目标区间；禁止概括式带过、禁止提前收束本章剧情。`;
   }
   return `${total}本章正文不设字数上限，按剧情需要自然成稿，章与章之间衔接顺畅、节奏自然。`;
 }
@@ -7558,7 +7570,7 @@ function chapterPlanBlock(){
     const beats = (p && Array.isArray(p.beats)) ? p.beats : [];
     const beatHtml = beats.map((b, bi)=>`
       <div class="bs-beat" data-bs-beat="${i}:${bi}">
-        <span class="bs-type">${({setup:'铺垫',rise:'推进',climax:'燃点',hook:'悬念'})[b.type] || b.type || 'beat'}</span>
+        <span class="bs-type">${({setup:'铺垫',rise:'推进',twist:'转折',climax:'燃点',fall:'余波',hook:'悬念'})[b.type] || b.type || 'beat'}</span>
         <input type="text" class="bs-event" data-bs-event="${i}:${bi}" value="${esc(b.event||'')}" placeholder="事件">
         <input type="text" class="bs-emo" data-bs-emo="${i}:${bi}" value="${esc(b.emotional||'')}" placeholder="情绪">
         <input type="text" class="bs-ent" data-bs-ent="${i}:${bi}" value="${esc((b.requiredEntities||[]).join('、'))}" placeholder="必须实体（顿号分隔）">
@@ -7571,7 +7583,7 @@ function chapterPlanBlock(){
         <div class="cp-body-col">
           <textarea class="cp-input" rows="3" data-cp-set="${i}" data-orig="${esc(p.summary||'')}" placeholder="本章主线简述（可编辑：建议首句写主线推进，后接关键事件）">${esc(p.summary||'')}</textarea>
           <div class="bs-block">
-            <div class="bs-head">节拍表 <button type="button" class="btn small ghost" data-bs-add="${i}">＋ 补全四段</button></div>
+            <div class="bs-head">节拍表 <button type="button" class="btn small ghost" data-bs-add="${i}">＋ 补全七段</button></div>
             ${beatHtml || '<span class="muted">暂无节拍，可点上方按钮由 AI 补齐</span>'}
           </div>
         </div>
@@ -7609,7 +7621,7 @@ function chapterPlanBlock(){
       <div class="cp-stage-hint muted">五步可任意顺序单独点击，无需按顺序完成（点任意一步直接生成该步）；「⚡ 一键五步」在卡片标题区，默认跳过已完成步骤。</div>
       ${hasPlans ? `<div class="cp-list">${items}</div>
         <p class="muted" style="margin:6px 0 0">每条主线简述可编辑，失焦即存；写正文时注入为【本章主线简述】（辅助参考）。</p>`
-        : `<p class="sub">可选步骤：分五步规划全书——①每章主线简述（本书叙事第一层骨架）、②定稿全书章节标题、③每章四段节拍表、④初期万物词典、⑤跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
+        : `<p class="sub">可选步骤：分五步规划全书——①每章主线简述（本书叙事第一层骨架）、②定稿全书章节标题、③每章七段节拍表、④初期万物词典、⑤跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
     </div>
   </div>`;
 }
@@ -7661,21 +7673,26 @@ function bindChapterPlan(){
   });
 }
 
-// 4.6 Plus（2.2）节拍表绑定：自动补齐四段 + 四字段编辑即存
+// 4.6 Plus（2.2）节拍表绑定：自动补齐七段 + 四字段编辑即存
 function bindBeatSheet(){
   const o = state.outline; if(!o) return;
-  // 自动补齐四段
+  // 自动补齐七段（缺段/顺序不符时按标准序列 setup→rise→twist→rise→climax→fall→hook 重建；旧内容按类型归位不丢）
   $$('[data-bs-add]').forEach(btn=>{
     btn.onclick = ()=>{
       const i = +btn.dataset.bsAdd;
       if(!Array.isArray(o.chapterPlans)) return;
       const p = o.chapterPlans[i] || {};
-      if(!p.beats || p.beats.length < 4){
-        p.beats = p.beats || [];
-        const types = ['setup','rise','climax','hook'];
-        for(let k=p.beats.length; k<4; k++){
-          p.beats.push({ type:types[k], event:'', emotional:'', requiredEntities:[], foreshadowing:[] });
-        }
+      const std = ['setup','rise','twist','rise','climax','fall','hook'];
+      const old = Array.isArray(p.beats) ? p.beats : [];
+      const need = old.length !== 7 || old.some((b,k)=> !b || b.type !== std[k]);
+      if(need){
+        const slots = std.map(t => ({ type:t, event:'', emotional:'', requiredEntities:[], foreshadowing:[] }));
+        old.forEach(b=>{
+          if(!b || typeof b !== 'object') return;
+          const k = slots.findIndex(s => s.type === b.type && !s.event);
+          if(k >= 0) slots[k] = b;   // 同类型归位，旧填写内容保留
+        });
+        p.beats = slots;
         persist(); render();
       }
     };
@@ -10282,7 +10299,7 @@ function plannerStageDone(stage){
   switch(stage){
     case 'summary':    return everyPlan(p => String(p.summary||'').trim());
     case 'titles':     return totalN > 0 && (o.chapters||[]).every(c => String(c&&c.title||'').trim());
-    case 'beats':      return everyPlan(p => Array.isArray(p.beats) && p.beats.length >= 4);
+    case 'beats':      return everyPlan(p => Array.isArray(p.beats) && p.beats.length >= 7);
     case 'glossary':   return sourceHasGlossary((o.glossary)||{});
     case 'foreshadow': return !!(o._foreshadowLedger && Array.isArray(o._foreshadowLedger.planted) && o._foreshadowLedger.planted.length);
   }
@@ -10383,15 +10400,15 @@ function validatePlannerSummaryBatch(j){
   }
   return '';
 }
-// 节拍批次校验（只查 beats 四段）
+// 节拍批次校验（只查 beats 七段）
 function validatePlannerBeatsBatch(j){
   if(!j || typeof j !== 'object') return '返回不是对象';
   if(!Array.isArray(j.chapterPlans)) return '缺少 chapterPlans 数组';
   for(const [i,p] of j.chapterPlans.entries()){
     if(!p || typeof p !== 'object') return `第 ${i+1} 个 chapterPlan 不是对象`;
-    if(!Array.isArray(p.beats) || p.beats.length < 4) return `第 ${i+1} 章 beats 不足 4 段`;
+    if(!Array.isArray(p.beats) || p.beats.length < 7) return `第 ${i+1} 章 beats 不足 7 段`;
     for(const [k,b] of p.beats.entries()){
-      if(!['setup','rise','climax','hook'].includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
+      if(!['setup','rise','twist','climax','fall','hook'].includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
       if(!String(b.event||'').trim()) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 event`;
     }
   }
@@ -10572,7 +10589,7 @@ async function genPlannerBeats(btn, opts){
           emotionalArc: String(p.emotionalArc||cur.emotionalArc||'').trim(),
           requiredEntities: Array.isArray(p.requiredEntities)&&p.requiredEntities.length ? p.requiredEntities : (Array.isArray(cur.requiredEntities)?cur.requiredEntities:[])
         });
-        if(Array.isArray(p.beats) && p.beats.length>=4) wrote++;
+        if(Array.isArray(p.beats) && p.beats.length>=7) wrote++;
       });
       o._plannerProgress = o._plannerProgress || {};
       o._plannerProgress.beats = { done: bi+1, total: batches.length, ts: Date.now() };   // v225/P4：批次进度持久化，刷新后可见半程态
@@ -10583,7 +10600,7 @@ async function genPlannerBeats(btn, opts){
     o._plannerProgress = o._plannerProgress || {};
     o._plannerProgress.beats = { done: batches.length, total: batches.length, ts: Date.now() };   // v225/P4：全部批次完成
     refreshPlannerStageBar(null, null);
-    if(!opts.silent) toast(`节拍表已生成：${wrote} 章 · 每章四段`);
+    if(!opts.silent) toast(`节拍表已生成：${wrote} 章 · 每章七段`);
     return true;
   }catch(e){
     if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'节拍表：'+e.message});
@@ -10807,7 +10824,7 @@ function buildPrevSkeleton(endIdx){
   return `【已定稿的前文骨架】\n全部前序标题：${titles}\n最近 3 章简述：\n${lastFew}`;
 }
 
-// 4.5：规划师批次输出 schema 校验（titles/chapterPlans 结构、beats 四段完整性）
+// 4.5：规划师批次输出 schema 校验（titles/chapterPlans 结构、beats 七段完整性）
 function validateBatchPlanOutput(j){
   if(!j || typeof j !== 'object') return '返回不是对象';
   if(!Array.isArray(j.titles)) return '缺少 titles 数组';
@@ -10815,9 +10832,9 @@ function validateBatchPlanOutput(j){
   for(const [i, p] of j.chapterPlans.entries()){
     if(!p || typeof p !== 'object') return `第 ${i+1} 个 chapterPlan 不是对象`;
     if(!String(p.summary||'').trim()) return `第 ${i+1} 个 chapterPlan 缺少 summary`;
-    if(!Array.isArray(p.beats) || p.beats.length < 4) return `第 ${i+1} 个 chapterPlan 的 beats 不足 4 段`;
+    if(!Array.isArray(p.beats) || p.beats.length < 7) return `第 ${i+1} 个 chapterPlan 的 beats 不足 7 段`;
     for(const [k, b] of p.beats.entries()){
-      if(!['setup','rise','climax','hook'].includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
+      if(!['setup','rise','twist','climax','fall','hook'].includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
       if(!String(b.event||'').trim()) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 event`;
       if(!Array.isArray(b.requiredEntities)) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 requiredEntities`;
     }
@@ -10883,13 +10900,13 @@ function pickBestChapterPlan(cands, expectedN){
     // 数量与格式
     if(Array.isArray(j.titles) && j.titles.length === expectedN) s += 10;
     if(plans.length === expectedN) s += 10;
-    // 每章 beats 四段完整
+    // 每章 beats 七段完整
     plans.forEach(p => {
       if(p && String(p.summary||'').trim()) s += 2;
-      if(p && Array.isArray(p.beats) && p.beats.length >= 4){
+      if(p && Array.isArray(p.beats) && p.beats.length >= 7){
         s += 4;
         const types = p.beats.map(b => b.type);
-        if(['setup','rise','climax','hook'].every(t => types.includes(t))) s += 4;
+        if(['setup','rise','twist','climax','fall','hook'].every(t => types.includes(t))) s += 4;
       }
     });
     return s;
@@ -10914,7 +10931,7 @@ function chapterPlanUser(){
   return parts.join('\n\n');
 }
 
-// 4.7 Pro（3.4 原码）：规划师解析后整体校验（titles/chapterPlans 数量一致、summary 存在、beats 恰好 4 段且 type 顺序固定）
+// 4.7 Pro（3.4 原码）：规划师解析后整体校验（titles/chapterPlans 数量一致、summary 存在、beats 恰好 7 段且 type 顺序固定）
 function validateChapterPlanOutput(j){
   const o = state.outline || {};
   const N = (o.chapters||[]).length;
@@ -10925,10 +10942,10 @@ function validateChapterPlanOutput(j){
   for(let i=0;i<N;i++){
     const p = j.chapterPlans[i];
     if(!p || typeof p.summary !== 'string') return {ok:false, code:'SUMMARY_MISSING', idx:i};
-    if(!Array.isArray(p.beats) || p.beats.length !== 4) return {ok:false, code:'BEATS_COUNT', idx:i};
-    const types = ['setup','rise','climax','hook'];
-    for(let k=0;k<4;k++){
-      if(p.beats[k].type !== types[k]) return {ok:false, code:'BEAT_TYPE', idx:i, beat:k};
+    if(!Array.isArray(p.beats) || p.beats.length !== 7) return {ok:false, code:'BEATS_COUNT', idx:i};
+    const stdSeq = ['setup','rise','twist','rise','climax','fall','hook'];   // 7 拍固定顺序
+    for(let k=0;k<7;k++){
+      if(p.beats[k].type !== stdSeq[k]) return {ok:false, code:'BEAT_TYPE', idx:i, beat:k};
       if(typeof p.beats[k].event !== 'string' || p.beats[k].event.length < 3) return {ok:false, code:'BEAT_EVENT', idx:i, beat:k};
     }
   }
@@ -11590,7 +11607,7 @@ ${prevFull}
     const st1 = (o.structure && o.structure.act1) || {};
     const must1 = Array.isArray(st1.mustHappen) ? st1.mustHappen.filter(Boolean) : [];
     const setupBeat = (plan && Array.isArray(plan.beats) && plan.beats[0]) || null;
-    const hookBeat  = (plan && Array.isArray(plan.beats) && plan.beats[3]) || null;
+    const hookBeat  = (plan && Array.isArray(plan.beats) && plan.beats.length ? plan.beats[plan.beats.length-1] : null) || null;   // hook 恒为末段（7 拍固定顺序）
     const obLines = [];
     if(o.anchor || o.thesis) obLines.push(`- 定位锚：严格执行上方【核心定位】与【深层主题】，首章即确立全书基调`);
     if(nb.protagonist) obLines.push(`- 主角入场：${nb.protagonist}——开篇即以行动/对话立住人设，忌静态介绍式出场`);
@@ -12160,7 +12177,7 @@ function auditChapterAdherence(i){
   try{
     const text = String((state.chapters && state.chapters[i] && state.chapters[i].content)||'');
     const plan = (state.outline && state.outline.chapterPlans && state.outline.chapterPlans[i]) || {};
-    if(!text.trim() || !Array.isArray(plan.beats) || plan.beats.length < 4) return;
+    if(!text.trim() || !Array.isArray(plan.beats) || plan.beats.length < 7) return;
     const FUNC = /[的了是在和与也被把又就还着有个这那不上为到说得很]/;   // 滤掉含虚词的跨词二元组
     const kws = new Set();
     plan.beats.forEach(b=>{
@@ -13114,7 +13131,7 @@ function bindRangeGen(){
       const _o = state.outline || {};
       const miss = [];
       (_o.chapters||[]).forEach((c,i)=>{ const p=(_o.chapterPlans||[])[i];
-        if(!p || !String(p.summary||'').trim() || !Array.isArray(p.beats) || p.beats.length<4) miss.push(i+1); });
+        if(!p || !String(p.summary||'').trim() || !Array.isArray(p.beats) || p.beats.length<7) miss.push(i+1); });
       if(miss.length && !confirm(`第 ${miss.join('、')} 章缺主线简述/节拍表，这些章将按大纲直接裸写。继续？`)) return;
     }
     btn.disabled = true; btn.textContent = '生成中…';
@@ -13143,7 +13160,7 @@ async function genManyChapters(count, fromStart){
     const _o = state.outline || {};
     const miss = [];
     (_o.chapters||[]).forEach((c,i)=>{ const p=(_o.chapterPlans||[])[i];
-      if(!p || !String(p.summary||'').trim() || !Array.isArray(p.beats) || p.beats.length<4) miss.push(i+1); });
+      if(!p || !String(p.summary||'').trim() || !Array.isArray(p.beats) || p.beats.length<7) miss.push(i+1); });
     if(miss.length && !confirm(`第 ${miss.join('、')} 章缺主线简述/节拍表，这些章将按大纲直接裸写。继续？`)) return;
   }
   const btn = $('#btnGenMany'); if(btn) busy(btn,true,'逐章生成中…');
