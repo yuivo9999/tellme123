@@ -1572,16 +1572,15 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 @keyframes gsFlashKf{ 0%,60%{ background:rgba(184,134,11,.18); outline:2px solid rgba(184,134,11,.55); outline-offset:-2px; } 100%{ background:transparent; outline:2px solid transparent; } }
 .gs-flash{ animation: gsFlashKf 1.6s ease-out both; border-radius:8px; }
 
-/* 章节正文卡片按钮：统一为「AI配方助手 · 生成配方」按钮的标准尺寸（.btn 基准 = --h-btn 42px）
-   说明：style-polish 的 .btn 规范化规则被 :where() 包住、只对 dark/light/aurora/paper 四主题生效，
-   其余主题下卡片按钮缺少 min-height 而偏小。此处用 .ch-card .btn-row>.btn（特异性 0,3,0）覆盖，
-   不受主题与加载顺序影响，9 个按钮（重生成/阅读/确认风格/取消确认/🔧/本章梗概/沙盘/版本/撤销编辑）全部生效。 */
+/* 章节正文卡片按钮：统一为「AI配方助手 · 生成配方」按钮的尺寸（高 22px / 字号 12px / padding 0 10px）
+   对应原 .ai-recipe-tool .btn 规则（第 1135 行）；选择器特异性 0,3,0，能压过 .btn 基类与 style-polish 主题规则。
+   9 个按钮（重生成/阅读/确认风格/取消确认/🔧/本章梗概/沙盘/版本/撤销编辑）全部生效。 */
 .ch-card .btn-row>.btn{
-  min-height:42px;
-  padding:10px 14px;
-  font-size:14px;
-  font-weight:600;
-  line-height:1.2;
-  border-radius:12px;
+  height:22px;
+  line-height:20px;
+  padding:0 10px;
+  font-size:12px;
+  min-height:0;
   box-sizing:border-box;
+  border-radius:10px;
 }
