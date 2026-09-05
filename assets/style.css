@@ -1408,38 +1408,6 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .strip-warn b{ font-weight:800; }
 /* v10.53 概要段缩略显示 */
 
-/* ==================== 4.8 旗舰版：AI 协作看板（新增区段，不改主题色） ==================== */
-.ai-network-panel{
-  display:flex; flex-wrap:wrap; gap:6px;
-  margin:0 0 10px; padding:10px 12px;
-  /* v238/D：原 var(--warn-bg, rgba(255,255,255,.35))——--warn-bg 全库从未定义，35% 白 fallback 恒生效，
-     暗色主题下叠加成突兀中灰块；改用主题面板变量 --panel2，暗色即深色、各主题自动适配 */
-  background:var(--panel2);
-  border:1px solid var(--line, rgba(128,128,128,.25));
-  border-radius:8px;
-}
-.ai-network-panel .ai-stage{
-  padding:3px 10px; border-radius:20px;
-  font-size:12px; line-height:1.5;
-  border:1px solid var(--line, rgba(128,128,128,.3));
-  color:var(--text-dim, #888);
-}
-.ai-network-panel .ai-stage.done{
-  color:var(--ok, #2e9e5b); border-color:currentColor;
-  background:rgba(46,158,91,.08);
-}
-.ai-network-panel .ai-stage.running{
-  color:var(--accent, #4a7dff); border-color:currentColor;
-  background:rgba(74,125,255,.1);
-}
-.ai-network-panel .ai-stage.blocked{
-  color:var(--warn, #c98a1b); border-color:currentColor;
-  background:rgba(201,138,27,.08);
-}
-.ai-network-panel .ai-stage.ready{
-  color:var(--text-dim, #888); border-style:dashed;
-}
-
 /* ==================== 新卡片界面：叙事引擎与中间件面板 ==================== */
 
 /* 叙事引擎抽屉 */
@@ -1505,27 +1473,7 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .ne-fs-item .ne-fs-ops{ display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
 .ne-fs-item .ne-fs-ops button{ font-size:11px; padding:3px 8px; border-radius:6px; }
 
-/* 人设防火墙 */
-.ne-persona-card{ margin-bottom:10px; }
-.ne-persona-head{ display:flex; align-items:center; gap:8px; margin-bottom:8px; }
-.ne-persona-head b{ font-size:15px; }
-.ne-violation{ background:color-mix(in srgb, var(--warn) 12%, var(--panel)); border:1px solid var(--warn); border-radius:8px; padding:8px; margin-top:6px; font-size:12px; }
-.ne-violation b{ color:var(--warn); }
-
-/* 张力曲线图 */
-.tension-chart{ width:100%; height:220px; background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:10px; }
-.tension-chart svg{ width:100%; height:100%; overflow:visible; }
-.tension-axis{ stroke:var(--line); stroke-width:1; }
-.tension-grid{ stroke:var(--line); stroke-width:0.5; stroke-dasharray:3,3; opacity:0.5; }
-.tension-line-external{ fill:none; stroke:#f87171; stroke-width:2.5; }
-.tension-line-internal{ fill:none; stroke:#60a5fa; stroke-width:2.5; }
-.tension-line-mystery{ fill:none; stroke:#a78bfa; stroke-width:2.5; }
-.tension-dot{ r:4; fill:var(--panel); stroke-width:2; cursor:pointer; }
-.tension-dot:hover{ r:6; }
-.tension-label{ font-size:10px; fill:var(--sub); }
-.tension-legend{ display:flex; gap:12px; justify-content:center; margin-top:8px; font-size:12px; }
-.tension-legend span{ display:inline-flex; align-items:center; gap:4px; }
-.tension-legend i{ width:12px; height:3px; border-radius:2px; }
+/* v1.0.140：人设防火墙 / 张力曲线图 / 分支沙盘 三段样式已随「叙事》人设/张力/沙盘」菜单清理整体移除 */
 
 /* 风格 DNA */
 .ne-style-input{ min-height:120px; }
@@ -1534,17 +1482,9 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .ne-exemplars{ display:flex; flex-direction:column; gap:6px; }
 .ne-exemplar{ font-size:12px; line-height:1.6; padding:8px; border-radius:8px; background:var(--panel); border-left:3px solid var(--accent2); }
 
-/* 分支沙盘 */
-.ne-sandbox-input{ display:flex; flex-direction:column; gap:10px; }
-.ne-sandbox-options{ display:flex; flex-direction:column; gap:6px; }
-.ne-sandbox-options input{ margin-bottom:0; }
-.ne-branch-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:10px; }
-.ne-branch-card{ background:var(--panel2); border:1px solid var(--line); border-radius:12px; padding:12px; display:flex; flex-direction:column; gap:8px; }
-.ne-branch-card.best{ border-color:var(--ok); background:color-mix(in srgb, var(--ok) 8%, var(--panel2)); }
-.ne-branch-card .ne-branch-score{ font-size:20px; font-weight:800; color:var(--ok); }
-.ne-branch-card ul{ margin:0; padding-left:16px; font-size:12px; color:var(--txt); }
-.ne-branch-card li{ margin-bottom:3px; }
-.ne-branch-card .ne-branch-actions{ margin-top:auto; }
+/* v1.0.144：原「大纲节拍的结构」卡样式（bs-card/bs-head-stat/bs-fw/bs-beam*）已随 structure.chapterPlan 彻底移除；
+   仅保留 .bs-head（供「全书规划师」节拍表头复用，见 chapterPlanBlock） */
+.bs-head{ display:flex; align-items:center; gap:6px; cursor:pointer; padding:2px 0 8px; }
 
 /* 中间件提示条 */
 .ne-banner{
