@@ -236,7 +236,7 @@ label.field>span{display:block;font-size:12px;color:var(--sub);margin-bottom:6px
 .wc-total{display:flex; justify-content:center; margin:2px 0 12px; pointer-events:none}
 .wc-total.hidden{display:none}
 .wc-total .inner{background:var(--accent); color:#fff; font-size:12px; padding:8px 18px; border-radius:999px; box-shadow:0 6px 18px rgba(0,0,0,.4); display:inline-flex; gap:6px; align-items:baseline}
-.wc-total b{font-size:15px; font-variant-numeric:tabular-nums}
+.wc-total b{font-size:12px; font-variant-numeric:tabular-nums; font-weight:700}
 .wc-total .brk{opacity:.85; font-size:11px}
 
 /* 长篇模式：章节跳转 */
@@ -708,11 +708,6 @@ body.reader-lock{overflow:hidden}
 .cp-head [data-cp-raw]{opacity:.6;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);font-size:11px}
 .cp-head [data-cp-raw]:hover{opacity:1;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
 .cp-head-row.action-row .cp-stage-all{margin-left:auto}
-/* v1.0.137 拍数选择下拉：与⚡一键五步同行、同样高度与圆角，蓝色主题 */
-.cp-head-row.action-row .cp-beat-select{display:inline-flex;align-items:center;height:32px;padding:3px 10px;border-radius:8px;border:1px solid rgba(96,165,250,.6);background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:#fff;font-size:12px;font-weight:600;line-height:1.4;cursor:pointer;box-shadow:0 2px 8px rgba(37,99,235,.35);transition:all .2s;font-family:inherit;max-width:96px}
-.cp-head-row.action-row .cp-beat-select:hover{background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);border-color:rgba(147,197,253,.8)}
-.cp-head-row.action-row .cp-beat-select:focus{outline:none;border-color:rgba(147,197,253,.9)}
-.cp-head-row.action-row .cp-beat-select option{color:#111;background:#fff;font-weight:400}
 /* 原始数据按钮统一风格（章节卡片、标题行） */
 [data-ch-raw], [data-ct-raw]{opacity:.6;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);font-size:11px}
 [data-ch-raw]:hover, [data-ct-raw]:hover{opacity:1;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
@@ -789,6 +784,21 @@ body.reader-lock{overflow:hidden}
 .cp-stage-all:hover{background:linear-gradient(135deg,#fbbf24 0%,#f59e0b 100%)}
 .cp-stage-all.running{opacity:.7;cursor:wait}
 .cp-stage-hint{font-size:10.5px;color:var(--muted);margin:-2px 0 8px}
+/* v246：微拍选择区（竖向卡片，标题+作用描述）——自卡片内独立，适配所有主题 */
+.cp-micropick{margin-bottom:8px}
+.cp-micropick-title{font-size:12px;font-weight:700;color:currentColor;margin-bottom:6px;display:flex;align-items:baseline;gap:6px}
+.cp-micropick-title em{font-style:normal;font-size:10.5px;font-weight:400;color:var(--muted)}
+.cp-micropick-opts{display:flex;flex-direction:column;gap:6px}
+.cp-micropick-item{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;cursor:pointer;transition:all .18s;background:var(--panel2)}
+.cp-micropick-item:hover{border-color:color-mix(in srgb, var(--accent) 55%, var(--line));background:var(--panel)}
+.cp-micropick-item.sel{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 14%, var(--panel2));box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent)}
+.cp-micropick-ic{flex:none;font-size:17px;line-height:1.3;margin-top:1px}
+.cp-micropick-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.cp-micropick-txt b{font-size:13px;font-weight:700;color:currentColor}
+.cp-micropick-txt i{font-style:normal;font-size:11px;line-height:1.5;color:var(--muted)}
+.cp-micropick-actions{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.cp-micropick-actions .cp-stage-all{padding:5px 14px;font-size:12.5px}
+.cp-micropick-actions.cp-stopping .cp-stage-all{margin-right:44px}
 
 /* v237/904-4：消息看板 + toast 内嵌看板按钮 */
 .toast{display:flex;align-items:center;gap:8px}
@@ -939,6 +949,9 @@ body.reader-lock{overflow:hidden}
 .gs-actions .btn{width:100%;min-width:0;white-space:normal;align-items:center;text-align:center}
 .gs-actions .btn[data-gs-regen],.gs-actions .btn[data-rp-with]{grid-column:1/-1}
 .gs-actions .btn:disabled{opacity:.5}
+/* v1.0.145 重生成弹窗：按钮行移置标题下一行，两钮一左一右（覆盖上方全宽规则） */
+.gs-actions.rp-top-actions{border-top:none;border-bottom:1px solid var(--line);padding:10px 16px}
+.gs-actions.rp-top-actions .btn[data-rp-with]{grid-column:auto}
 .rp-advice{width:100%;min-height:110px;resize:vertical;background:var(--panel2);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.6}
 .rp-advice:focus{outline:none;border-color:var(--accent2)}
 .gs-progress{margin:0}
@@ -1482,9 +1495,23 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .ne-exemplars{ display:flex; flex-direction:column; gap:6px; }
 .ne-exemplar{ font-size:12px; line-height:1.6; padding:8px; border-radius:8px; background:var(--panel); border-left:3px solid var(--accent2); }
 
-/* v1.0.144：原「大纲节拍的结构」卡样式（bs-card/bs-head-stat/bs-fw/bs-beam*）已随 structure.chapterPlan 彻底移除；
-   仅保留 .bs-head（供「全书规划师」节拍表头复用，见 chapterPlanBlock） */
+/* v1.0.145：恢复「大纲节拍的结构」卡样式——数据源改为本地按「全书拍子」阶段划分章节，
+   不再依赖已清除的 structure.chapterPlan；.bs-head 同时供「全书规划师」节拍表头复用 */
+.bs-card{}
 .bs-head{ display:flex; align-items:center; gap:6px; cursor:pointer; padding:2px 0 8px; }
+.bs-head h3{ margin:0; }
+.bs-head-stat{ margin-left:auto; font-size:11px; color:var(--sub); }
+.bs-fw{ display:flex; align-items:center; gap:8px; font-size:12px; margin-bottom:8px; flex-wrap:wrap; }
+.bs-fw-chip{ background:color-mix(in srgb, var(--accent) 14%, var(--panel)); border:1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); color:var(--accent); font-weight:700; padding:2px 8px; border-radius:6px; }
+.bs-fw-seq{ color:var(--sub); }
+.bs-beams{ display:flex; flex-direction:column; gap:6px; margin-top:4px; max-height:420px; overflow-y:auto; padding-right:2px; }
+.bs-beam{ border-left:3px solid var(--accent2); background:var(--panel); border-radius:8px; padding:8px; }
+.bs-beam-top{ display:flex; align-items:baseline; gap:6px; margin-bottom:4px; }
+.bs-beam-idx{ flex:none; width:18px; height:18px; line-height:18px; text-align:center; font-size:10px; font-weight:700; color:var(--accent2); border:1px solid color-mix(in srgb, var(--accent2) 45%, var(--line)); border-radius:50%; }
+.bs-beam-k{ font-weight:700; font-size:13px; color:var(--txt); }
+.bs-beam-meta{ margin-left:auto; flex:none; font-size:10px; color:var(--sub); }
+.bs-beam-chs{ display:flex; flex-wrap:wrap; gap:4px; max-height:96px; overflow-y:auto; }
+.bs-beam-ch{ font-size:11px; background:var(--panel2); border:1px solid var(--line); border-radius:6px; padding:1px 6px; color:var(--sub); line-height:1.5; }
 
 /* 中间件提示条 */
 .ne-banner{
@@ -1537,16 +1564,19 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
   border-radius:10px;
 }
 
-/* 批量生成多章 / 区间生成 / 小说内容总字数：与章节卡片「重生成」按钮同等尺寸（.btn 标准 = 42px / 14px / 10x14）
+/* 批量生成多章 / 区间生成 / 小说内容总字数：与章节卡片「重生成」按钮完全同尺寸
+   （基准 = .ch-card .btn-row>.btn：高 22px / 字号 12px / padding 0 10px）；
    仅改 size 相关属性，颜色与形状（.wc-total pill）不动；
-   规则靠 style.css 末尾 + 高优先级 id/类选择器，不受主题与加载顺序影响。 */
+   用 ID 选择器（特异性 1,0,0 高于 .btn 类选择器）+ 位于加载链后方，确保所有主题均生效。 */
 #btnGenMany,
 #btnRangeGen,
 .wc-total .inner{
-  height:auto;
-  min-height:42px;
-  padding:10px 18px;
-  font-size:14px;
-  line-height:1.2;
+  height:22px;
+  min-height:0;
+  line-height:20px;
+  padding:0 10px;
+  font-size:12px;
   box-sizing:border-box;
+  display:inline-flex;
+  align-items:center;
 }

@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.139';   // v1.0.139 注入链优化：正文以节拍表为唯一硬性清单（主线简述降为背景参考）、正文新增本章结构定位块、伏笔网注入全书结构骨架；v1.0.138 规划师四步
+const APP_VERSION = '1.0.145';   // v1.0.145 重生成弹窗：双按钮置顶一行（左=直接重生成/右=带建议），删除顶部描述；v1.0.144 structure 彻底清除
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -3165,73 +3165,82 @@ function bookBeatHtml(){
   </div>`;
 }
 
+/* v1.0.146：规划师章节节拍改用「微拍」体系（针对每章 3000 字左右的微观节奏），
+ * 彻底替换原「四/七/十二/十五拍」——那些是全书宏观节奏，已归 BOOK_BEAT_OPTIONS（只注入大纲），
+ * 不再作为章节微拍复用，避免两套体系重复混用。
+ * 微拍类型：微五拍（标准网文）/ 微三拍（极爽新媒体文）/ 微七拍（慢热治愈）/ 双拍结构（悬疑惊悚）。
+ * 每拍带标称字数配比，用于 buildBeatsSys 注入 prompt 与 UI 展示；节拍表仍以每章一段落为最小输出单位。 */
 const BEAT_OPTIONS = [
-  { id:4,  label:'四拍',   types:[
-      { key:'setup',  label:'铺垫', note:'建立本章情境与起始状态' },
-      { key:'rise',   label:'推进', note:'冲突升级、人物行动推进' },
-      { key:'climax', label:'燃点', note:'本章高潮或关键转折' },
-      { key:'hook',   label:'悬念', note:'章末钩子，承接下一章' }
+  { id:5,  label:'微五拍', emoji:'⚖️', desc:'标准网文节奏：铺垫→推进→转折→燃点→余波+悬念', wc:'500/800/500/700/500（共约3000字/章）', types:[
+      { key:'setup',  label:'开篇铺垫', note:'三句话立境：在哪、和谁、要干嘛；拒绝信息倾倒', wc:'~500字' },
+      { key:'rise',   label:'冲突推进', note:'制造一个具体可感的小麻烦，即时注入张力；可依赖主线或长线资源', wc:'~800字' },
+      { key:'turn',   label:'意外转折', note:'先立预期再打破，暗示世界复杂性（如嘲讽者有靠山=社会层级）', wc:'~500字' },
+      { key:'climax', label:'对抗燃点', note:'小爽点：情感报复/资源获取/信息推进三类回报之一', wc:'~700字' },
+      { key:'hook',   label:'余波+悬念', note:'收尾并用最后一句埋钩子（新威胁/新目标/关系突变），驱动翻页', wc:'~500字' }
   ]},
-  { id:7,  label:'七拍',   types:[
-      { key:'setup',  label:'铺垫', note:'建立本章起点情境，引入状态' },
-      { key:'rise',   label:'推进', note:'推动剧情发展' },
-      { key:'turn',   label:'转折', note:'关键变化，叙事节奏转向' },
-      { key:'rise2',  label:'推进', note:'再上层楼，持续加压' },
-      { key:'climax', label:'燃点', note:'高潮爆发，情绪顶点' },
-      { key:'after',  label:'余波', note:'情绪回落，消化后果' },
-      { key:'hook',   label:'悬念', note:'章末钩子，承接下一章' }
+  { id:3,  label:'微三拍', emoji:'🚀', desc:'极爽新媒体文：压→打脸→踩敌+悬念，砍掉心理与环境铺垫，一章一爽点', wc:'300/1500/1200（共约3000字/章）', types:[
+      { key:'setup',  label:'羞辱铺垫', note:'主角被压/被踩，快速立情绪标靶（约300字，干脆利落）', wc:'~300字' },
+      { key:'climax', label:'打脸燃点', note:'强势反击打脸，爽点最大释放，直达读者预期（约1500字）', wc:'~1500字' },
+      { key:'hook',   label:'踩敌+悬念', note:'顺势踩敌抬高收获，并在主角亮底牌前收章留最大悬念', wc:'~1200字' }
   ]},
-  { id:12, label:'十二拍', types:[
-      { key:'daily',        label:'日常铺垫', note:'展示主角的普通生活，建立初始状态' },
-      { key:'incident',     label:'意外推进', note:'一个突发事件打破平静，故事启动' },
-      { key:'hesitate',     label:'犹豫转折', note:'主角内心抗拒，情绪短暂回落' },
-      { key:'assist',       label:'助力推进', note:'获得指引或资源，再次向前' },
-      { key:'resolve',      label:'决心突破', note:'正式离开舒适区，进入新世界' },
-      { key:'trial',        label:'试炼推进', note:'结交伙伴、遭遇敌手，不断磨砺' },
-      { key:'core',         label:'逼近核心', note:'靠近终极目标，危险升级' },
-      { key:'abyss',        label:'绝境燃点', note:'最大危机，情绪被压到极限' },
-      { key:'afterglow',    label:'短暂余波', note:'获得战利品，喘息并整合' },
-      { key:'return_turn',  label:'归程转折', note:'返回路上出现新变数，方向再转' },
-      { key:'final_climax', label:'终极燃点', note:'最后的高光时刻，主角彻底蜕变' },
-      { key:'harmony',      label:'圆满余波', note:'回到日常，留下意义或新悬念' }
+  { id:7,  label:'微七拍', emoji:'🍵', desc:'慢热治愈/日常/种田：细腻推进、以情动人，燃点小至一把伞', wc:'七段细分（共约3000字/章）', types:[
+      { key:'daily',     label:'日常铺垫', note:'展开温和的生活流，建立宁静氛围' },
+      { key:'interact',  label:'小互动', note:'一次细微的日常往来，拉近关系' },
+      { key:'misunder',  label:'小误会', note:'轻微的理解偏差，制造波澜但不激烈' },
+      { key:'heart',     label:'推心置腹', note:'一次走心交流，情感向前递进' },
+      { key:'warm',      label:'温情燃点', note:'小而暖的情绪峰值（如男主递一把伞）', wc:'不可过度' },
+      { key:'glow',      label:'温润余波', note:'余韵沉浸，情绪慢慢落回' },
+      { key:'promise',   label:'明日之约', note:'以一句约定/期许收章，勾住细水长流的期待' }
   ]},
-  { id:15, label:'十五拍', types:[
-      { key:'open',         label:'开篇铺垫', note:'第一印象，奠定基调' },
-      { key:'theme',        label:'主题铺垫', note:'暗示故事核心道理' },
-      { key:'bg',           label:'背景铺垫', note:'进一步展示主角日常' },
-      { key:'catalyst',     label:'催化推进', note:'发生迫使行动的事件' },
-      { key:'inner_turn',   label:'内心转折', note:'主角犹豫、纠结' },
-      { key:'new_world',    label:'新境推进', note:'主动踏入未知世界' },
-      { key:'subline',      label:'副线铺垫', note:'引入情感或支线' },
-      { key:'easy',         label:'轻松推进', note:'享受新奇，节奏放慢' },
-      { key:'mid_turn',     label:'中部转折', note:'假胜利或伪失败，反转苗头' },
-      { key:'pressure',     label:'压力推进', note:'反派施压，紧张升级' },
-      { key:'dark_climax',  label:'至暗燃点', note:'一切尽失，情绪谷底' },
-      { key:'despair',      label:'绝望余波', note:'痛苦反思，短暂沉沦' },
-      { key:'counter',      label:'反击转折', note:'找到新希望，绝地反击' },
-      { key:'final_climax', label:'终极燃点', note:'决战时刻，高潮爆发' },
-      { key:'close',        label:'收束余波', note:'与开场呼应，并留有余味' }
+  { id:2,  label:'双拍结构', emoji:'🔍', desc:'悬疑/惊悚/推理：极长压制铺垫+极短瞬间反转燃点', wc:'2500/500（共约3000字/章）', types:[
+      { key:'hold',   label:'压制铺垫', note:'前 2500 字持续压抑+埋下毛骨悚然的细节线索，延迟读者满足，制造屏息感', wc:'~2500字' },
+      { key:'burst',  label:'反转燃点', note:'最后约 500 字瞬间引爆：凶手现身/规则崩塌/真相大白，落点炸裂', wc:'~500字' }
   ]}
 ];
-const BEAT_DEFAULT_ID = 4;
+/* 微拍选型铁律（用户主导、随拍数注入规划师 prompt）：
+ * · 读者每 ~500 字就要一个（新媒体）→ 选微三拍
+ * · 读者每 ~1500 字要一次小情绪起伏（传统男女频）→ 选微五拍（默认）
+ * · 读者要前 2500 字屏息、最后 100 字头皮发麻的爆裂（悬疑）→ 选双拍结构 */
+const BEAT_DEFAULT_ID = 5;
 // 全部拍数节拍的「中文名」全局映射（渲染旧数据 / 切拍后旧 type 都能正确显示）
 const BEAT_LABEL_ALL = (()=>{ const m={}; BEAT_OPTIONS.forEach(c=>c.types.forEach(t=>{ m[t.key]=t.label; })); return m; })();
+// 旧体系（四/七/十二/十五拍）多余/冲突 type 的兼容别名：切换微拍后，历史节拍表的旧 type 仍能正确显示中文，不显示英文裸 key。
+const BEAT_LEGACY_LABEL = {
+  rise2:'推进', after:'余波', turn:'转折', incident:'意外推进', hesitate:'犹豫转折', assist:'助力推进',
+  resolve:'决心突破', trial:'试炼推进', core:'逼近核心', abyss:'绝境燃点', afterglow:'短暂余波',
+  return_turn:'归程转折', final_climax:'终极燃点', harmony:'圆满余波', open:'开篇铺垫', theme:'主题铺垫',
+  bg:'背景铺垫', catalyst:'催化推进', inner_turn:'内心转折', new_world:'新境推进', subline:'副线铺垫',
+  easy:'轻松推进', mid_turn:'中部转折', pressure:'压力推进', dark_climax:'至暗燃点', despair:'绝望余波',
+  counter:'反击转折', close:'收束余波'
+};
 // 全部拍数节拍的「功能说明」全局映射
 const BEAT_NOTE_ALL  = (()=>{ const m={}; BEAT_OPTIONS.forEach(c=>c.types.forEach(t=>{ m[t.key]=t.note; })); return m; })();
-function currentBeatId(){ const o=state.outline; return o && o.beatCount ? Number(o.beatCount) : BEAT_DEFAULT_ID; }
+function currentBeatId(){
+  const o=state.outline;
+  let v = o && o.beatCount ? Number(o.beatCount) : BEAT_DEFAULT_ID;
+  // v1.0.146 迁移：旧「四拍/七拍/十二拍/十五拍」id(4/7/12/15) 已不再是章节微拍体系，
+  // 旧数据一律落到默认「微五拍」，避免落在 BEAT_OPTIONS[0] 意外选中。
+  if(!BEAT_OPTIONS.some(b=>b.id===v)) v = BEAT_DEFAULT_ID;
+  return v;
+}
 function currentBeatCfg(){ return BEAT_OPTIONS.find(b=>b.id===currentBeatId()) || BEAT_OPTIONS[0]; }
 function beatTypesDefs(){ return currentBeatCfg().types; }
 function beatTypeKeys(){ return beatTypesDefs().map(t=>t.key); }
 function beatCnt(){ return beatTypesDefs().length; }
-function beatLabelFor(key){ return BEAT_LABEL_ALL[key] || (()=>{ const t=beatTypesDefs().find(x=>x.key===key); return t?t.label:key; })(); }
+function beatLabelFor(key){ return BEAT_LABEL_ALL[key] || BEAT_LEGACY_LABEL[key] || (()=>{ const t=beatTypesDefs().find(x=>x.key===key); return t?t.label:key; })(); }
 function beatNoteFor(key){ return BEAT_NOTE_ALL[key] || ''; }
 // 是否属「燃点」类节拍（用于章节生成的高潮/张力检测，任意拍数通用）
 function isClimaxType(key){ return /燃点/.test(BEAT_LABEL_ALL[key] || key); }
 // 动态节拍系统提示词：按所选拍数生成 N 段节拍表
 function buildBeatsSys(){
   const cfg = currentBeatCfg(), defs = cfg.types, cnt = defs.length;
-  const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}`).join('\n');
-  return `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于【章节标题】【已定稿的前文骨架】【全书导航/大纲节拍结构/设定词典】生成${cnt}段节拍表（当前选定「${cfg.label}」节拍体系）。
+  const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}${t.wc?`；建议字数占比：${t.wc}`:''}`).join('\n');
+  const selectRule = cfg.id===3 ? '读者每约 500 字就要一个爽点（新媒体/极爽文）' : (cfg.id===5 ? '读者每约 1500 字要一次小情绪起伏（传统男女频标准）' : (cfg.id===2 ? '读者要前 2500 字屏息、最后约 500 字头皮发麻的瞬间爆裂（悬疑惊悚）' : '读者追求细腻情感递进、燃点小而暖（慢热治愈）'));
+  return `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于【章节标题】【已定稿的前文骨架】【全书导航/大纲节拍结构/设定词典】生成${cnt}段节拍表（当前选定「${cfg.label}」微拍体系——${selectRule}）。
+【微拍铁律】
+1. 燃点规模须克制：每章燃点为一枚「小爽点/小高潮」，强度约全书终极燃点的千分之一，禁止提前打光主角底牌。
+2. 聚焦章节小目标：每章只解决一个具体小麻烦/小进展即可，不要贪多；章事件须为长线主线输出至少一个信息/线索/关系推进。
+3. ${cfg.wc||''}（标称字数配比，正文撰写时参考，节拍表事件仍一句话概述）。
 【输入】会给出：本批次章节标题、核心定位/深层主题、大纲节拍的结构、设定词典、已定稿前文骨架。
 【节拍结构与顺序（严格按此 ${cnt} 段）】
 ${specLines}
@@ -3889,12 +3898,8 @@ function buildOutlineSys(){
   const bbCfg = currentBookBeatCfg();
   parts.push(`\n\n【全书拍子 · ${bbCfg.label}】${bbCfg.note}
 全书故事按「${bbCfg.label}」的 ${bbCfg.id} 个阶段升格推进；每个阶段应包含一个明确的阶段高潮事件，并标注其「燃点性质」（如：夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰等）。相邻阶段的燃点性质必须不同，禁止全书反复使用同一种性质的燃点。`);
-  // v1.0.140：把「所选节拍表拍数」注入大纲生成（v1.0.143 起不再要求 structure，仅作剧情节奏指导）。
-  const _beatCfg = currentBeatCfg();
-  const _beatSeq = (_beatCfg.types||[]).map(t=>t.label).join('→');
-  parts.push(`\n\n【大纲节拍 · ${_beatCfg.label}】全书剧情按「${_beatCfg.label}」节拍体系组织（每章 ${(_beatCfg.types||[]).length} 段：${_beatSeq}）。
-1. 章节推进遵循所选节拍：先铺垫立境→再推进冲突→于燃点处释放收获或逆转→以悬念/收束引向下一阶段。
-2. 全书须以一个完整节拍阶段收尾（落在悬念/合 一侧），禁止中途止于推进阶段。`);
+  // v1.0.146：大纲不再注入章节微拍（微三/微五/微七/双拍）——那是规划师每章 3000 字级的微观节奏，
+  // 不属于全书阶段性节奏，注入只会干扰大纲；微观节拍完全交给规划师节拍表步骤。
   parts.push(`\n\n【防套路疲劳 · 全书层约束】
 1. 主角每次遇到困难的解决方式不能都一样：不同阶段的高潮事件必须是不同性质的收获/代价/认知转变。
 2. 允许在主要推进阶段之间插入「缓冲/情感休整段」：该段没有大转折、没有大燃点，只用于人物关系、生活细节或情绪沉淀。
@@ -5428,6 +5433,7 @@ function viewStory(){
       <p class="sub so-logline" ${state.soCollapsed?'hidden':''}>${esc(o.logline||'')}</p>
       <div class="btn-row" style="margin-top:6px"><button type="button" class="btn small ghost" id="btnOutlineRegen" title="再生成一批 ${OUTLINE_CANDIDATE_N} 个候选大纲供选择；当前大纲与旧候选自动存入历史版本，不会丢失">🔄 重生成大纲</button></div>
       ${ isLong() ? anchorEditHtml() : '' }
+      ${ isLong() ? beatStructureCardHtml() : '' }   <!-- v1.0.145 恢复：大纲节拍的结构（本地按全书拍子映射章节阶段），位于 小说简介 与 章节标题 之间 -->
       ${ chapterTitleBlock() }
       ${ isLong() ? aiRecipeCard() : '' }   <!-- v11 卡片顺序：AI配方助手 移到 章节标题 与 全书规划师 之间 -->
       ${ writeStyleCard() }
@@ -5486,8 +5492,74 @@ function viewStory(){
 
 /* ==================== 4.6 Plus 新增卡片（第 2 章） ==================== */
 
-// —— 2.1 大纲节拍的结构卡 —— v1.0.144：原「大纲节拍的结构」章目分组卡已随 structure.chapterPlan 彻底移除，
-// 全书拍子仅通过 buildOutlineSys 作为大纲生成与下游的节奏指导，不再产出独立分组界面；每章细到段的节拍表见「🧭 全书规划师」。
+// —— 2.1 大纲节拍的结构卡 —— v1.0.145 恢复：数据源改为本地按「全书拍子」阶段划分章节
+// （structure.chapterPlan 已于 v1.0.144 彻底移除，此处不再依赖 AI 输出任何 structure 字段，
+//   而是根据当前所选全书拍子体系 + 现有章节列表，将各章归入对应阶段展示）。
+function beatStructureCardHtml(){
+  const o = state.outline || {};
+  const chs = Array.isArray(o.chapters) ? o.chapters : [];
+  const bb = currentBookBeatCfg();
+  // 当前拍子的阶段名（取该拍子体系下的阶段序列；若无则按标签名兜底）
+  const stageNames = beatStageNames();
+  const totalCh = chs.length;
+  if(!totalCh || !stageNames.length){
+    return `<div class="card bs-card">
+      <div class="bs-head" role="presentation">
+        <h3 style="margin:0">📐 大纲节拍的结构</h3>
+        <span class="bs-head-stat">${esc(bb.label)} · ${stageNames.length} 段</span>
+      </div>
+      <div class="bs-body">
+        <p class="muted" style="margin:0;font-size:12px">当前大纲暂无章节列表。生成大纲（含章节标题）后，这里会按「${esc(bb.label)}」把各章归入对应阶段展示。</p>
+      </div>
+    </div>`;
+  }
+  // 把 N 章尽量均匀归入 M 个阶段（先按整除基数，余数向前补）
+  const M = stageNames.length;
+  const base = Math.floor(totalCh / M);
+  const rem  = totalCh % M;
+  const sizes = stageNames.map((_,si)=> base + (si < rem ? 1 : 0));
+  const beams = []; let cur = 0;
+  stageNames.forEach((name, si)=>{
+    const n = sizes[si];
+    const slice = n ? chs.slice(cur, cur+n) : [];
+    cur += n;
+    beams.push(`
+      <div class="bs-beam">
+        <div class="bs-beam-top">
+          <span class="bs-beam-idx">${si+1}</span>
+          <span class="bs-beam-k">${esc(name)}</span>
+          <span class="bs-beam-meta">${n ? `第 ${cur-n+1}—${cur} 章 · ${n} 章` : '本章阶段暂无对应章'}</span>
+        </div>
+        <div class="bs-beam-chs">${slice.map((c, j)=>{
+          const ci = cur - n + j;
+          return `<span class="bs-beam-ch">${ci+1}. ${esc(cleanChapterTitle(c&&c.title))}</span>`;
+        }).join(' ')}</div>
+      </div>`);
+  });
+  return `<div class="card bs-card">
+    <div class="bs-head" role="presentation">
+      <h3 style="margin:0">📐 大纲节拍的结构</h3>
+      <span class="bs-head-stat">${esc(bb.label)} · ${M} 段 · ${totalCh} 章</span>
+    </div>
+    <div class="bs-body">
+      <div class="bs-fw"><span class="bs-fw-chip">${esc(bb.label)}</span><span class="bs-fw-seq">${stageNames.map(s=>esc(s)).join(' → ')}</span></div>
+      <div class="bs-beams">${beams.join('')}</div>
+      <p class="muted" style="margin:6px 0 0;font-size:11px">章节按所选「全书拍子」划分为阶段（本地映射，随章节列表自动更新）。切换拍数后用「🔄 重生成大纲」生效。</p>
+    </div>
+  </div>`;
+}
+
+// 当前「全书拍子」的阶段名序列：优先用 BOOK_BEAT_OPTIONS 各拍的阶段标签；四拍兜底为 起承转合
+function beatStageNames(){
+  const bb = currentBookBeatCfg();
+  const map = {
+    4:  ['铺垫','推进','燃点','余波'],
+    7:  ['铺垫','推进','转折','推进','燃点','余波','悬念'],
+    12: ['日常铺垫','意外推进','犹豫转折','助力推进','决心突破','试炼推进','逼近核心','绝境燃点','短暂余波','归程转折','终极燃点','圆满余波'],
+    15: ['开篇铺垫','主题铺垫','背景铺垫','催化推进','内心转折','新境推进','副线铺垫','轻松推进','中部转折','压力推进','至暗燃点','绝望余波','反击转折','终极燃点','收束余波']
+  };
+  return map[bb.id] || [];
+}
 
 // —— 2.4 事实与一致性看板 ——
 function factCardHtml(){
@@ -6895,15 +6967,28 @@ function chapterPlanBlock(){
           <button type="button" class="btn ghost" data-cp-raw title="手动提取 AI 原始响应数据，当自动更新失败时使用">🔧</button>
         </div>
       </div>
-      <!-- v240/906-4：「⚡ 一键四步」从卡身 stagebar 上移第二行最右；「📚 版本」按钮已随历史功能移除 -->
-      <div class="cp-head-row action-row">
-        <select class="cp-beat-select" data-cp-beat title="选择节拍表拍数：四拍/七拍/十二拍/十五拍（切换后规划师节拍表、AI 生成内容与章节正文均随之变化）">
-          ${BEAT_OPTIONS.map(b=>`<option value="${b.id}" ${b.id===currentBeatId()?'selected':''}>${b.label}</option>`).join('')}
-        </select>
-        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键四步</button>
-      </div>
+      <!-- v246：标题条只保留标题一行（全城渐变背景）；微拍选择与「⚡ 一键四步」移出标题条，收进下方规划区 -->
     </div>
     <div class="cp-body"${collapsed?' hidden':''}>
+      <!-- v246：微拍选择区（竖向，标题+作用描述，供用户先行挑选）→ 一键四步 → 四步 stagebar -->
+      <div class="cp-micropick">
+        <div class="cp-micropick-title">选择章节微拍节奏 <em>（每章约 3000 字单章）</em></div>
+        <div class="cp-micropick-opts">
+          ${BEAT_OPTIONS.map(b=>`
+            <label class="cp-micropick-item ${b.id===currentBeatId()?'sel':''}" data-micropick="${b.id}" title="${esc(b.desc||'')}">
+              <span class="cp-micropick-ic">${b.emoji||'🥁'}</span>
+              <span class="cp-micropick-txt">
+                <b>${esc(b.label)}</b>
+                <i>${esc(b.desc||'')}${b.wc?`（${b.wc}）`:''}</i>
+              </span>
+              <input type="radio" name="cpMicroPick" value="${b.id}" ${b.id===currentBeatId()?'checked':''} style="display:none">
+            </label>
+          `).join('')}
+        </div>
+      </div>
+      <div class="cp-micropick-actions">
+        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键四步</button>
+      </div>
       <div class="cp-stagebar">
         ${PLANNER_STAGES.map(st=>{
           const done = plannerStageDone(st.id);
@@ -6915,7 +7000,7 @@ function chapterPlanBlock(){
           </button>`;
         }).join('')}
       </div>
-      <div class="cp-stage-hint muted">四步可任意顺序单独点击，无需按顺序完成（点任意一步直接生成该步）；「⚡ 一键四步」在卡片标题区，默认跳过已完成步骤。节拍表拍数用标题区左侧蓝色下拉切换。</div>
+      <div class="cp-stage-hint muted">先在上方挑选「章节微拍节奏」，再点「⚡ 一键四步」或四步中的任一步；四步可任意顺序单独点击。切换微拍后，规划师节拍表、AI 生成内容与章节正文均随之变化。</div>
       ${hasPlans ? `<div class="cp-list">${items}</div>
         <p class="muted" style="margin:6px 0 0">节拍表由 AI 分批生成，写正文时注入为【L1 本章节拍表】（硬性执行清单）。</p>`
         : `<p class="sub">可选步骤：分四步规划全书——①每章节拍表（${currentBeatCfg().label}）、②定稿全书章节标题、③初期万物词典、④跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
@@ -6946,18 +7031,17 @@ function bindChapterPlan(){
       genPlannerStage(btn, stage);
     };
   });
-  // v1.0.137：拍数下拉切换（默认四拍；切换即改本书拍数，规划师节拍表 / 补全 / 正文注入都随之变化）
-  const beatSel = $('[data-cp-beat]');
-  if(beatSel){
-    beatSel.value = String(currentBeatId());
-    beatSel.onchange = ()=>{
-      state.outline = state.outline || {};
-      state.outline.beatCount = +beatSel.value;
-      persist();
-      toast(`已切换为「${currentBeatCfg().label}」节拍（${beatCnt()} 段）；重新生成①节拍表或点「补全${beatCnt()}段」即可生效。`);
-      render();
-    };
-  }
+  // v246：微拍选择区（竖向卡片，点击任意一项即切换本书微拍体系；规划师节拍表 / 补全 / 正文注入随之变化）
+  const setBeat = id=>{
+    state.outline = state.outline || {};
+    state.outline.beatCount = +id;
+    persist();
+    toast(`已切换为「${currentBeatCfg().label}」微拍（${beatCnt()} 段）；重新生成①节拍表或点「补全${beatCnt()}段」即可生效。`);
+    render();
+  };
+  $$('[data-micropick]').forEach(li=>{
+    li.addEventListener('click', e=>{ if(e.target.closest('.stop-btn')) return; setBeat(li.dataset.micropick); });
+  });
   const rawBtn = $('[data-cp-raw]');
   if(rawBtn) rawBtn.onclick = ()=> openCpRawPanel();
 }
@@ -8073,12 +8157,14 @@ function updateReaderProgress(){
   }
 }
 // v1.0.133 阅读进度条随机渐变：每次打开阅读器/导出全文时生成一组随机色相渐变，内联覆盖主题变量（.reader-progress i 的 var(--accent/--accent2) 作为兜底）
-// v240/906-3：接通调用（openReader / 导出阅读入口此前从未调用过本函数，渐变一直未生效）；并保证两色相差 ≥40° 防止渐变退化为纯色
+// v1.0.148 修复：style-polish.css 用 `#readerProgressFill{background:var(--grad-primary)!important}` 兜底，
+//   `.style.background=` 的内联样式会被它压过 → 渐变色恒为固定主题色。改用 setProperty(...,'important') 写入，
+//   内联「!important」优先级最高，能真正覆盖主题渐变，实现每次打开颜色不同；且对 dark/light/aurora/paper/黑板/机甲/赛博/古风 全主题一致生效。
 function randomizeReaderGradient(){
   const fill = $('#readerProgressFill'); if(!fill) return;
   const h1 = Math.floor(Math.random()*360);
   const h2 = (h1 + 40 + Math.floor(Math.random()*140)) % 360;   // 色相差 40°~180°
-  fill.style.background = `linear-gradient(90deg, hsl(${h1} 78% 62%), hsl(${h2} 78% 62%))`;
+  fill.style.setProperty('background', `linear-gradient(90deg, hsl(${h1} 78% 62%), hsl(${h2} 78% 62%))`, 'important');
 }
 function closeReader(){
   const ov = $('#readerOverlay'); if(!ov) return;
@@ -9911,8 +9997,8 @@ async function genPlannerAll(btn){
       // 全程共用这里的一个 AbortController）；cp-stopping 类给 ⚡ 让位；abort 事件置 stopped，区分「用户停止」与「阶段失败」
       // v250/933-T3A：⏹ 挂载点同样现查（同源问题——render 后旧 btn.closest 是 detached 子树）
       const _allNow = allBtn();
-      const stopParent = _allNow ? (_allNow.closest('.cp-head-row.action-row') || _allNow.parentNode)
-                                 : document.querySelector('.cp-card .cp-head-row.action-row');
+      const stopParent = _allNow ? (_allNow.closest('.cp-micropick-actions') || _allNow.parentNode)
+                                 : document.querySelector('.cp-card .cp-micropick-actions');
       let stopped = false;
       if(stopParent){
         showStopBtn(stopParent);
@@ -10515,6 +10601,7 @@ function buildChapterUser(i, opt={}){
     // 4.7 Pro（3.5）：补情绪弧 + 本章必须使用实体汇总
     beatText += `情绪弧：${plan.emotionalArc||'按上下文自然推进'}\n`;
     beatText += `必须使用实体汇总：${(plan.requiredEntities||[]).join('、')||'无'}\n`;
+    beatText += `【微拍配比】当前「${currentBeatCfg().label}」：${currentBeatCfg().wc||''}；本章燃点须克制为一枚小高潮（强度约全书终极燃点的千分之一），勿提前打光主角底牌；只解决一个具体小麻烦。\n`;
     plan.beats.forEach((b, idx)=>{
       beatText += `${idx+1}. [${beatLabelFor(b.type)}] ${b.event}（情绪：${b.emotional||'按上下文'}）——必须出现：${(b.requiredEntities||[]).join('、')||'无'}${(b.foreshadowing||[]).length ? '；埋伏笔：'+b.foreshadowing.join('、') : ''}\n`;
     });
@@ -10883,10 +10970,9 @@ function chapterBadgesHtml(i){
   const partial = state._chapterPartial && state._chapterPartial[i];
   const partialW = partial ? countWords(String(partial).trim()).total : 0;
   const parts = [];
-  // 主状态
-  if(chState[i]==='generating'){
-    parts.push(`<span class="pill is-busy" data-ch-state><span class="spinner"></span>生成中${partialW?' · '+partialW.toLocaleString()+'字':''}</span>`);
-  } else if(chState[i]==='error'){
+  // 主状态：v1.0.145 摒弃生成中的“生成中”徽章——底部操作栏的重生成按钮已有“生成中…”实时反馈，
+  // 顶部状态徽章照常按“未生成/已确认”如实展示，避免重复。
+  if(chState[i]==='error'){
     parts.push(`<span class="pill tag-warn" data-ch-state>⚠️ 生成失败</span>`);
   } else if(hasC){
     parts.push(`<span class="pill tag-ok" data-ch-state>✓ 已确认</span>`);
@@ -10990,8 +11076,11 @@ function openChapterRegenPanel(i){
     <div class="gs-modal">
       <div class="gs-modal-head"><b>🔄 重生成 · 第${i+1}章「${esc(cleanChapterTitle(title))}」</b>
         <button class="gs-x" data-rp-close>✕</button></div>
+      <div class="gs-actions rp-top-actions">
+        <button class="btn" data-rp-plain>直接重生成（无干预）</button>
+        <button class="btn primary" data-rp-with>💡 带我的建议重生成</button>
+      </div>
       <div class="gs-body">
-        <p class="gs-q"><b>想如何改动这一章？</b> 可在下方填写你的具体要求（改动方向、补充设定、错误修正等）；留空则 AI 会直接审读本章正文给出点评建议。</p>
         <textarea id="rpAdvice" class="rp-advice" placeholder="可选：写具体要求（如压缩到1500字、女主性格外放、增加与上章衔接…）；留空则直接点评本章正文"></textarea>
         <div class="advice-ai-row">
           <button type="button" class="btn small ghost" data-advice-ai="${i}">✨ 正文优化建议</button>
@@ -11037,10 +11126,6 @@ function openChapterRegenPanel(i){
             <button class="btn blue" data-rp-compare>⚡ 生成 A/B 两稿并对比</button>
           </div>
         </div>
-      </div>
-      <div class="gs-actions">
-        <button class="btn" data-rp-plain>直接重生成（无干预）</button>
-        <button class="btn primary" data-rp-with>💡 带我的建议重生成</button>
       </div>
     </div>`;
   document.body.appendChild(ov);
