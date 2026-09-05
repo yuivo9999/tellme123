@@ -708,6 +708,11 @@ body.reader-lock{overflow:hidden}
 .cp-head [data-cp-raw]{opacity:.6;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);font-size:11px}
 .cp-head [data-cp-raw]:hover{opacity:1;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
 .cp-head-row.action-row .cp-stage-all{margin-left:auto}
+/* v1.0.137 拍数选择下拉：与⚡一键五步同行、同样高度与圆角，蓝色主题 */
+.cp-head-row.action-row .cp-beat-select{display:inline-flex;align-items:center;height:32px;padding:3px 10px;border-radius:8px;border:1px solid rgba(96,165,250,.6);background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:#fff;font-size:12px;font-weight:600;line-height:1.4;cursor:pointer;box-shadow:0 2px 8px rgba(37,99,235,.35);transition:all .2s;font-family:inherit;max-width:96px}
+.cp-head-row.action-row .cp-beat-select:hover{background:linear-gradient(135deg,#3b82f6 0%,#2563eb 100%);border-color:rgba(147,197,253,.8)}
+.cp-head-row.action-row .cp-beat-select:focus{outline:none;border-color:rgba(147,197,253,.9)}
+.cp-head-row.action-row .cp-beat-select option{color:#111;background:#fff;font-weight:400}
 /* 原始数据按钮统一风格（章节卡片、标题行） */
 [data-ch-raw], [data-ct-raw]{opacity:.6;background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);font-size:11px}
 [data-ch-raw]:hover, [data-ct-raw]:hover{opacity:1;background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.2)}
@@ -745,6 +750,8 @@ body.reader-lock{overflow:hidden}
 /* 输入框 — 黑底白字 */
 .cp-input{flex:1 1 auto;min-height:34px;padding:5px 8px;font-size:12px;resize:vertical;line-height:1.6;font-family:inherit;background:#0d0d0d;border:1px solid rgba(255,255,255,.15);border-radius:8px;color:#fff;transition:border-color .2s}
 .cp-input:focus{outline:none;border-color:rgba(255,255,255,.4);box-shadow:0 0 0 2px rgba(255,255,255,.08)}
+/* v1.0.138：主线简述只读摘要 */
+.cp-summary-readonly{font-size:12px;line-height:1.6;color:rgba(255,255,255,.75);background:rgba(255,255,255,.04);border-left:3px solid rgba(59,130,246,.6);padding:6px 8px;border-radius:0 8px 8px 0;margin-bottom:8px;white-space:pre-wrap;word-break:break-word}
 /* 字数统计 */
 .cp-wc{font-size:10px;color:rgba(255,255,255,.35);flex:0 0 auto;white-space:nowrap;align-self:flex-end;padding:0 0 3px 2px;line-height:1;font-variant-numeric:tabular-nums}
 /* 底部提示 */
@@ -1367,6 +1374,11 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .reader-syn-card h4{ margin:0 0 10px; font-size:15px; font-weight:800; }
 .reader-syn-card .syn-body{ font-size:14px; line-height:1.8; white-space:pre-wrap; word-break:break-word; }
 .reader-syn-card .syn-body.muted{ color:var(--muted); }
+/* v1.0.138：阅读页「概」改为本章节拍表展示 */
+.reader-syn-card .rb-beat{ margin:8px 0; padding:6px 0; border-bottom:1px solid rgba(255,255,255,.08) }
+.reader-syn-card .rb-beat:last-child{ border-bottom:none }
+.reader-syn-card .rb-emo,.reader-syn-card .rb-ent{ font-size:12px; color:var(--muted); margin-left:6px }
+.reader-syn-card .rb-sum{ margin:0 0 10px; padding:6px 8px; background:rgba(255,255,255,.06); border-radius:6px; color:rgba(255,255,255,.85) }
 #chSumBody .syn-body{ white-space:pre-wrap; word-break:break-word; line-height:1.8; font-size:14px; }
 /* v1.0.115 速读梗概 · 阅读风容器（古风 palette，仅对本容器生效，不动全局主题变量，避免误伤其它界面） */
 .strip-read{
@@ -1583,4 +1595,18 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
   min-height:0;
   box-sizing:border-box;
   border-radius:10px;
+}
+
+/* 批量生成多章 / 区间生成 / 小说内容总字数：与章节卡片「重生成」按钮同等尺寸（.btn 标准 = 42px / 14px / 10x14）
+   仅改 size 相关属性，颜色与形状（.wc-total pill）不动；
+   规则靠 style.css 末尾 + 高优先级 id/类选择器，不受主题与加载顺序影响。 */
+#btnGenMany,
+#btnRangeGen,
+.wc-total .inner{
+  height:auto;
+  min-height:42px;
+  padding:10px 18px;
+  font-size:14px;
+  line-height:1.2;
+  box-sizing:border-box;
 }
