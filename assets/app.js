@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.182';   // v1.0.145 重生成弹窗：双按钮置顶一行（左=直接重生成/右=带建议），删除顶部描述；v1.0.144 structure 彻底清除
+const APP_VERSION = '1.0.184';   // v1.0.184 伏笔网注入全局时间线+各章节拍事件；v1.0.183 规划师新增④全局时间线阶段；v1.0.145 重生成弹窗
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -1270,7 +1270,7 @@ L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词�
 7. 结尾须指向下一章标题，埋下线索或悬念，但不得提前揭示下一章具体情节（若上下文未给出下一章标题，则按本章剧情自然收束即可，不强求指向标题）。
 8. 正文长度严格以【篇幅体量】块为准，必须在第一次生成时即写足该块硬下限（v1.0.165：取消"不设上限"宽松口径，禁止写成未达下限的梗概式短场景）。
 9. 场景与节拍的自然衔接铁律：全章必须是一条连续流动的叙事线——每个节拍事件的结尾自然引出下一个节拍的开头；时间/地点/视点的切换必须给出过渡（时间词、空间移动、镜头焦点转移或因果钩子），禁止节拍间硬跳切、禁止把每个节拍写成孤立片段。节拍之外的衔接与过渡文字（非情节推进的铺垫/转场内容）同样是正文的组成部分，不是多余的填充。
-10. 时间锚铁律（若 L1 节拍表标注了时间）：每段节拍标注的【时间】（如 现实·第2天·清晨）是本章时间承接的硬基准——正文各段落在哪个时点、就写那一时段的场景（光线/天色/动静/人物状态），上一章末尾落到哪个时点，本章开头就从那个时点或其自然延续接入，禁止时间跳跃开场、禁止把本章剧情安排到上一章主线的更早时点（同主线时点禁止倒退）。但时间一律靠场景细节自然体现，严禁出现在段首报时（"现在是/此刻是/此时是/当下是"）、严禁把时间锚或"第X天"字样原样照抄进正文；仅当时间确实跳跃时才用"翌日""三日后的黄昏"等自然过渡语融入叙述。跨支线（回忆/梦境/穿越）须按节拍表的支线标签处理，并在文中显式体现进入与回归，不扰乱主线时间顺序。
+10. 时间锚铁律（若 L1 节拍表标注了时间）：每段节拍标注的【时间】（如 现实·第2天·清晨）是本章时间承接的硬基准——正文各段落在哪个时点、就写那一时段的场景（光线/天色/动静/人物状态），上一章末尾落到哪个时点，本章开头就从那个时点或其自然延续接入，禁止时间跳跃开场、禁止把本章剧情安排到上一章主线的更早时点（同主线时点禁止倒退）。但时间一律靠场景细节自然体现，严禁出现在段首报时（"现在是/此刻是/此时是/当下是"）、严禁把时间锚或"第X天"字样原样照抄进正文；仅当时间确实跳跃时才用"翌日""三日后的黄昏"等自然过渡语融入叙述。跨支线（回忆/梦境/穿越）须按节拍表的支线标签处理，并在文中显式体现进入与回归，不扰乱主线时间顺序。另：严禁章节/段落以时间词开篇——首句不要用"清晨/天色/夜色/翌日/午后/入夜/黄昏"等时间状语起头，也不要把时间锚当首句标题；新章首句应从人物动作、对话、物件或场景细节切入，时间自第二句起用场景细节自然带出（仅当本章时间较上一章确已跳变时，才允许紧接首句之后交代一次，且融入叙述、不作孤立时间状语）。
 11. 视角与上帝视角铁律（v1.0.180）：默认采用"受限视角"叙述——把"摄影机"约 90% 的时间锁在主角身上，只以主角能看到/听到/摸到/感知到的信息推进叙述；想表现他人内心，一律改从主角的观察与推断出发，禁止直接钻进路人/配角/反派的内心"读心"。仅在下列"合法时机"才允许切到"上帝/他人视角"：(a) 章/节/空行分隔之后（有明确视角分界可用）；(b) 与主角核心目标同场产生重大利益冲突的关键时刻（全章最多一两处，用完立即回到主角）；(c) 只"展示而不解释"的客观信息（写他人"做了什么/什么神态/什么动作"，而不是"心里想什么"）；(d) 背景/世界观/前史等设定信息必须"寄生"在角色的即时感官里（经耳朵听到、鼻子闻到、手触及）传达，禁止作者跳出来大段广播；(e) 悬念揭晓的时刻（对前期已埋设的不确定性的兑现）。禁止项：同一场景内多个角色的内心随意跳切（禁止"跳切"）；禁止用上帝视角提前揭示主角与读者尚不该知道的答案（禁止剥夺"侦探权"）；禁止借上帝视角长篇灌输背景设定（禁止"死神"式信息倾泻）；禁止让配角甚至路人获得与主角同等的心理戏、使情感焦点涣散（禁止稀释"主角感"）。【例外】若本章叙事技法采用了「多视角群像」，可放宽为受控视角切换，但仍须每个视角边界清晰、各视角有辨识度、切换有明确分界（章节/空行），且整体仍以主角视角为主轴。
 
 【内部一致性自检（不写入输出）】
@@ -3347,7 +3347,7 @@ const PLANNER_GLOSSARY_SYS = `你是一位长篇「设定词典构建师」。�
 5. 只输出上述 JSON。`;
 
 // ⑤ 伏笔网：跨章节设计伏笔—回收链，写入伏笔台账。（v1.0.141 断链：不再引用旧结构骨架/幕；改为基于「大纲节拍的结构」阶段）
-const PLANNER_FORESHADOW_SYS = `你是一位长篇「伏笔设计师」。请基于全部章节标题与「大纲节拍的结构」阶段，设计一张贯穿全书的伏笔网络（植入章—回收章配对）。
+const PLANNER_FORESHADOW_SYS = `你是一位长篇「伏笔设计师」。请基于全部章节标题与「大纲节拍的结构」阶段——若输入中提供了【全局时间线】与【各章节拍事件】，也必须将它们一并作为依据——设计一张贯穿全书的伏笔网络（植入章—回收章配对）。
 【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
 {
   "foreshadows": [
@@ -3355,11 +3355,12 @@ const PLANNER_FORESHADOW_SYS = `你是一位长篇「伏笔设计师」。请基
   ]
 }
 【硬性约束】
-1. 伏笔必须能从章节标题或「大纲节拍的结构」阶段中找到依据，禁止无中生有；每条给出明确的植入章与回收章（回收章 > 植入章）。
+1. 伏笔必须能从章节标题、「大纲节拍的结构」阶段、【各章节拍事件】或【全局时间线】中找到依据，禁止无中生有；每条给出明确的植入章与回收章（回收章 > 植入章）。
 2. 全书记 5—15 条为宜；重大主线伏笔 1—3 条贯穿全书，其余为局部小伏笔（回收跨度 3—8 章）。
 3. 回收章的剧情必须能承接该伏笔的兑现。
 4. 伏笔的植入与回收必须落在「大纲节拍的结构」合理跨度内：重大贯穿伏笔的回收章应落在其植入阶段之后、且不越过所对应的推进/合阶段；不得把伏笔植入或回收到与其阶段职责无关的章节。
-5. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
+5. 【时间线感知】若提供了【全局时间线】，伏笔的植入时点与回收时点须贴着全局时间推进——避免全部伏笔挤在同一时点（如同日）或同一段紧邻章节内批量兑现；重大伏笔应跨出真实可感知的时间跨度（覆盖数章乃至全书），局部小伏笔也要覆盖一段有意义的剧情。
+6. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
 
 // v1.0.116 小说核心锚点提取器：从完整线性简介中提炼「核心一句话定位 + 深层命题」，作为下游 AI 的导航灯塔。
 // 只读提炼，不做创作；低温(0.2)严格把关，不改变 logline 本身。
@@ -10016,15 +10017,17 @@ function validateOutlineFaithful(j, ctx){
 // 失败保持原值不清空；覆盖由调用方 confirm 把关。
 const PLAN_BATCH_SIZE = 25;
 
-/* ============ v1.0.138 规划师四段拆分 ============ */
+/* ============ v1.0.138 规划师五段拆分 ============ */
 const PLANNER_STAGES = [
   // v1.0.172：顺序改为「标题→词典→节拍表→伏笔网」。原为 节拍表→标题→词典→伏笔网，
   // 但 plannerBatchContext 生成节拍表时直接读取 o.chapters[].title（第N章《标题》）与词典实体做输入——
   // 节拍表强依赖标题与词典；而标题只依赖大纲、词典只依赖大纲+书名。故标题（骨架）先出，能落地的再依次生成。
+  // v1.0.183：在节拍表后插入「④ 全局时间线」——以全局视角统一重排全书时间锚，消除逐批机械排期，原伏笔网顺延为⑤。
   { id:'titles',     num:'①', label:'章节标题' },
   { id:'glossary',   num:'②', label:'万物词典' },
   { id:'beats',      num:'③', label:'节拍表'   },
-  { id:'foreshadow', num:'④', label:'伏笔网'   }
+  { id:'timeline',   num:'④', label:'全局时间线' },
+  { id:'foreshadow', num:'⑤', label:'伏笔网'   }
 ];
 function stageLabel(id){ const s=PLANNER_STAGES.find(x=>x.id===id); return s ? s.num+s.label : id; }
 // 阶段完成判定（v225/P4 重写：以"每一章都有数据"为准；空数组/部分批次完成一律不亮绿灯——修"刷新后假绿灯"）
@@ -10037,6 +10040,7 @@ function plannerStageDone(stage){
     case 'titles':     return totalN > 0 && (o.chapters||[]).every(c => String(c&&c.title||'').trim());
     // 完成判定要求每章有 beats
     case 'beats':      return everyPlan(p => Array.isArray(p.beats) && p.beats.length >= beatCnt());
+    case 'timeline':   return !!o._globalTimeline && Array.isArray(o._globalTimeline.chapters) && o._globalTimeline.chapters.length === totalN;
     case 'glossary':   return sourceHasGlossary((o.glossary)||{});
     case 'foreshadow': return !!(o._foreshadowLedger && Array.isArray(o._foreshadowLedger.planted) && o._foreshadowLedger.planted.length);
   }
@@ -10250,6 +10254,146 @@ async function genPlannerBeats(btn, opts){
   }
 }
 
+// ==================== v1.0.183：④ 全局时间线（规划师新阶段，接在节拍表后） ====================
+// 以全局视角统一重排全书各章/各拍的时间锚：消除逐批机械排期、让时间跨度为情节服务，回写节拍表
+// 并写入 o._globalTimeline（供时间线看板与承接真相源读取），正文据此承接、不再章首生硬报时。
+const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」。你拥有整本书的全局视野：能看到全书所有章节标题、每章每拍的剧情事件与它们目前各自的时间锚。你的唯一职责：把这些时间锚重新排成一整条**连贯、可信、有节奏**的全球时间线，让每章正文不再机械、不在章首生硬报时。
+【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
+{"chapters":[{"index":1,"beats":[{"type":"<该章原拍type，原样照抄>","time":"支线·时点，如 现实·第3天·上午"}, ...]}, ...], "global_notes":"用一句话说明全书时间跨度与节奏安排"}
+【硬性规则】
+1. chapters 的 index 从 1 起，数量必须与给定章节数完全一致；每章 beats 的数量与 type 必须照抄该章原拍顺序（只许改动 time 字段）。
+2. 现实（主线）支线必须在全书串成一条单调不倒退的连续时钟：第 N 章的时点必须晚于或衔接第 N-1 章末尾，严禁整体倒退；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰，切换必须由剧情出入点解释。
+3. 时间跨度由剧情事件决定、绝不由章节序号决定：严禁"第N章=第N天"的等差排期。同一事件内的多拍落同一时刻/同一日；赶路/养伤/修炼/等待/多日布局可整段跳到数日/数旬/数月之后；紧迫戏压缩到同一日内甚至数小时内。时点贴合并可被事件解释，前后衔接自然、全书时间成立。
+4. 时间节奏要有起伏：有的章时间基本不流动（同一日/同一刻内展开多拍），有的章跨数天，全书绝不是均匀的钟表。
+5. 每个 time 只写"支线名 + 一个时点"（≤12 字），用顿号或·分隔，不要多余解释。`;
+
+// 全局时间线输出校验：整体结构 + 每章 beat 数/type 顺序/必填 time
+function validateTimelineOutput(j){
+  if(!j || typeof j !== 'object') return '返回不是对象';
+  if(!Array.isArray(j.chapters) || !j.chapters.length) return '缺少 chapters 数组';
+  const keys = beatTypeKeys();
+  for(const [ci, cp] of j.chapters.entries()){
+    if(!cp || typeof cp !== 'object') return `第 ${ci+1} 个 chapter 不是对象`;
+    if(!Number.isInteger(+cp.index) || +cp.index < 1) return `第 ${ci+1} 个 chapter 缺失有效 index`;
+    if(!Array.isArray(cp.beats) || cp.beats.length !== beatCnt()) return `第 ${ci+1} 章 beats 应为 ${beatCnt()} 段，实得 ${Array.isArray(cp.beats)?cp.beats.length:'非数组'}`;
+    for(let i=0;i<cp.beats.length;i++){
+      const b = cp.beats[i];
+      if(!b || !String(b.time||'').trim()) return `第 ${ci+1} 章第 ${i+1} 拍缺失 time`;
+      if(keys[i] && b.type !== keys[i]) return `第 ${ci+1} 章第 ${i+1} 拍 type 应为 ${keys[i]}，实得 ${b.type}`;
+    }
+  }
+  return '';
+}
+
+// 全局时间线用户拼装：全量章节标题 + 各章各拍事件与现有时间锚（全局视野即"上一步生成内容全量喂入"）
+function buildTimelineUser(){
+  const o = state.outline || {};
+  const totalN = (o.chapters||[]).length;
+  const parts = [`【全书章节数】${totalN} 章`];
+  if(o.title) parts.push(`【书名】${o.title}`);
+  if(o.tone) parts.push(`【整体情绪基调】${o.tone}`);
+  const _stg = chapterPlanStages(o);
+  if(_stg && _stg.length) parts.push(`【大纲节拍的结构】全书按阶段推进：${_stg.map(s=>`第 ${s.first}—${s.last} 章「${s.name}」`).join('；')}`);
+  const rows = [];
+  for(let i=0;i<totalN;i++){
+    const c = o.chapters[i] || {};
+    const p = Array.isArray(o.chapterPlans) ? o.chapterPlans[i] : null;
+    const t = String((c.title||'').trim());
+    const beats = (p && Array.isArray(p.beats)) ? p.beats : [];
+    const btxt = beats.map((b,bi)=>`   [${bi+1}] ${b.type||'?'} time=「${String((b.time||'')).trim()||'?'}」 ${String((b.event||'')).slice(0,46)}`).join('\n');
+    rows.push(`第${i+1}章《${t}》\n${btxt || '  （无节拍）'}`);
+  }
+  parts.push(`【全书各章节拍与现有时间锚】\n${rows.join('\n')}`);
+  return parts.join('\n\n');
+}
+
+// v1.0.184：全局时间线 + 各章节拍事件 上下文块——供 ⑤伏笔网 阶段读取，让伏笔设计贴着全局时间推进、能落地到具体剧情。
+// 若尚未生成时间线/节拍，则静默返回 ''（伏笔网仍可基于标题与结构阶段运行）。
+function globalTimelineBlock(){
+  const o = state.outline || {};
+  const totalN = (o.chapters||[]).length;
+  if(!totalN) return '';
+  const parts = [];
+  const gt = o._globalTimeline;
+  if(gt && Array.isArray(gt.chapters) && gt.chapters.length){
+    const rows = gt.chapters.map(c=>{
+      const t = String((o.chapters[c.index]&&o.chapters[c.index].title)||'').trim();
+      return `第${c.index+1}章《${t||'?'}》：${String(c.from||'?').trim()} → ${String(c.to||'?').trim()}`;
+    });
+    parts.push(`【全局时间线】（全书各章时间跨度 起 → 止）\n${rows.join('\n')}`);
+    if(gt.notes) parts.push(`【全局节奏】${gt.notes}`);
+  }
+  const evRows = [];
+  for(let i=0;i<totalN;i++){
+    const p = Array.isArray(o.chapterPlans)?o.chapterPlans[i]:null;
+    if(!p || !Array.isArray(p.beats) || !p.beats.length) continue;
+    const t = String((o.chapters[i]&&o.chapters[i].title)||'').trim();
+    const evs = p.beats.map(b=>String((b&&b.event)||'').replace(/\s+/g,'').slice(0,40)).filter(Boolean).join(' -> ');
+    if(evs) evRows.push(`第${i+1}章《${t||'?'}》：（${evs}）`);
+  }
+  if(evRows.length) parts.push(`【各章节拍事件】（伏笔据此落地到具体剧情）\n${evRows.join('\n')}`);
+  return parts.join('\n\n');
+}
+
+// ④ 全局时间线（单批：一次重排全书；需先有节拍表）
+async function genPlannerTimeline(btn, opts){
+  opts = opts || {};
+  if(!plannerGate(opts)) return false;
+  const o = state.outline;
+  const totalN = (o.chapters||[]).length;
+  if(!totalN){ if(!opts.silent) toast('请先设置全书章节数'); return false; }
+  const _pl = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
+  if(_pl.length < totalN || !_pl.every(p=>p && Array.isArray(p.beats) && p.beats.length >= beatCnt())){
+    if(!opts.silent) toast('请先完成 ③ 节拍表，再规划全局时间线');
+    refreshPlannerStageBar(null, 'timeline'); return false;
+  }
+  markAIRunning('chapterPlan');
+  refreshPlannerStageBar('timeline', null);
+  let preview = plannerPreview(btn, '正在全局重排时间线…'), _streamBuf = '';
+  plannerRunBtn(btn, true);
+  const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
+  if(stopParent) showStopBtn(stopParent);
+  try{
+    const user = buildTimelineUser();
+    const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
+    const cands = await Promise.all([
+      callAIWithContract(callDeepSeek(PLANNER_TIMELINE_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}), {needJson:true, expectedCount:totalN, countPath:'chapters', schemaValidator:validateTimelineOutput, taskName:'全局时间线-A'}),
+    ]);
+    const best = cands.filter(c=>c && c.ok).sort((a,b)=>(b.score||0)-(a.score||0))[0];
+    if(!best) throw new Error((cands[0] && cands[0].error) || '所有时间线候选均无效');
+    let changed = 0;
+    const anchors = [];
+    best.data.chapters.forEach(cp => {
+      const idx = +cp.index - 1;
+      if(idx < 0 || idx >= totalN) return;
+      const plan = o.chapterPlans[idx]; if(!plan || !Array.isArray(plan.beats)) return;
+      cp.beats.forEach((nb, j) => {
+        const bb = plan.beats[j]; if(!bb) return;
+        const nt = String(nb && nb.time || '').trim();
+        if(nt && String(bb.time || '').trim() !== nt){ bb.time = nt; changed++; }
+      });
+      const t0 = cp.beats.length ? String(cp.beats[0].time || '').trim() : '';
+      const t1 = cp.beats.length ? String(cp.beats[cp.beats.length-1].time || '').trim() : '';
+      anchors.push({ index: idx, title: String((o.chapters[idx] && o.chapters[idx].title) || (''+idx+1)), from: t0, to: t1 });
+    });
+    o._globalTimeline = { chapters: anchors, notes: String(best.data.global_notes || '').trim(), ts: Date.now() };
+    persist();
+    render();
+    markAIDone('chapterPlan');
+    refreshPlannerStageBar(null, null);
+    if(!opts.silent) toast(`全局时间线完成：重排 ${changed} 处时间锚${o._globalTimeline.notes ? '｜'+o._globalTimeline.notes.slice(0,28) : ''}`);
+    return true;
+  }catch(e){
+    if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'全局时间线：'+e.message});
+    if(!opts.silent) toast(e.name==='AbortError' ? '已停止全局时间线' : '全局时间线失败：'+e.message);
+    refreshPlannerStageBar(null, 'timeline');
+    return false;
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='chapterPlan');
+    hideStopBtn(); if(preview) preview.remove(); plannerRunBtn(btn, false);
+  }
+}
+
 // ④ 万物词典（单批；产出种子合并进权威词典，同名以现有为准）
 async function genPlannerGlossary(btn, opts){
   opts = opts || {};
@@ -10343,6 +10487,7 @@ async function genPlannerForeshadow(btn, opts){
     const skel = structureSkeletonBlock(); if(skel) parts.push(skel);   // v1.0.139：伏笔网注入全书结构骨架
     parts.push(`【章节标题】${titles||'(无)'}`);
     parts.push(`【全书章数】${total}`);
+    const tlBlock = globalTimelineBlock(); if(tlBlock) parts.push(tlBlock);   // v1.0.184：注入全局时间线+每章节拍事件，伏笔贴着时间布线
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
     const res = await callAIWithContract(callDeepSeek(PLANNER_FORESHADOW_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-伏笔'});
@@ -10382,6 +10527,7 @@ async function genPlannerForeshadow(btn, opts){
 
 const PLANNER_GEN = {
   beats: genPlannerBeats,
+  timeline: genPlannerTimeline,   // v1.0.183 ④ 全局时间线
   titles: genPlannerTitles,
   glossary: genPlannerGlossary,
   foreshadow: genPlannerForeshadow
@@ -10403,14 +10549,14 @@ async function genPlannerAll(btn){
     skipDone = confirm(
       `已完成：${doneList.join('、')}\n\n` +
       `【确定】智能执行：跳过已完成，只跑 ${PLANNER_STAGES.filter(s=>!plannerStageDone(s.id)).map(s=>stageLabel(s.id)).join('、') || '（全部已完成，无事可做）'}\n` +
-      `【取消】全部重跑：四步按顺序覆盖生成（直接覆盖现有内容）`
+      `【取消】全部重跑：五步按顺序覆盖生成（直接覆盖现有内容）`
     );
     if(!skipDone){
-      if(!confirm(`全部重跑将按顺序生成：①章节标题→②万物词典→③节拍表（${currentBeatCfg().label}）→④伏笔网，会覆盖现有规划内容，继续？`)) return;
+      if(!confirm(`全部重跑将按顺序生成：①章节标题→②万物词典→③节拍表（${currentBeatCfg().label}）→④全局时间线→⑤伏笔网，会覆盖现有规划内容，继续？`)) return;
     }
   }
   const stages = skipDone ? PLANNER_STAGES.map(s=>s.id).filter(id=>!plannerStageDone(id)) : PLANNER_STAGES.map(s=>s.id);
-  if(!stages.length){ toast('四步均已完成，无需生成；如需重做请点击对应步骤按钮'); return; }
+  if(!stages.length){ toast('五步均已完成，无需生成；如需重做请点击对应步骤按钮'); return; }
   // v241/907-1 自锁修复：原给总控按钮走 busy() 加 .is-busy，而各阶段的 plannerGate→genBusy() 扫描
   // .is-busy 会命中总控自身 → 每步 0 进度即被拦截（单步正常、一键必断，v238 起历史问题）。改用
   // .cp-stage-all.running 视觉态（refreshPlannerStageBar 本就维护该类）+ textContent 文案，不进 genBusy 扫描面。
@@ -10459,11 +10605,26 @@ async function genPlannerAll(btn){
 }
 
 // 4.5：前文骨架（供规划师批间衔接）：全部前序标题
+// v1.0.183：增强为「前文内容骨架」——除标题外，注入前序章节已生成的节拍事件梗概与时间锚，让后批规划师拥有真实的前文内容与时间承接依据，不再只见标题。
 function buildPrevSkeleton(endIdx){
   const o = state.outline;
-  // v225/P5-D：空标题兜底，规划师批间上下文不渲染"《》"
-  const titles = (o.chapters||[]).slice(0, endIdx).map((c,i)=>{ const t=String((c&&c.title)||'').trim(); return `第${i+1}章${t?`《${t}》`:'（标题未定）'}`; }).join(' / ');
-  return `【已定稿的前文骨架】\n全部前序标题：${titles}`;
+  const ch = (o.chapters||[]).slice(0, endIdx);
+  const plans = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
+  const lines = [];
+  ch.forEach((c,i)=>{
+    const t = String((c&&c.title)||'').trim();
+    let line = `第${i+1}章${t?`《${t}》`:'（标题未定）'}`;
+    const p = plans[i];
+    if(p && Array.isArray(p.beats) && p.beats.length){
+      const b0 = String((p.beats[0]&&p.beats[0].time)||'').trim();
+      const b1 = String((p.beats[p.beats.length-1]&&p.beats[p.beats.length-1].time)||'').trim();
+      if(b0 || b1) line += `【时间 ${b0||'?'} → ${b1||'?'}】`;
+      const evs = p.beats.map(b=>String((b&&b.event)||'').replace(/\s+/g,'').slice(0,28)).filter(Boolean).join(' -> ');
+      if(evs) line += `（${evs}）`;
+    }
+    lines.push(line);
+  });
+  return `【已定稿的前文骨架】\n${lines.join('\n')||'（无）'}`;
 }
 
 // 4.5：规划师批次输出 schema 校验（titles/chapterPlans 结构、beats 四段完整性）
@@ -11168,7 +11329,7 @@ ${prevFull}
         const _prevTailT = String((hookBeatPrev && hookBeatPrev.time)||'').trim();
         const _curHeadT = (plan && Array.isArray(plan.beats) && plan.beats.length) ? String((plan.beats[0]&&plan.beats[0].time)||'').trim() : '';
         if(_prevTailT || _curHeadT){
-          ob2.push(`- 时间承接：上章末拍时间${_prevTailT?`「${_prevTailT}」`:'（未标注）'} → 本章首拍时间${_curHeadT?`「${_curHeadT}」`:''}。本章正文开头从该时点自然续写、禁止把剧情安排到更早时段；异支线开场须显式进入并随后收回。续写仍以情节与人物切入，时间用场景细节自然体现（天色/光线/动静/人物状态），禁止"现在是/此刻是/此时是"式报时开场，禁止把时间锚原样照抄进正文。`);
+          ob2.push(`- 时间承接：上章末拍时间${_prevTailT?`「${_prevTailT}」`:'（未标注）'} → 本章首拍时间${_curHeadT?`「${_curHeadT}」`:''}。本章正文开头从该时点自然续写、禁止把剧情安排到更早时段；异支线开场须显式进入并随后收回。续写仍以情节与人物切入，时间用场景细节自然体现（天色/光线/动静/人物状态），禁止"现在是/此刻是/此时是"式报时开场，禁止把时间锚原样照抄进正文；并严禁段落/句子以时间词开篇（"清晨/天色/夜色/翌日/午后/入夜/黄昏"等时间状语一律不放句首）——首句从人物动作、对话或物件切入，时间自第二句起用场景细节自然带出，仅当本章时间较上章确已跳变时才允许紧接首句交代一次且仍融入叙述。`);
         }
       }
       if(ob2.length){
