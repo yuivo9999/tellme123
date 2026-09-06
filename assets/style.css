@@ -1628,6 +1628,32 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .cp-item .bs-meta-fore input{ width:100%; }
 .cp-item .bs-head + .muted{ font-size:11px; color:var(--muted,var(--sub)); }
 
+/* ===== v1.0.175 时间锚：时间承接提示条 + 时间线看板 ===== */
+.cp-item .bs-meta-time{ flex:1 1 150px; }
+.cp-item .bs-meta-time input{ width:100%; min-width:120px; }
+.cp-item .bs-timebride{ display:flex; align-items:center; flex-wrap:wrap; gap:6px; font-size:11px; padding:5px 9px; margin-top:4px; border:1px solid var(--line); border-radius:8px; background:color-mix(in srgb,var(--accent2) 6%, transparent); color:var(--muted,var(--sub)); }
+.cp-item .bs-timebride.conflict{ border-color:color-mix(in srgb,#e5534b 60%,var(--line)); background:color-mix(in srgb,#e5534b 8%,transparent); }
+.bs-tb-label{ font-weight:600; color:var(--accent); }
+.bs-tb-val{ word-break:break-all; color:var(--txt,currentColor); }
+.bs-tb-arrow{ opacity:.55; }
+.bs-tb-warn{ color:#e5534b; font-weight:600; }
+.cp-time-toggle{ white-space:nowrap; }
+
+.tl-group{ margin:0 0 10px; }
+.tl-branch{ font-weight:600; font-size:13px; margin-bottom:6px; }
+.tl-count{ font-weight:400; font-size:11px; opacity:.6; margin-left:4px; }
+.tl-chips{ display:flex; flex-wrap:wrap; gap:6px; }
+.tl-chip{ display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line); border-radius:9px; padding:4px 9px; font-size:11px; color:var(--txt,currentColor); background:var(--panel); cursor:pointer; transition:transform .12s ease,border-color .12s ease; }
+.tl-chip:hover{ border-color:var(--accent); transform:translateY(-1px); }
+.tl-chip.bad{ border-color:color-mix(in srgb,#e5534b 60%,var(--line)); background:color-mix(in srgb,#e5534b 8%,transparent); }
+.tl-chip i{ font-style:normal; color:var(--muted,var(--sub)); }
+.tl-warn{ color:#e5534b; font-weight:600; font-style:normal; }
+.tl-legend{ font-size:11px; color:var(--muted,var(--sub)); margin-top:6px; }
+.tl-legend-dot.ok{ color:var(--accent); }
+.tl-legend-dot.bad{ color:#e5534b; }
+.tl-flash{ animation:tlFlash 1.4s ease; }
+@keyframes tlFlash{ 0%,100%{ box-shadow:none; } 35%{ box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 45%, transparent); } }
+
 /* =========================================================
  * v1.0.159 长书优化：每章节拍表折叠 + 批量控制
  * 100 章时页面默认只显示每章一行表头，点开才渲染拍卡，
