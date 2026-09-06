@@ -48,6 +48,15 @@ textarea{min-height:90px;line-height:1.6}
 .idea-row{position:relative;margin-bottom:12px}
 .idea-row textarea{min-height:180px;background:color-mix(in srgb, var(--accent2) 10%, var(--panel2));border-color:color-mix(in srgb, var(--accent2) 45%, var(--line));transition:border-color .15s, box-shadow .15s}
 .idea-row textarea:focus{border-color:var(--accent2);box-shadow:0 0 0 3px color-mix(in srgb, var(--accent2) 18%, transparent)}
+/* v1.0.186 叙事主体·团队选择器 */
+.team-pick{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:6px}
+.team-pick .team-item{position:relative;display:flex;align-items:center;gap:9px;padding:9px 11px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);cursor:pointer;transition:border-color .15s, background .15s;user-select:none}
+.team-pick .team-item:hover{border-color:color-mix(in srgb, var(--accent2) 55%, var(--line))}
+.team-pick .team-item.sel{border-color:var(--accent2);background:color-mix(in srgb, var(--accent2) 12%, var(--panel2));box-shadow:0 0 0 2px color-mix(in srgb, var(--accent2) 18%, transparent)}
+.team-pick .team-ic{font-size:16px;flex:0 0 auto}
+.team-pick .team-txt{display:flex;flex-direction:column;min-width:0}
+.team-pick .team-txt b{font-size:13px;color:var(--tx, var(--text, inherit))}
+.team-pick .team-txt i{font-style:normal;font-size:11px;color:var(--sub, var(--muted, #8b95a7));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 select{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa3b2' d='M6 8L1 3h10z'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;padding-right:34px}
 textarea:focus,input:focus,select:focus{outline:none;border-color:var(--accent2)}
 label.field{display:block;margin-bottom:12px}

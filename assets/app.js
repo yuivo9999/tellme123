@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.184';   // v1.0.184 伏笔网注入全局时间线+各章节拍事件；v1.0.183 规划师新增④全局时间线阶段；v1.0.145 重生成弹窗
+const APP_VERSION = '1.0.187';   // v1.0.187 章首铁律：治"每章主角名+动作开场"机械重复（正文System+承接任务书双落地）；v1.0.186 叙事主体·团队；v1.0.185 构想注入章节↔拍子落位
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -74,6 +74,7 @@ const state = {
   timeAnchor: true,       // v1.0.175 时间锚开关（默认开）：规划师为每拍给定「支线·时点」，正文据此承接章节/支线时间
   timeAnchorsAuto: true,  // v1.0.175 承接真相源（默认开）：正文落库后轻量模型回写本章末尾支线/时点，作下一章承接硬真相
   quickOutline: false,      // v1.0.178「默认大纲」开关（默认关）：打开后点「生成大纲」跳过 6 个候选角度选择，直接生成 1 个默认大纲
+  teamShape: 'solo',       // v1.0.186 叙事主体·团队：solo=主角线 / trio=铁三角(+2) / quad=四方(+3) / quint=五人团(+4)
   titleWriteBack: false, // v225/P5-C 章节标题回填已取消：标题只由「全书规划师」生成/定稿；字段保留仅为兼容旧存档读取（UI 开关已移除）
   langLayer: true,   // v1.0.129 语言分层自动调节（仅长篇生效，默认开）：书面语造氛围、口语推剧情；按题材自动定语言底色。关则不注入任何语言分层约束
   _narrIron: true,   // v1.0.133 叙事铁律总开关（默认开）：统一注入三大写作要求（硬铁律+软约束）到正文与规划师
@@ -500,6 +501,7 @@ function projectSnapshot(){
     _outlineCandidates: state._outlineCandidates || null,   // v230/3.1：多大纲候选 {batchTs, items:[{id,label,outline}], chosenId}
     _outlineCandsFolded: !!state._outlineCandsFolded,   // v239/905-2：候选大纲区折叠状态（选择完成后可手动折叠，随项目持久化）
     quickOutline: !!state.quickOutline,   // v1.0.178「默认大纲」开关状态随项目持久化
+    teamShape: (state.teamShape==='trio'||state.teamShape==='quad'||state.teamShape==='quint') ? state.teamShape : 'solo',   // v1.0.186 叙事主体·团队随项目持久化
     _chapterPartial: state._chapterPartial || {},   // 4.8 旗舰版（板块一-3）：流式中断续写缓存（刷新不丢）
     scenes: state.scenes,
     storyboard: state.storyboard,
@@ -585,6 +587,7 @@ function applyProject(p){
   state._outlineCandidates = (p._outlineCandidates && typeof p._outlineCandidates === 'object' && Array.isArray(p._outlineCandidates.items)) ? p._outlineCandidates : null;   // v230/3.1 多大纲候选恢复
   state._outlineCandsFolded = !!p._outlineCandsFolded;   // v239/905-2 候选大纲区折叠状态恢复
   state.quickOutline = !!p.quickOutline;   // v1.0.178「默认大纲」开关状态恢复
+  state.teamShape = (p.teamShape==='trio'||p.teamShape==='quad'||p.teamShape==='quint') ? p.teamShape : 'solo';   // v1.0.186 叙事主体·团队恢复
   state._chapterPartial = (p._chapterPartial && typeof p._chapterPartial === 'object') ? p._chapterPartial : {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存恢复
   // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 状态已随「叙事》人设/张力/沙盘」清理整体移除（不再持久化）
   normalizeOutline(state.outline);
@@ -612,6 +615,7 @@ function clearState(){
   state._outlineCandidates = null;   // v230/3.1 多大纲候选重置
   state._outlineCandsFolded = false;   // v239/905-2 候选大纲区折叠状态重置
   state.quickOutline = false;   // v1.0.178「默认大纲」开关重置为默认关闭
+  state.teamShape = 'solo';   // v1.0.186 叙事主体·团队重置为默认「主角线」
   state._chapterPartial = {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存重置
   state.aiNetwork = { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络重置
   // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 已随菜单清理整体移除（不再初始化）
@@ -2683,6 +2687,24 @@ function chapterCountVal(){
   if(Number.isInteger(v) && v>=1 && v<=200) return v;
   return null;
 }
+// v1.0.186 叙事主体·团队：可选团队形态（核心团总人数 = 1 主角 + N 主要配角），默认 solo=主角线
+const TEAM_OPTIONS = [
+  { id:'solo',  label:'主角线',        n:1, desc:'一位主角，单人主线贯穿全书' },
+  { id:'trio',  label:'铁三角 +2',     n:3, desc:'一主角 + 两位主要配角（如鬼吹灯三人组）' },
+  { id:'quad',  label:'四方团队 +3',   n:4, desc:'一主角 + 三位主要配角' },
+  { id:'quint', label:'五人团 +4',     n:5, desc:'一主角 + 四位主要配角' }
+];
+function currentTeamShape(){
+  const v = state.teamShape || 'solo';
+  return TEAM_OPTIONS.find(o => o.id === v) || TEAM_OPTIONS[0];
+}
+function isTeamStory(){ return (state.teamShape && state.teamShape !== 'solo'); }
+// 返回注入各 AI 的团队设定块；solo（非团队）时返回空串，注入方自行判断。
+function teamShapeBrief(){
+  if(!isTeamStory()) return '';
+  const ts = currentTeamShape();
+  return `【叙事主体·团队】本书为「${ts.label}」：一位主角 + ${ts.n-1} 位主要配角（核心团共 ${ts.n} 人）。团队必须"缺一不可"——每位成员都应有可被剧情反复调用的独特能力/资源/担当（如解谜、武力、决策、沟通、补给等），谁也无法单独完成核心目标；成员间存在化学反应与暗流（互补、默契、分歧、救场、归队），并在故事推进中被逐一兑现。禁止把成员写成背景板，禁止主角单刷、队友全程挂机。`;
+}
 // 生成大纲前唯一必填数字：本章节数量一句提示
 function chapterCountHint(){
   const v = chapterCountVal();
@@ -2955,7 +2977,8 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 3. genreTags 只能出现 2-4 个，且必须与 logline 一致。
 4. anchor 必须包含 题材+主角+核心冲突 三要素，≤50字；thesis 必须点出作品的核心主题/情感内核，≤80字；二者均不得为空。
 5. 忠实度硬约束：用户构想中出现的专名、称谓、设定、意象与关键情节点，必须在输出中原样保留；不得替换、改名或省略；如需调整须以用户原文为基准做增量扩展。
-6. 只输出上述 JSON，不要 markdown 代码块、不要解释。
+6. 团队叙事（仅当输入含【叙事主体·团队】时生效）：书名/简介须体现"团队共同目标与各自分工"，anchor 须含主角（+凸显团队的行动方式）；深化"缺一不可"的组队理由，禁止把团队写成单枪匹马的背景。
+7. 只输出上述 JSON，不要 markdown 代码块、不要解释。
 
 【输出示例】
 {
@@ -3157,8 +3180,8 @@ const CHAPTER_PLAN_SYS = CHAPTER_PLAN_SYS_PRO;
  */
 
 /* ============ v1.0.137 节拍表可配置：四拍 / 七拍 / 十二拍 / 十五拍 ============
- * 用户可在「全书规划师」标题区选择拍数（与⚡一键四步同行的蓝色下拉，默认四拍）。
- * 选择后：渲染 / 补全 / 提示词 / 校验 / 一键四步 / 章节正文 L1 注入 全部跟随所选拍数。
+ * 用户可在「全书规划师」标题区选择拍数（与⚡一键五步同行的蓝色下拉，默认四拍）。
+ * 选择后：渲染 / 补全 / 提示词 / 校验 / 一键五步 / 章节正文 L1 注入 全部跟随所选拍数。
  */
 /* =========================================================
  * 全书拍子（大纲层/宏观结构）：四拍/七拍/十二拍/十五拍
@@ -3302,6 +3325,9 @@ function buildBeatsSys(){
 3. ${cfg.wc||''}（标称字数配比，正文撰写时按此把每拍写足）。
 4. 每拍 event 必须写得足够具体：用一句话写清该拍的人物动作、直接冲突、即时目标与情绪走向（约40字上下，具体不空泛；禁止笼统概括、禁止模板句），正文才能按对应字数把这一拍展开到位。
 5. 每段节拍必须承接前一段续写态势，禁止各自孤立成片；本章各拍合一构成连续一场（或一条连续剧情线），情绪逐拍推进。
+${isTeamStory() ? `6. 【团队拍型（当前「${currentTeamShape().label}」）】每章须让核心团队在场并让每位成员有"存在反应"：event 尽力写清"由谁主导/谁执行"，全书穿插互补、互救、分歧、救场、归队等团队拍型；对话拍要有≥两个声音的对手戏并区分声口；不得整章只写主角独角戏、把配角写成背景板，也不得主角单刷、队友挂机。
+` : `6. 【团队拍型】当前为「主角线」单人叙事，专注单主角的行为与心理即可。
+`}${_timeOpen ? '7. 【时间锚】每拍须给定 time（见下）。' : ''}
 【输入】会给出：本批次章节标题、核心定位/深层主题、大纲节拍的结构、设定词典、已定稿前文骨架。
 【节拍结构与顺序（严格按此 ${cnt} 段）】
 ${specLines}
@@ -3360,7 +3386,8 @@ const PLANNER_FORESHADOW_SYS = `你是一位长篇「伏笔设计师」。请基
 3. 回收章的剧情必须能承接该伏笔的兑现。
 4. 伏笔的植入与回收必须落在「大纲节拍的结构」合理跨度内：重大贯穿伏笔的回收章应落在其植入阶段之后、且不越过所对应的推进/合阶段；不得把伏笔植入或回收到与其阶段职责无关的章节。
 5. 【时间线感知】若提供了【全局时间线】，伏笔的植入时点与回收时点须贴着全局时间推进——避免全部伏笔挤在同一时点（如同日）或同一段紧邻章节内批量兑现；重大伏笔应跨出真实可感知的时间跨度（覆盖数章乃至全书），局部小伏笔也要覆盖一段有意义的剧情。
-6. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
+6. 【团队个人线】（仅当输入含【叙事主体·团队】时生效）：除主角外，为每位主要配角各配至少一条"个人线"伏笔（身世/旧伤/隐瞒/私欲/独立目标），attributes 的植入—回收须跨出真实章距，不能与其角色的团队交集线性合并；成员间的暗流/分歧/隐瞒也是可用的伏笔来源。
+7. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
 
 // v1.0.116 小说核心锚点提取器：从完整线性简介中提炼「核心一句话定位 + 深层命题」，作为下游 AI 的导航灯塔。
 // 只读提炼，不做创作；低温(0.2)严格把关，不改变 logline 本身。
@@ -3635,6 +3662,19 @@ function buildIdeaPolishUser(ctx){
   if(bb) parts.push(`全书拍子·${bb.label}（${bb.subtitle}）\n阶段：${((bb.ai && bb.ai.stages) || []).join(' → ')}`);
   if(mb) parts.push(`章节微拍·${mb.label}${mb.wc ? `（${mb.wc}）` : ''}`);
   if(cc) parts.push(`全书章节数：${cc} 章`);
+  // v1.0.185：注入已解析的「章节↔全书拍子落位」——让构想 AI 直接看懂"N 章如何匹配当前拍子"，
+  // 不再只见原始拍数与章数、却不知二者如何咬合（章节数≥拍段→每段均分多章；章节数<拍段→多拍合并进一章）。
+  if(cc){
+    const plan = bookStagePlan(cc);
+    if(plan && plan.length){
+      const seg = []; let cur = 0;
+      plan.forEach(p=>{ const a = cur + 1; cur += p.n; seg.push(`第 ${a}—${cur} 章「${p.name}」`); });
+      parts.push(`【章节↔全书拍子落位】全书 ${cc} 章按当前拍子解析为 ${plan.length} 段：${seg.join('；')}`);
+    }
+  }
+  // v1.0.186：注入团队设定（仅非 solo 时输出），让构想 AI 据此产出团队画像
+  const tb = teamShapeBrief();
+  if(tb) parts.push(tb);
   if(parts.length) lines.push(`【已选叙事结构】\n${parts.join('\n\n')}`);
   return lines.join('\n\n');
 }
@@ -3645,7 +3685,9 @@ function buildOutlineUser(ctx){
   // 与 4.7 Pro（3.2）genOutline 的 user 拼装等价：【用户构想】+【优化构想简报】
   // v230/1-C：改为无条件调用——formatNavBeaconForOutline 内部自行决定用简报/纯文本优化稿/空（此前门控 ctx.polishBrief 会漏掉纯文本通道）
   const brief = formatNavBeaconForOutline();
-  return `【用户构想】\n${ctx.idea}\n\n${brief ? '【优化构想简报】\n' + brief : ''}`;
+  // v1.0.186：团队设定注入大纲 AI——让书名/简介/锚点体现团队（非 solo 时才有）
+  const tb = teamShapeBrief();
+  return `【用户构想】\n${ctx.idea}\n\n${brief ? '【优化构想简报】\n' + brief : ''}${tb ? '\n\n' + tb : ''}`;
 }
 function buildSubplotUser(ctx){
   const chIdx = ctx.chapterIdx;
@@ -3785,10 +3827,19 @@ function narrativeIronBlock(role){
     return block ? sep + '【叙事纪律（铁律已关闭，仅保留禁则/语言分层等中间件）】\n' + block : '';
   }
   const iron = role === 'chapter' ? NARRATIVE_IRON_HARD + '\n' + NARRATIVE_IRON_SOFT : NARRATIVE_IRON_HARD;
+  // v1.0.186 团队铁律（仅本章正文、且为团队叙事时追加）：落定团队"在场即存在/不单刷"的硬约束
+  let ironFull = iron;
+  if(role === 'chapter' && isTeamStory()){
+    ironFull += '\n【团队铁律】本书为团队叙事，核心团各成员凡在本章出场就必须有"存在性"——有对话、有动作、或有专属于该成员的反应/细节，不得被写成背景板或纯提线木偶；禁止主角一人单刷全篇、队友全程挂机——凡危机须体现靠成员互补能力/配合拆解；多人对话要有可辨识的声口与立场，避免把多条声音堆成一片没有区别的对白。';
+  }
+  // v1.0.187 章首反机械化：治"每章都拿主角名+动作开头"的把式开场
+  if(role === 'chapter'){
+    ironFull += '\n【章首铁律】严禁每章都以"主角姓名/称谓 + 动作"的同一模式起首（如每章第一句都是「沈暮 + 动作」）。每章开头必须换一种方式切入，且相邻章节尽量不重复同一种：优先随上文**续写式**——直接接住上一章结局未完成的对话/动作/悬念（可从中句、悬停处、只剩半句的话切入），而非让主角在别处重新开始；其次可选**场景/环境式**（从一个能即时带出情绪与冲突的场景细节/物件/光线/动静切入，主角稍后才点名）、**他人/群像式**（从他人口中或反应侧写主角处境，主角不占句首）、**悬念回接式**（以章末钩子的延续、一句质问或一个反常细节起首）。同一主语姓名不得连续多章占据句首；承接优先于新建——上一章有可续处就绝不另起炉灶。';
+  }
   const head = role === 'chapter'
     ? '【叙事铁律 · 本章写作总纲】'
     : '【叙事铁律 · 规划纪律总纲】（禁止项同样约束规划阶段的设计）';
-  return sep + head + '\n' + parts.filter(Boolean).join('\n') + '\n' + iron;
+  return sep + head + '\n' + parts.filter(Boolean).join('\n') + '\n' + ironFull;
 }
 
 // v10.15 重生成全部章节标题：保留大纲骨架，只重出标题；服从既有设定 + 用户建议 + 防套路第一优先。
@@ -3867,7 +3918,8 @@ const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想�
 题材（时代/类型基调）：…
 主角（身份/目标/核心缺陷/钩点）：…
 核心冲突（全书的引擎：谁与什么冲突、为何难解）：…
-结构（全书阶段与大致比例：若上方【用户构想】后已给出【已选叙事结构】（全书拍子阶段/章节微拍/章节数），全书阶段必须与该拍子贯通、勿自创一套不相容的分段；未给出则按一般起承转合给出比例）：…
+结构（全书阶段与大致比例：若上方【用户构想】后已给出【已选叙事结构】（含全书拍子阶段/章节微拍/章节数/【章节↔全书拍子落位】），全书阶段必须严格贴合该落位给出的"第 N—M 章「阶段名」"划分、与该拍子贯通，勿自创一套不相容的分段；未给出则按一般起承转合给出比例）：…
+团队（仅当上方已给出【叙事主体·团队】时必填，否则整行省略：主心骨是谁 + 每位成员的定位/能力担当 + 成员间化学反应与暗流 + "为什么必须组队"即缺一不可的理由）：…
 风格（基调 + 2-3 个落地方式）：…
 目标（想带给读者的体验）：…
 核心词（必须原样保留入书名/简介/锚点的专名与固定短语，用引号括起）：…
@@ -5638,6 +5690,15 @@ function viewStory(){
       ${ bookBeatHtml() }
       ${ loglineRangeHtml() }
       ` : '' }
+      <h4 style="margin:18px 0 6px">叙事主体<em style="font-weight:400;font-style:normal;color:#8b95a7;font-size:12px">（默认 主角线；团队线会全链路落实团队设定）</em></h4>
+      <div class="team-pick" id="teamPick">
+        ${TEAM_OPTIONS.map(o=>`
+        <label class="team-item ${o.id===currentTeamShape().id?'sel':''}" data-team="${o.id}" title="${esc(o.desc)}">
+          <span class="team-ic">${o.id==='solo'?'👤':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span>
+          <span class="team-txt"><b>${esc(o.label)}</b><i>${esc(o.desc)}</i></span>
+          <input type="radio" name="teamShape" value="${o.id}" style="display:none" ${o.id===currentTeamShape().id?'checked':''}>
+        </label>`).join('')}
+      </div>
       <h4 style="margin:18px 0 6px">故事构想</h4>
       <div class="idea-row">
         <textarea id="ideaInput" placeholder="">${esc(state.idea)}</textarea>
@@ -7255,10 +7316,10 @@ function chapterPlanBlock(){
           <button type="button" class="btn ghost" data-cp-raw title="手动提取 AI 原始响应数据，当自动更新失败时使用">🔧</button>
         </div>
       </div>
-      <!-- v246：标题条只保留标题一行（全城渐变背景）；微拍选择与「⚡ 一键四步」移出标题条，收进下方规划区 -->
+      <!-- v246：标题条只保留标题一行（全城渐变背景）；微拍选择与「⚡ 一键五步」移出标题条，收进下方规划区 -->
     </div>
     <div class="cp-body"${collapsed?' hidden':''}>
-      <!-- v246：微拍选择区（竖向，标题+作用描述，供用户先行挑选）→ 一键四步 → 四步 stagebar -->
+      <!-- v246：微拍选择区（竖向，标题+作用描述，供用户先行挑选）→ 一键五步 → 五步 stagebar -->
       <div class="cp-micropick">
         <div class="cp-micropick-title">选择章节微拍节奏 <em>（每章约 3000 字单章）</em></div>
         <div class="cp-micropick-opts">
@@ -7275,7 +7336,7 @@ function chapterPlanBlock(){
         </div>
       </div>
       <div class="cp-micropick-actions">
-        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键四步</button>
+        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键五步</button>
       </div>
       <div class="cp-stagebar">
         ${PLANNER_STAGES.map(st=>{
@@ -7283,12 +7344,12 @@ function chapterPlanBlock(){
           // v250/933-T1A：伏笔网完成态显示条数（用户反馈：只看到 ✓ 不知道生成了什么）
           const _fsN = (st.id==='foreshadow' && state.outline._foreshadowLedger) ? (state.outline._foreshadowLedger.planted||[]).length : 0;
           const _dot = done ? (st.id==='foreshadow' && _fsN ? '✓'+_fsN : '✓') : '·';
-          return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；四步可任意顺序单独点击，无需按顺序完成">
+          return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；五步可任意顺序单独点击，无需按顺序完成">
             <i class="cp-dot">${_dot}</i>${st.num}${st.label}
           </button>`;
         }).join('')}
       </div>
-      <div class="cp-stage-hint muted">先在上方挑选「章节微拍节奏」，再点「⚡ 一键四步」或四步中的任一步；四步可任意顺序单独点击。切换微拍后，规划师节拍表、AI 生成内容与章节正文均随之变化。</div>
+      <div class="cp-stage-hint muted">先在上方挑选「章节微拍节奏」，再点「⚡ 一键五步」或五步中的任一步；五步可任意顺序单独点击。切换微拍后，规划师节拍表、AI 生成内容与章节正文均随之变化。</div>
       ${hasPlans ? `<div class="cp-plans-tool">
           <button type="button" class="btn small ghost" data-cp-beat-expand title="展开全部章节的节拍表">▾ 全部展开</button>
           <button type="button" class="btn small ghost" data-cp-beat-collapse title="收起全部章节的节拍表（长书默认）">▸ 全部收起</button>
@@ -7299,7 +7360,7 @@ function chapterPlanBlock(){
         </div>
         <div class="cp-list">${items}</div>
         <p class="muted" style="margin:6px 0 0">节拍表由 AI 分批生成，写正文时注入为【L1 本章节拍表】（硬性执行清单）。</p>`
-        : `<p class="sub">可选步骤：分四步规划全书——①每章节拍表（${currentBeatCfg().label}）、②定稿全书章节标题、③初期万物词典、④跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
+        : `<p class="sub">可选步骤：分五步规划全书——①定稿章节标题、②初期万物词典、③每章节拍表（${currentBeatCfg().label}）、④全局时间线、⑤跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
     </div>
   </div>`;
 }
@@ -7316,7 +7377,7 @@ function bindChapterPlanFold(){
     const ico = head.querySelector('.cp-arrow'); if(ico) ico.textContent = state.cpCollapsed ? '▸' : '▾';
   };
 }
-// v1.0.138 规划师卡片绑定：一键四步 / 四阶段独立按钮 / 节拍表编辑即存
+// v1.0.138 规划师卡片绑定：一键五步 / 五阶段独立按钮 / 节拍表编辑即存
 function bindChapterPlan(){
   const all = $('[data-cp-all]');
   if(all) all.onclick = ()=> genPlannerAll(all);
@@ -9216,6 +9277,12 @@ function bindView(){
     const qtTg = $('#chkQuickOutline'); if(qtTg){
       qtTg.onchange = ()=>{ state.quickOutline = qtTg.checked; persist(); render(); toast(state.quickOutline?'已开启「默认大纲」：生成时将跳过 6 个候选选择，直接生成 1 个默认大纲':'已关闭「默认大纲」：生成时将一次给 6 个候选供比选'); };
     }
+    // v1.0.186 叙事主体·团队：选中即持久化并整页重渲染（后续构想/大纲/规划/正文全链路按所选团队注入）
+    const tsTg = $('#teamPick'); if(tsTg){
+      tsTg.querySelectorAll('[data-team]').forEach(lb=>{
+        lb.onclick = (e)=>{ e.preventDefault(); if(state.teamShape === lb.dataset.team) return; state.teamShape = lb.dataset.team; persist(); render(); toast(`叙事主体已切换为「${currentTeamShape().label}」`); };
+      });
+    }
   }
   // v11 简介字数范围（生成大纲前、仅长篇）：双数字输入，min>max 自动对调、max 上限 5000
   const llMin = $('#llMin'), llMax = $('#llMax');
@@ -10085,8 +10152,8 @@ function ensureChaptersPlaceholder(){
 function plannerGate(opts){
   if(!isLong() || !state.outline) return false;
   // v234 修复：删除对 aiNetwork.completed 硬查——completed 只是会话标记，多候选采用路径/导入项目/旧存档都可能缺失，
-  // 而 state.outline 存在即代表大纲在手（上一行已检查），completed 缺失时误报"请先完成上游步骤：生成大纲"阻断全部四步
-  // v241：force=true 供「⚡ 一键四步」总控旁路——总控入口已统一做 genBusy 检查，且总控每步先挂 ⏹（置
+  // 而 state.outline 存在即代表大纲在手（上一行已检查），completed 缺失时误报"请先完成上游步骤：生成大纲"阻断全部五步
+  // v241：force=true 供「⚡ 一键五步」总控旁路——总控入口已统一做 genBusy 检查，且总控每步先挂 ⏹（置
   // _abortCtl）；若不旁路，阶段入口的 genBusy 命中 _abortCtl 会造成第二种自锁（907 问题一的镜像坑）
   if(!(opts && opts.force) && genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
   ensureChaptersPlaceholder();   // v225/P5-A：占位章节数组就位，四阶段入口共用此闸
@@ -10109,6 +10176,8 @@ function plannerBatchContext(b, opts){
     parts.push(`【大纲节拍的结构】全书按本节拍阶段推进：${_stgTxt}。每章必须落在其所属阶段内、服务该阶段走向，不得越过当前阶段提前兑现后续阶段内容。`);
   }
   parts.push(`【整体情绪基调】${o.tone || '未指定'}`);
+  const _tb = teamShapeBrief();   // v1.0.186 团队设定注入节拍批：event 分工 / 团队拍型 / 对手戏
+  if(_tb) parts.push(_tb);
   parts.push(`【本批次】第 ${b.start+1}—${b.end} 章，共 ${n} 章\n${batchTitles}`);
   const prev = b.start > 0 ? buildPrevSkeleton(b.start) : '';
   if(prev) parts.push(prev);
@@ -10304,6 +10373,8 @@ function buildTimelineUser(){
     rows.push(`第${i+1}章《${t}》\n${btxt || '  （无节拍）'}`);
   }
   parts.push(`【全书各章节拍与现有时间锚】\n${rows.join('\n')}`);
+  const _tb = teamShapeBrief();   // v1.0.186 团队同场共时：团队核心团默认同在一条主线支线、共同推进
+  if(_tb) parts.push(_tb + '\n（团队叙事请留意：除非按职责/任务拆线，核心团各成员时间应落在同一主线支线的同一时点，别把团队成员拆到互相矛盾的时间）');
   return parts.join('\n\n');
 }
 
@@ -10432,6 +10503,9 @@ async function genPlannerGlossary(btn, opts){
     parts.push(`【章节标题】${titles||'(无)'}`);
     // v1.0.155：消除词典「悬空引用」——把「大纲节拍的结构」阶段数据真实下发，词典以结构与标题为准
     const glSkel = structureSkeletonBlock(); if(glSkel) parts.push(glSkel);
+    // v1.0.186 团队设定注入词典：核心团全员必须立档、可作节拍/正文的人名真源（非 solo 时才有）
+    const _tb = teamShapeBrief();
+    if(_tb) parts.push(_tb + '\n（须为核心团每位成员（主角 + 主要配角）立档：identity 含其团队担当/定位，各成员字段齐全，杜绝正文时临时造名）');
     if(sourceHasGlossary((o.glossary)||{})) parts.push(`【现有词典】${JSON.stringify(o.glossary,null,2)}`);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
@@ -10488,6 +10562,8 @@ async function genPlannerForeshadow(btn, opts){
     parts.push(`【章节标题】${titles||'(无)'}`);
     parts.push(`【全书章数】${total}`);
     const tlBlock = globalTimelineBlock(); if(tlBlock) parts.push(tlBlock);   // v1.0.184：注入全局时间线+每章节拍事件，伏笔贴着时间布线
+    const _tb = teamShapeBrief();   // v1.0.186 团队设定注入伏笔网：每位成员一条个人线伏笔
+    if(_tb) parts.push(_tb);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
     const res = await callAIWithContract(callDeepSeek(PLANNER_FORESHADOW_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-伏笔'});
@@ -10560,21 +10636,21 @@ async function genPlannerAll(btn){
   // v241/907-1 自锁修复：原给总控按钮走 busy() 加 .is-busy，而各阶段的 plannerGate→genBusy() 扫描
   // .is-busy 会命中总控自身 → 每步 0 进度即被拦截（单步正常、一键必断，v238 起历史问题）。改用
   // .cp-stage-all.running 视觉态（refreshPlannerStageBar 本就维护该类）+ textContent 文案，不进 genBusy 扫描面。
-  // v250/933-T3A：每步完成后阶段函数内部 render() 重建视图，「⚡ 一键四步」按钮 DOM 被替换——
-  // 闭包持有旧节点导致进度停在 1/N（2/4-4/4 全部写进孤立节点）。改为每次现查 DOM。
+  // v250/933-T3A：每步完成后阶段函数内部 render() 重建视图，「⚡ 一键五步」按钮 DOM 被替换——
+  // 闭包持有旧节点导致进度停在 1/N（2/5-5/5 全部写进孤立节点）。改为每次现查 DOM。
   const allBtn = ()=> document.querySelector('[data-cp-all]');
   const setTxt = t=>{ const b = allBtn(); if(b){ if(b._txt === undefined) b._txt = b.innerHTML; b.textContent = t; } };
   const finish = ()=>{
     const b = allBtn();
     if(b){ if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; } b.classList.remove('running'); }
   };
-  if(btn){ btn.classList.add('running'); setTxt(`四步生成中（0/${stages.length}）…`); }
+  if(btn){ btn.classList.add('running'); setTxt(`五步生成中（0/${stages.length}）…`); }
   try{
     for(let si=0; si<stages.length; si++){
       const st = stages[si];
-      setTxt(`四步生成中（${si+1}/${stages.length}）…`);
+      setTxt(`五步生成中（${si+1}/${stages.length}）…`);
       refreshPlannerStageBar(st, null);
-      // v241/908-2：每步开始把 ⏹ 挂到「⚡ 一键四步」所在动作行（阶段收到的 btn=null，其内部不再自建停止按钮，
+      // v241/908-2：每步开始把 ⏹ 挂到「⚡ 一键五步」所在动作行（阶段收到的 btn=null，其内部不再自建停止按钮，
       // 全程共用这里的一个 AbortController）；cp-stopping 类给 ⚡ 让位；abort 事件置 stopped，区分「用户停止」与「阶段失败」
       // v250/933-T3A：⏹ 挂载点同样现查（同源问题——render 后旧 btn.closest 是 detached 子树）
       const _allNow = allBtn();
@@ -10591,12 +10667,12 @@ async function genPlannerAll(btn){
       if(stopParent) stopParent.classList.remove('cp-stopping');
       if(!ok){
         refreshPlannerStageBar(null, st);
-        toast(stopped ? `已停止一键四步（停在「${stageLabel(st)}」）` : `一键生成中断于「${stageLabel(st)}」，可单独点击该步骤按钮重试`);
+        toast(stopped ? `已停止一键五步（停在「${stageLabel(st)}」）` : `一键生成中断于「${stageLabel(st)}」，可单独点击该步骤按钮重试`);
         return;
       }
       refreshPlannerStageBar(null, null);
     }
-    toast(skipDone ? `智能四步完成（${stages.length} 步）` : '规划师四步全部完成');
+    toast(skipDone ? `智能五步完成（${stages.length} 步）` : '规划师五步全部完成');
   }finally{
     finish();
     hideStopBtn();
@@ -10681,6 +10757,8 @@ function chapterPlanUser(){
   parts.push(`【整体情绪基调】${o.tone || '未指定'}`);
   parts.push(`【章节标题参考稿】${(o.chapters||[]).map((c,i)=>`第${i+1}章 ${cleanChapterTitle(c&&c.title)}`).join('\n')}`);
   parts.push(`【设定词典】${chapterGlossaryBlock()}`);
+  const _tb = teamShapeBrief();   // v1.0.186 团队设定注入节拍用户（chapterPlan 通道）
+  if(_tb) parts.push(_tb);
   const styleNote = chapterStyleNote();
   if(styleNote) parts.push(styleNote);
   return parts.join('\n\n');
@@ -11221,6 +11299,9 @@ function buildChapterUser(i, opt={}){
   // 简介定位
   let ref = outlineAnchorBlock() ? `${outlineAnchorBlock()}\n【小说简介】书名：${o.title||''}｜一句话概览：${o.logline||''}` : `【小说简介】书名：${o.title||''}｜一句话概览：${o.logline||''}`;
   parts.push(ref);
+  // v1.0.186 团队设定注入正文：让正文在各拍出场角色与分工上贴合团队（非 solo 时才有）
+  const _tb = teamShapeBrief();
+  if(_tb) parts.push(_tb);
   // L3 相关词典（替代全量）
   const rg = relevantGlossaryForChapter(i);
   const rgBlock = formatRelevantGlossary(rg);
@@ -11341,7 +11422,8 @@ ${ob2.join('\n')}
 1. 前 20% 篇幅内自然承接上章章末钩子：未完成的动作/对话/悬念直接续写，禁止另起炉灶或时间跳跃开场。
 2. 禁止复述或重新介绍上章已交代的设定与人物信息，直接推进剧情。
 3. 若上章结尾（见 L2 上一章全文末段）与本章节拍表冲突，以上章真实结尾为准。
-4. 时间锚（若 L1 节拍表标注了时间）：本章各段时间/时点须与节拍表标注一致——但这只是"落在哪个时点就写那一时段的场景"的内部约束，绝不等于要写"报时"；时间必须靠场景细节自然交代（熹微/烈日/夕照/星夜/烛火/虫鸣/人物衣物与倦意等），严禁段落以"现在是/此刻是/此时是/当下是"等报时句开头，严禁把节拍锚或"第X天"字样原样写进读者视野；仅当进入下一段时间确实发生跳跃时给出自然的过渡时间语（如"翌日清晨""三日后的黄昏"）并融入叙述，不作注释式开场。本章开头须落在上章末尾时间之后或与之衔接（同主线时点禁止倒退）；闪回/梦境/穿越等异支线开场须在文中显式交代进入并随后收回，不扰乱主线时间顺序。`);
+4. 时间锚（若 L1 节拍表标注了时间）：本章各段时间/时点须与节拍表标注一致——但这只是"落在哪个时点就写那一时段的场景"的内部约束，绝不等于要写"报时"；时间必须靠场景细节自然交代（熹微/烈日/夕照/星夜/烛火/虫鸣/人物衣物与倦意等），严禁段落以"现在是/此刻是/此时是/当下是"等报时句开头，严禁把节拍锚或"第X天"字样原样写进读者视野；仅当进入下一段时间确实发生跳跃时给出自然的过渡时间语（如"翌日清晨""三日后的黄昏"）并融入叙述，不作注释式开场。本章开头须落在上章末尾时间之后或与之衔接（同主线时点禁止倒退）；闪回/梦境/穿越等异支线开场须在文中显式交代进入并随后收回，不扰乱主线时间顺序。
+5. 章首反机械化：严禁照抄上章"结局句式"原样续写、也严禁每章都以"主角姓名/称谓 + 动作"开场（如每章都是「沈暮 + 动作」）。本章开头优先**续写式**——由上文接住上章结局的对话/动作/悬念（可从中句、悬停处切入），其次选**场景/环境式、他人/群像式、悬念回接式**等不同切入；不要重启一个与上章结局无接续的新场景来开场。开门方式请与前一章明显区别开，避免全书章章一个模板。`);
       }
     }
   }
