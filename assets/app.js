@@ -9411,15 +9411,36 @@ function confirmOutlineContentGuard(){
 const OUTLINE_CANDIDATE_N = 6;   // v235/E5：每批候选数 3→6（角度池同步扩到 6 个，1:1 无撞角度；1 = 退化为单发行为）
 // state._outlineCandidates = { batchTs, items:[{id,label,outline}], chosenId }（随项目持久化，见 projectSnapshot/applyProject/clearState）
 const OUTLINE_CANDIDATE_ANGLES = [
-  { tag:'稳健商业向',   note:'本候选走「稳健商业向」：类型要素齐全、市场成熟度高，主线清晰不冒险，适合大众读者口味。', temp:0.75 },
-  { tag:'高概念反差向', note:'本候选走「高概念反差向」：围绕一个抓人的"如果……会怎样"设定展开，敢做反差与新奇组合。', temp:0.85 },
-  { tag:'情感人物向',   note:'本候选走「情感人物向」：人物关系与内心弧光优先，主线为情感服务，重视人物动机与代价。', temp:0.95 },
-  { tag:'快节奏钩子向', note:'本候选走「快节奏钩子向」（v235/E5 新增）：以追读红利优先——开场即冲突，章章留钩，节拍快，信息密度高，牺牲部分铺陈换取一口气读完的推进感。', temp:0.80 },
-  { tag:'世界观设定向', note:'本候选走「世界观设定向」（v235/E5 新增）：以设定红利优先——世界观规则、体系与组织结构是核心卖点，主线让设定有层次地展开，靠"新奇且自洽"取胜。', temp:0.90 },
-  { tag:'综合均衡向',   note:'本候选走「综合均衡向」（v235/E5 新增）：取稳健商业的市场骨架、高概念反差的记忆点、情感人物的动力，三者各取其一融合；各维度取"最稳的一档"，防止平均化平庸稿。', temp:0.80 }
+  { tag:'稳健商业向',   rise:'本候选＝稳扎稳打的大众爽感线：主线清晰、升级可预期、回报即时。必须把「被贬马夫以天象推人事」做成一步一升级、目标明确的逆袭线；禁止使用多线叙诡、禁止开放式留白结尾。', temp:0.75 },
+  { tag:'高概念反差向', rise:'本候选＝反差设定为最高卖点：必须重新赋予一个高概念级别的反差钩子（身份×权力的极端错位、动机的荒诞反转、前提的反直觉设计，择一主用），让读者一句话就想追；禁止平铺直叙复述原设定，必须打破原设定的惯性组合。', temp:0.85 },
+  { tag:'情感人物向',   rise:'本候选＝人物弧光与情感关系为骨：把「哑马夫」的内心、亲子/主仆/守将间的张力作为主线引擎，权谋只作背景；情节必须围绕主角的代价、选择与救赎推进，使结局落在情感落点上；禁止把人物写成推动剧情的工具人。', temp:0.95 },
+  { tag:'快节奏钩子向', rise:'本候选＝追读红利优先：开场即冲突、章章留钩、信息密度高；必须把核心悬念前置，每章以一个爆点收束；允许牺牲部分前情铺陈换取一口气读完的推进感；禁止慢热铺垫、禁止大段背景设定前置。', temp:0.80 },
+  { tag:'世界观设定向', rise:'本候选＝设定红利优先：以「天象推演／星官占卜／钦天监」体系的新奇与自洽为核心卖点；必须把世界观规则、体系、组织作为主线推进引擎，让设定有层次地展开；禁止设定只当背景板、禁止情节与设定脱节。', temp:0.90 },
+  { tag:'综合均衡向',   rise:'本候选＝取各最强融合：取稳健商业的市场骨架、高概念反差的记忆点、情感人物的动力各一档合成；必须结构既稳、又有记忆点、还不失人物温度；禁止把三者平均摊薄成平庸稿。', temp:0.80 }
 ];
-
-// v230/3.2：多候选生成——串行逐个（沿用 _abortCtl 可中断），角度差异化 + 温度阶梯；
+// v1.0.167：候选大纲改为「同一段 AI 一次列出 N 个」——六个角度同处一个上下文，AI 可直接对位错开，
+// 根治"6 次独立调用共享同一构想导致雷同"。输出顶层 JSON 数组；逐条解析+校验，坏条隔离降级、不拖垮整批。
+function outlineBatchArraySuffix(angles){
+  const spec = angles.map((a,i)=>`候选${i+1}「${a.tag}」${a.rise}`).join('\n');
+  return `【本次输出模式：一批候选】
+一次性输出整个 JSON 数组，数组长度严格等于 ${angles.length}。数组里每个元素是这个角度下的一本书，对象字段固定为：{ "angle","title","logline","anchor","thesis","genreTags","tone" }。
+六个角度必须在 书名、主角设定方式、剧作重心、类型口味 四个维度的组合上形成肉眼可辨的差异化，禁止写成只是换题为名的同一篇。每个角度按下述各自的演绎要求来做：
+${spec}
+共用保真：用户在【用户构想】中加引号/书名号的核心词（如「被贬马夫」「社稷倾覆」）必须逐字原样进入对应候选，一字不改。
+严格只输出数组本身（不要 markdown 代码块、不要解释）：
+[{ "angle":"稳健商业向","title":"…","logline":"…","anchor":"…","thesis":"…","genreTags":[…],"tone":"…" }, …]`;
+}
+function parseOutlineCandidatesArray(text){
+  const t = String(text||'');
+  const a = t.indexOf('['), b = t.lastIndexOf(']');
+  if(a < 0 || b <= a) throw new Error('未解析到候选数组');
+  let arr = null;
+  try{ arr = JSON.parse(t.slice(a, b+1)); }catch(e){ arr = null; }
+  if(!arr || !Array.isArray(arr)) throw new Error('候选数组 JSON 解析失败');
+  return arr.filter(o => o && typeof o === 'object' && !Array.isArray(o));
+}
+ 
+ // v230/3.2：多候选生成——串行逐个（沿用 _abortCtl 可中断），角度差异化 + 温度阶梯；
 // 每个候选完整走 callAIGuarded('outline')（内置结构+忠实度双闸校验，v228/P3 闸原样保留）；
 // 单个失败 toast 跳过，≥1 个成功即进入候选选择态，全部失败才报错走修复队列。
 async function genOutlineMulti(btn){
@@ -9440,42 +9461,47 @@ async function genOutlineMulti(btn){
   const items = [];
   try{
     const N = Math.max(1, OUTLINE_CANDIDATE_N|0);
-    for(let i=0;i<N;i++){
-      const ang = OUTLINE_CANDIDATE_ANGLES[i % OUTLINE_CANDIDATE_ANGLES.length];
-      const tag = '候选' + String.fromCharCode(65 + (i % OUTLINE_CANDIDATE_ANGLES.length));
-      if(st){ st.className='status'; st.textContent = `${tag}（${ang.tag}）生成中…（${i+1}/${N}）`; }
-      // v233 修复：单候选失败不再一次定生死——同角度自动重试一次（覆盖偶发的截断/解析失败），仍失败才跳过；
-      // 重试过程写入状态栏（原来 toast 一闪而过，失败原因不可见）
-      const attempt = async ()=>{
-        const txt = await callAIGuarded('outline', { angleNote: `【本候选创意角度】${ang.note}` },
-          {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal, tolerateFaithOutline: true});
-        const o = extractJsonObject(txt);
-        if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()) throw new Error('未解析到书名/简介');
-        // v1.0.164：忠实度/结构校验被 callAIGuarded 容错降级时为「可选用+警示」，不整条丢弃；
-        const warn = (txt && txt._validateWarn) || '';
-        if(warn){ try{ o._faithWarn = warn; }catch(e){} }
-        return o;
-      };
-      let cand = null, lastErr = null;
-      for(let k=0; k<2 && !cand; k++){
-        try{
-          cand = await attempt();
-        }catch(e){
-          if(e.name === 'AbortError') throw e;
-          lastErr = e;
-          if(k===0 && st){ st.textContent = `${tag}（${ang.tag}）首次未通过（${e.message}），自动重试一次…`; }
-        }
+    const angles = OUTLINE_CANDIDATE_ANGLES.slice(0, N);
+    if(st){ st.className='status'; st.textContent = `正在让大纲 AI 一次生成 ${N} 个差异化候选大纲…`; }
+    // v1.0.167：单段调用——同一段 AI 在同一下文一次列出 N 个（六角度同上下文可互相错开，根治雷同）；
+    // 输出顶层 JSON 数组，逐条校验，坏条（无书名/简介）隔离丢弃、软字段/忠实度警告降级为可选用，不拖垮整批。
+    const attempt = async ()=>{
+      const txt = unwrapAIResult(await callDeepSeek(
+        buildOutlineSys() + outlineBatchArraySuffix(angles),
+        buildOutlineUser({ idea: state.idea || '' }),
+        {temperature: 0.85, maxTokens: 12000, taskKey: 'outline', signal: _abortCtl?.signal}
+      ));
+      return parseOutlineCandidatesArray(txt).map((o)=>{
+        const _g = gradeOutlineCandidate(o);
+        let warn = '';
+        try{ warn = validateOutlineFaithful(o, { idea: state.idea || '' }) || ''; }catch(e){}
+        return { o, ok: _g.ok && !warn, reason: _g.reason || warn || '', hard: _g.hard };
+      });
+    };
+    let parsed = null, lastErr = null;
+    for(let k=0; k<2 && !parsed; k++){
+      try{
+        parsed = await attempt();
+      }catch(e){
+        if(e.name === 'AbortError') throw e;
+        lastErr = e;
+        if(k===0 && st){ st.textContent = `首次输出未解析（${e.message}），自动整体重试一次…`; }
       }
-      if(!cand){ toast(`${tag}（${ang.tag}）重试后仍未通过校验，已跳过：${(lastErr && lastErr.message) || '未知错误'}`); }
-      if(cand){
-        const _g = gradeOutlineCandidate(cand);
-        const _warn = cand._faithWarn || '';
-        // v1.0.164：忠实度警示候选不再当硬伤丢弃——标记为「仍可选用」，黄标提示，端上可自行为是否采用把关
-        items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand, ok: _g.ok && !_warn, reason: _g.reason || _warn || '' });
-      }
+    }
+    if(parsed && parsed.length){
+      parsed.forEach((p, idx)=>{
+        const ang = (angles[idx] || angles[0]);
+        const tag = '候选' + String.fromCharCode(65 + (idx % angles.length));
+        // 仅跳过无书名/简介的硬伤条；软缺字段/忠实度警示 → 保留为「可选用+警示」
+        if(!p.o || p.hard) return;
+        items.push({ id: 'c'+(idx+1), label: `${tag}·${ang.tag}`, outline: p.o, ok: p.ok, reason: p.reason });
+      });
+    } else {
+      if(!items.length && lastErr) throw lastErr;
     }
     if(!items.length) throw new Error('全部候选均未通过校验');
     state._outlineCandidates = { batchTs: Date.now(), items, chosenId: null };
+    state._outlineCandsFolded = false;   // v1.0.166：新一批候选生成后默认展开，不沿用上次选用后的折叠态
     markAIDone('outline');   // v234 修复：v230 多候选路径漏标 completed——规划师/标题/正文等下游全部被"请先完成上游步骤：生成大纲"误拦（旧单发版 9422 有标，重写时丢失）
     persist(); render();
     const _badN = items.filter(it=>!it.ok).length;
@@ -9566,6 +9592,7 @@ function adoptOutlineCandidate(id){
   });
   cands.chosenId = id;
   markAIDone('outline');   // v234 修复：多候选采用路径补标 completed（幂等；未采用前 genOutlineMulti 已标过）
+  state._outlineCandsFolded = true;   // v1.0.166：选完即自动折叠候选区（右侧「展开候选 ▾」可手动再展开）
   persist(); render();
   toast(it.ok ? `已采用「${it.label||'候选'}」` : `已采用「${it.label||'候选'}」（原未过校验，缺失字段已自动补齐）`);
 }
@@ -10827,6 +10854,10 @@ ${ob2.join('\n')}
   parts.push('【发挥空间】在不违背上一章承接、本章主线与标题的前提下，鼓励引入推进剧情所需的新人物、新线索、新细节——新实体将自动收录进万物词典，后续章节自动沿用。');
   parts.push(USER_PRIO_BILL);
   if(opt.advice) parts.push(`【人工干预要求（用户指定 · 第二优先）】\n${opt.advice}`);
+  // v1.0.167：末位篇幅契约——放在 user 提示词最末端（紧挨生成的最后 token，模型最优先服从），强化"首写即写足"。
+  // 针对长上下文下模型倾向写紧凑、即使 system 已有硬下限也时常压短的现象；不做任何后验续写，靠首写的末位最后指令一次达标。
+  const _lb = chapterLenBounds() || {floor:2700, lo:3000, hi:3600};
+  parts.push(`\n【末位篇幅契约 · 达成后才允许交稿】本章正文字数必须 ≥ ${_lb.floor.toLocaleString()} 字（目标 ${_lb.lo.toLocaleString()}—${_lb.hi.toLocaleString()} 字）。请按【微拍配比】逐拍写满：每拍都写出流动的连贯动作、直接对话、环境与心理的完整场景，技巧是"把每个节拍当作独立小场景铺满，再自然接下一拍"。禁止用概括性旁白、纯短句对话流、堆砌标点/空行来凑字数。十分关键：在正文仍未写足目标字之前，禁止输出任何"收束/尾声/结尾"式的结语——写足目标并行进到剧情应有限度收束后，本章才算交付完成。`);
   // 4.8 旗舰版（板块一-2）：按 24000 字符预算裁剪上下文，防止超上下文窗口
   return budgetChapterContext(parts, 24000).join('\n\n');
 }
