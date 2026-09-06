@@ -3097,10 +3097,27 @@ const CHAPTER_PLAN_SYS = CHAPTER_PLAN_SYS_PRO;
  * 决定全书的宏观剧情节奏（注入大纲生成的拍子指导），与下方单章微节拍 BEAT_OPTIONS 独立。
  * ========================================================= */
 const BOOK_BEAT_OPTIONS = [
-  { id:4,  label:'四拍', emoji:'📜', subtitle:'万法之祖 · 四段底层骨架', desc:'中国古典乃至全世界故事的底层骨架：起（铺垫）→承（推进）→转（转折/燃点）→合（余波/结局）。', pro:'极度合适、永不过时；结构清晰，适合篇幅中等、想在落笔前先立龙骨的作品。', con:'太过骨架化——大神靠四字就能写出神作，新手实操易卡文，常不知每部分具体该塞什么。', note:'按「起→承→转→合」划分全书三幕/四段，燃点性质简洁有力。' },
-  { id:7,  label:'七拍', emoji:'⚡', subtitle:'商业网文首选 · 七段强节奏', desc:'把「承」拆成两次推进、再补悬念钩子：铺垫→推进→转折→推进→燃点→余波→悬念。', pro:'节奏感极强，读者像坐过山车；快节奏强冲突，男频升级流 / 女频飒爽文的标配。', con:'全书都是 7 步循环，读多了容易让读者产生「套路疲劳」。', note:'全书大循环按七段推进，情绪高低交替，章末必留钩。' },
-  { id:12, label:'十二拍', emoji:'🏛️', subtitle:'奇幻/成长史诗 · 心理蜕变', desc:'极细地刻画主角内心成长的每一个心理阶段（拒绝召唤、历险试炼、灵魂黑夜等），心理线与剧情线同步推进。', pro:'长线叙事、心理蜕变刻画深，适合玄幻修仙 / 奇幻冒险 / 人物传记。', con:'前期铺垫过长（前 5 拍都在准备出发），不适合开局就要炸场的题材。', note:'前期铺垫较长，重点写心理蜕变与伙伴/敌人矩阵。' },
-  { id:15, label:'十五拍', emoji:'🎬', subtitle:'剧本感/悬疑推理 · 中段拆分', desc:'把「中段」拆得最细：中点、坏人逼近、一无所有、灵魂黑夜、反击、决战，层层反转。', pro:'逻辑严密、多重反转，适合悬疑 / 推理 / 职场商战等注重布局的故事。', con:'对新手过于繁琐，容易为了填满 15 拍而注水。', note:'强调中段布局与多线并置，反转节点需提前预埋。' }
+  { id:4,  label:'四拍', emoji:'📜', subtitle:'万法之祖 · 四段底层骨架', desc:'中国古典乃至全世界故事的底层骨架：起（铺垫）→承（推进）→转（转折/燃点）→合（余波/结局）。', pro:'极度合适、永不过时；结构清晰，适合篇幅中等、想在落笔前先立龙骨的作品。', con:'太过骨架化——大神靠四字就能写出神作，新手实操易卡文，常不知每部分具体该塞什么。', note:'按「起→承→转→合」划分全书三幕/四段。',
+    ai:{ stages:['铺垫','推进','燃点','余波'],
+      duty:['交代世界观、主角处境与主要目标','展开冲突，主角行动升级',
+        '全书最高强度的核心高潮事件（关系/利益/真相的关键节点）','收束主线后果，交代结局或为下一卷预留接口'],
+      must:'必须按以上 4 个阶段顺序升格推进；每个阶段必须设置一个明确的阶段高潮事件并标注其性质（如夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰）；相邻两阶段的性质必须不同。',
+      forbid:'禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内注水无进展的填充内容。' } },
+  { id:7,  label:'七拍', emoji:'⚡', subtitle:'商业网文首选 · 七段强节奏', desc:'把「承」拆成两次推进、再补悬念钩子：铺垫→推进→转折→推进→燃点→余波→悬念。', pro:'节奏感极强，读者像坐过山车；快节奏强冲突，男频升级流 / 女频飒爽文的标配。', con:'全书都是 7 步循环，读多了容易让读者产生「套路疲劳」。', note:'全书大循环按七段推进，情绪高低交替，章末必留钩。',
+    ai:{ stages:['铺垫','推进','转折','推进','燃点','余波','悬念'],
+      duty:['交代世界观、主角现状与首个目标','展开首次冲突，主角开始行动','引入变化、阻力升级，计划被打乱','第二阶段加压，主角调整策略继续推进','情绪或利益最高点，本阶段核心回报','高能量回落，收拾后果','章末留下钩子（新目标/新信息）驱动续读'],
+      must:'必须按以上 7 个阶段顺序升格推进；每个阶段必须设置一个明确的阶段高潮事件并标注其性质（如夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰）；相邻两阶段的性质必须不同。',
+      forbid:'禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内注水无进展的填充内容。' } },
+  { id:12, label:'十二拍', emoji:'🏛️', subtitle:'奇幻/成长史诗 · 心理蜕变', desc:'极细地刻画主角内心成长的每一个心理阶段（拒绝召唤、历险试炼、灵魂黑夜等），心理线与剧情线同步推进。', pro:'长线叙事、心理蜕变刻画深，适合玄幻修仙 / 奇幻冒险 / 人物传记。', con:'前期铺垫过长（前 5 拍都在准备出发），不适合开局就要炸场的题材。', note:'前期铺垫较长，重点写心理蜕变与伙伴/敌人矩阵。',
+    ai:{ stages:['日常铺垫','意外推进','犹豫转折','助力推进','决心突破','试炼推进','逼近核心','绝境燃点','短暂余波','归程转折','终极燃点','圆满余波'],
+      duty:['呈现主角常规生活与隐藏诉求','一起意外打破日常，主角被动卷入','主角犹豫是否行动，内心拉扯显形','获得助力/情报，主角定下行动决心','走出舒适区，主动出击','一路试炼积累能力与同伴','逼近主要矛盾核心，阻力全面升级','接近绝境的高压强情绪点（中段高点）','危机暂解，喘息换气','归程再生变数或引发身份真相','全书终局最高强度的对决/揭晓','收束各线，给出结局与余味'],
+      must:'必须按以上 12 个阶段顺序升格推进；前期铺垫节奏适中，心理线须随剧情线同步进度；每个阶段必须设置一个明确的阶段高潮事件并标注其性质；相邻两阶段的性质必须不同。',
+      forbid:'禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内注水无进展的填充内容。' } },
+  { id:15, label:'十五拍', emoji:'🎬', subtitle:'剧本感/悬疑推理 · 中段拆分', desc:'把「中段」拆得最细：中点、坏人逼近、一无所有、灵魂黑夜、反击、决战，层层反转。', pro:'逻辑严密、多重反转，适合悬疑 / 推理 / 职场商战等注重布局的故事。', con:'对新手过于繁琐，容易为了填满 15 拍而注水。', note:'强调中段布局与多线并置，反转节点需提前预埋。',
+    ai:{ stages:['开篇铺垫','主题铺垫','背景铺垫','催化推进','内心转折','新境推进','副线铺垫','轻松推进','中部转折','压力推进','至暗燃点','绝望余波','反击转折','终极燃点','收束余波'],
+      duty:['立境并给出主角目标','亮出核心命题与主角立场','补世界观与势力关系','由触发事件打破平衡，主角入局','主角第一次重大权衡/质变','进入新环境、新阶段','埋入支线人物与伏笔','相对平缓的一拍，蓄力并埋钩','全书中点的关键转向','局势收紧，主角处处受制','接近绝境的高压强情绪点','低潮收拾、短暂重整','主人公重新集结、发起反击','终局最高强度的对决/揭示','收束各线结局，留余味'],
+      must:'必须按以上 15 个阶段顺序升格推进；中段（中部转折至反击转折）须布局多线并置，反转节点必须提前预埋；每个阶段必须设置一个明确的阶段高潮事件并标注其性质；相邻两阶段的性质必须不同。',
+      forbid:'禁止为了凑满 15 拍而注水；禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内无进展地填充内容。' } }
 ];
 const BOOK_BEAT_DEFAULT_ID = 7;
 function currentBookBeatId(){ return state.bookBeat ? Number(state.bookBeat) : BOOK_BEAT_DEFAULT_ID; }
@@ -3128,32 +3145,34 @@ function bookBeatHtml(){
  * 彻底替换原「四/七/十二/十五拍」——那些是全书宏观节奏，已归 BOOK_BEAT_OPTIONS（只注入大纲），
  * 不再作为章节微拍复用，避免两套体系重复混用。
  * 微拍类型：微五拍（标准网文）/ 微三拍（极爽新媒体文）/ 微七拍（慢热治愈）/ 双拍结构（悬疑惊悚）。
- * 每拍带标称字数配比，用于 buildBeatsSys 注入 prompt 与 UI 展示；节拍表仍以每章一段落为最小输出单位。 */
+ * 每拍带标称字数配比，用于 buildBeatsSys 注入 prompt 与 UI 展示；节拍表仍以每章一段落为最小输出单位。
+ * v1.0.163 双层拆分：type.note / type.aiDirective 仅供 AI（节拍设计师 buildBeatsSys 注入），
+ * type.uiHint 仅供用户（节拍表卡/提示 UI 显示）。label/key 双端共享（名称 + JSON 契约），wc 为结构指令。 */
 const BEAT_OPTIONS = [
   { id:5,  label:'微五拍', emoji:'⚖️', desc:'标准叙事节奏：铺垫→推进→转折→汇合→收束+悬念', wc:'500/800/500/700/500（共约3000字/章）', types:[
-      { key:'setup',  label:'开篇铺垫', note:'交代本章的时间、地点与在场人物，说明当前要做的事（~500字）', wc:'~500字' },
-      { key:'rise',   label:'冲突推进', note:'引入一个具体的阻力或新信息，推动本章目标向前进展（~800字）', wc:'~800字' },
-      { key:'turn',   label:'意外转折', note:'先建立预期，再呈现计划之外的变化，使发展超出读者预判（~500字）', wc:'~500字' },
-      { key:'climax', label:'进展燃点', note:'收拢本章积累，达成一次明确的成果或回报（~700字）', wc:'~700字' },
-      { key:'hook',   label:'余波+悬念', note:'收束本章，并以一处伏笔或新信息为下一章留下接口（~500字）', wc:'~500字' }
+      { key:'setup',  label:'开篇铺垫', uiHint:'开头先说清：在哪里、和谁、要做什么，别急着倒信息。', note:'交代本章的时间、地点与在场人物，说明当前要做的事（~500字）', aiDirective:'必须用简短铺垫立境（场景＋此刻要做的事）；禁止在本拍灌注大段设定或人物背景。', wc:'~500字' },
+      { key:'rise',   label:'冲突推进', uiHint:'推进主线，制造一处具体阻力或新信息，让情节往前动。', note:'引入一个具体的阻力或新信息，推动本章目标向前进展（~800字）', aiDirective:'必须引入具体的阻力或新信息推动目标进展，事件要具体可感；禁止原地重复、禁止只剩对话而无动作推进。', wc:'~800字' },
+      { key:'turn',   label:'意外转折', uiHint:'先让人以为会怎样，再给出变化，超出读者预判。', note:'先建立预期，再呈现计划之外的变化，使发展超出读者预判（~500字）', aiDirective:'必须先立预期再呈现计划外的变化；禁止无铺垫的随意反转、禁止反转后与主线脱节。', wc:'~500字' },
+      { key:'climax', label:'进展燃点', uiHint:'收拢整段的积累，给出一次明确的成果或回报。', note:'收拢本章积累，达成一次明确的成果或回报（~700字）', aiDirective:'必须收拢前面积累并交付一项明确的成果/回报/认知；禁止在无积累时凭空给奖励、禁止重复已用过的回报类型。', wc:'~700字' },
+      { key:'hook',   label:'余波+悬念', uiHint:'把这一拍收好，在结尾留一个新信息或钩子给下一章。', note:'收束本章，并以一处伏笔或新信息为下一章留下接口（~500字）', aiDirective:'必须收束本拍阶段情绪，并在章末留出新信息/新目标/关系变化作为续读钩子；禁止以总结句或无关陈述收尾。', wc:'~500字' }
   ]},
   { id:3,  label:'微三拍', emoji:'🚀', desc:'快速推进型新媒体文：铺垫→进展→收束+悬念，一章一个明确节点', wc:'300/1500/1200（共约3000字/章）', types:[
-      { key:'setup',  label:'开局铺垫', note:'交代主角当前处境与本章要处理的问题（~300字）', wc:'~300字' },
-      { key:'climax', label:'核心进展', note:'给出本章的关键进展或成果，回应开头建立的期待（~1500字）', wc:'~1500字' },
-      { key:'hook',   label:'收束+悬念', note:'收束本章成果，在衔接处留下新的信息点以引出下一章（~1200字）', wc:'~1200字' }
+      { key:'setup',  label:'开局铺垫', uiHint:'一两句话交代主角处境和本章要处理的问题，快速入题。', note:'交代主角当前处境与本章要处理的问题（~300字）', aiDirective:'必须简洁交代主角当前处境与本章要解决的问题并迅速进入；禁止用长篇心理或环境描写拖慢节奏。', wc:'~300字' },
+      { key:'climax', label:'核心进展', uiHint:'给出本章最要紧的进展或成果，回应开头的期待。', note:'给出本章的关键进展或成果，回应开头建立的期待（~1500字）', aiDirective:'必须给出本章关键进展并回应前文期待、占篇幅最大；禁止无进展的注水对白或冗余环节。', wc:'~1500字' },
+      { key:'hook',   label:'收束+悬念', uiHint:'收好本章成果，在衔接处留个新信息点当引子。', note:'收束本章成果，在衔接处留下新的信息点以引出下一章（~1200字）', aiDirective:'必须收束本章成果，并在章末留下一个新信息点引出下一章；禁止以强行悬念或重复信息收尾。', wc:'~1200字' }
   ]},
   { id:7,  label:'微七拍', emoji:'🍵', desc:'慢热细腻型：逐步推进、以情感联结动人，结尾留一份温暖期许', wc:'七段细分（共约3000字/章）', types:[
-      { key:'daily',     label:'日常铺垫', note:'呈现一段平和的日常场景，奠定本章氛围' },
-      { key:'interact',  label:'小互动', note:'一次细微的往来，令人物之间的关系更近' },
-      { key:'misunder',  label:'小误会', note:'一次轻微的理解偏差，带来一点波澜' },
-      { key:'heart',     label:'推心置腹', note:'一次深入的交流，令人物情感进一步接近' },
-      { key:'warm',      label:'温情高点', note:'小而温暖的时刻（如一次贴心的举动）', wc:'注意分寸' },
-      { key:'glow',      label:'温润余波', note:'情绪缓缓回落，余味悠长' },
-      { key:'promise',   label:'明日之约', note:'以一句约定或期许收章，为后续留下期待' }
+      { key:'daily',     label:'日常铺垫', uiHint:'呈现一段平和的日常，铺垫本章氛围。', note:'呈现一段平和的日常场景，奠定本章氛围', aiDirective:'必须呈现平和的日常场景奠定氛围；禁止在本拍制造冲突或信息倾倒。' },
+      { key:'interact',  label:'小互动', uiHint:'一次细微往来，让人物关系更近一点。', note:'一次细微的往来，令人物之间的关系更近', aiDirective:'必须通过一次具体的小互动推进人物关系；禁止空泛寒暄。' },
+      { key:'misunder',  label:'小误会', uiHint:'一次轻微的理解偏差，带起一点小波澜。', note:'一次轻微的理解偏差，带来一点波澜', aiDirective:'必须用一次轻微偏差造成小波澜且尺度克制；禁止让误会失控成激烈对立或长时间冷场。' },
+      { key:'heart',     label:'推心置腹', uiHint:'一次走心交流，情感再进一步。', note:'一次深入的交流，令人物情感进一步接近', aiDirective:'必须借一次深入交流推进情感；禁止用说教或空谈代替具体情节。' },
+      { key:'warm',      label:'温情高点', uiHint:'一个小而暖的瞬间，作为本段的温情落点。', note:'小而温暖的时刻（如一次贴心的举动）', aiDirective:'必须给出一个具体贴切的温暖时刻、注意分寸；禁止强行煽情。', wc:'注意分寸' },
+      { key:'glow',      label:'温润余波', uiHint:'情绪缓缓回落，让读者回味。', note:'情绪缓缓回落，余味悠长', aiDirective:'必须让上一拍的情绪自然回落、留下余味；禁止突然跳入新冲突。' },
+      { key:'promise',   label:'明日之约', uiHint:'用一句约定或期许收章，为之后留个盼头。', note:'以一句约定或期许收章，为后续留下期待', aiDirective:'必须以约定/期许/承诺收章并为后续留期待；禁止以封闭式总结收尾。' }
   ]},
   { id:2,  label:'双拍结构', emoji:'🔍', desc:'悬疑/惊悚/推理：长铺垫+短揭示，前段积累后段收束', wc:'2500/500（共约3000字/章）', types:[
-      { key:'hold',   label:'长段铺垫', note:'用较长篇幅铺设线索、逐步积累信息，营造渐进的氛围（~2500字）', wc:'~2500字' },
-      { key:'burst',  label:'反转收束', note:'在较短篇幅给出关键揭示与剧情反转，收束前面积累的线索（~500字）', wc:'~500字' }
+      { key:'hold',   label:'长段铺垫', uiHint:'前面一大段都用来铺线索、攒信息，把气氛一点点垫起来。', note:'用较长篇幅铺设线索、逐步积累信息，营造渐进的氛围（~2500字）', aiDirective:'必须用长篇幅连续铺设线索、逐步积累信息、营造渐进氛围；禁止情绪化辞藻堆砌、禁止段落间信息断裂。', wc:'~2500字' },
+      { key:'burst',  label:'反转收束', uiHint:'结尾极短篇幅，把前面线索一次性揭示、收束。', note:'在较短篇幅给出关键揭示与剧情反转，收束前面积累的线索（~500字）', aiDirective:'必须在结尾用较短篇幅对前面积累的线索给出关键揭示并收束，各线索须自洽串起；禁止为反转引入未铺垫的新元素、禁止悬而未决。', wc:'~500字' }
   ]}
 ];
 /* 微拍选型铁律（用户主导、随拍数注入规划师 prompt）：
@@ -3172,8 +3191,8 @@ const BEAT_LEGACY_LABEL = {
   easy:'轻松推进', mid_turn:'中部转折', pressure:'压力推进', dark_climax:'至暗燃点', despair:'绝望余波',
   counter:'反击转折', close:'收束余波'
 };
-// 全部拍数节拍的「功能说明」全局映射
-const BEAT_NOTE_ALL  = (()=>{ const m={}; BEAT_OPTIONS.forEach(c=>c.types.forEach(t=>{ m[t.key]=t.note; })); return m; })();
+// 全部拍数节拍的「用户层提示」全局映射（取自 type.uiHint：通俗解释，供节拍表卡/提示 UI 显示）
+const BEAT_HINT_ALL = (()=>{ const m={}; BEAT_OPTIONS.forEach(c=>c.types.forEach(t=>{ m[t.key]=t.uiHint||''; })); return m; })();
 function currentBeatId(){
   const o=state.outline;
   let v = o && o.beatCount ? Number(o.beatCount) : BEAT_DEFAULT_ID;
@@ -3187,13 +3206,13 @@ function beatTypesDefs(){ return currentBeatCfg().types; }
 function beatTypeKeys(){ return beatTypesDefs().map(t=>t.key); }
 function beatCnt(){ return beatTypesDefs().length; }
 function beatLabelFor(key){ return BEAT_LABEL_ALL[key] || BEAT_LEGACY_LABEL[key] || (()=>{ const t=beatTypesDefs().find(x=>x.key===key); return t?t.label:key; })(); }
-function beatNoteFor(key){ return BEAT_NOTE_ALL[key] || ''; }
+function beatNoteFor(key){ return BEAT_HINT_ALL[key] || ''; }   // v1.0.163 用户层：返回通俗 uiHint，不再暴露 AI 化 note
 // 是否属「燃点」类节拍（用于章节生成的高潮/张力检测，任意拍数通用）
 function isClimaxType(key){ return /燃点/.test(BEAT_LABEL_ALL[key] || key); }
 // 动态节拍系统提示词：按所选拍数生成 N 段节拍表
 function buildBeatsSys(){
   const cfg = currentBeatCfg(), defs = cfg.types, cnt = defs.length;
-  const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}${t.wc?`；该拍字数：${t.wc}`:''}`).join('\n');
+  const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}${t.wc?`；该拍字数：${t.wc}`:''}${t.aiDirective?`\n    硬命令：${t.aiDirective}`:''}`).join('\n');
   const selectRule = cfg.id===3 ? '读者偏好短促密集的节奏（新媒体型）' : (cfg.id===5 ? '读者偏好约 1500 字一次小幅情绪起伏（传统男女频标准）' : (cfg.id===2 ? '读者偏好前段积累、后段集中揭示的结构（悬疑惊悚）' : '读者偏好细腻温和的情感递进（慢热细腻型）'));
   return `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于【章节标题】【已定稿的前文骨架】【全书导航/大纲节拍结构/设定词典】生成${cnt}段节拍表（当前选定「${cfg.label}」微拍体系——${selectRule}）。
 【微拍铁律】
@@ -3320,24 +3339,40 @@ const AIValidators = {
 // 统一校验入口对两种结构都放行；4.5 结构仍走 validatePolishOutput 严格校验。
 // v225/P6：新增本地忠实度校验——从 ctx.rawIdea（callAIGuarded 新形态经 AIBus.get('idea') 注入的用户原文）提取必须保留的关键词，
 // 优化稿/方案未保留过半则拦截（走既有修复队列重试链，不删稿）。
-// 从用户原文提取"必须保留"的关键词：引号/书名号内词 + 高频实词窗（出现≥2次）
+// v1.0.164：忠实度关键词改为「硬芯 coined + 软词 soft」双层——
+// coined = 用户在构想中加引号/书名号的自造专名与固定设定短语（语义与词义的关键瓣膜，应逐字保留）；
+// soft   = 出现≥2次的高频复用词/连接成分（允许 AI 合理改写，不逐字复用也不应作废候选）。
+// 目的：缓解「AI 把设定词润色成同义词 → 逐字子串匹配不中 → 误判不忠实」这一高频误杀源。
 function ideaKeyTerms(idea){
   const t = String(idea||'').trim();
-  const must = new Set();
-  (t.match(/[“"「『《]([^”"」』》]{1,12})[”"」』》]/g)||[]).forEach(s=>{ const w=s.slice(1,-1).trim(); if(w) must.add(w); });
+  const coined = new Set(), soft = new Set();
+  (t.match(/[“"「『《]([^”"」』》]{1,12})[”"」』》]/g)||[]).forEach(s=>{ const w=s.slice(1,-1).trim(); if(w) coined.add(w); });
   const words = t.match(/[\u4e00-\u9fa5a-zA-Z0-9]{2,8}/g)||[];
-  const STOP = new Set(['一个','一种','这个','那个','什么','怎么','可以','我们','他们','自己','故事','主角','因为','所以','但是','然后','就是','不是']);
+  const STOP = new Set(['一个','一种','这个','那个','什么','怎么','可以','我们','他们','自己','故事','主角','因为','所以','但是','然后','就是','不是','也是','也要','就会','就要','才能','只能','只会','还要','都会','都在','其实','虽然','甚至','以及','或许','几乎','感觉','知道','发现','以为','如果','但是','可能','只是','因为','于是','可是','不是','没有','着','却','就']);
   const freq = {}; words.forEach(w=>{ if(!STOP.has(w)) freq[w]=(freq[w]||0)+1; });
-  Object.keys(freq).forEach(w=>{ if(freq[w]>=2) must.add(w); });
-  return { must:[...must], short: t.length < 15 };
+  Object.keys(freq).forEach(w=>{ if(freq[w]>=2) (coined.has(w) ? coined : soft).add(w); });
+  const short = t.length < 15;
+  return { coined:[...coined], soft:[...soft], short };
 }
-// 返回 ''=通过，否则返回不忠实原因（走既有修复队列链，不删稿）
+// 返回 ''=通过，否则返回不忠实提示。
+// v1.0.164 放宽：只对「硬芯专名被整体丢弃」或「总体命中率过低」的情形发提示，且该提示不再作废候选——
+// 多候选路径（genOutlineMulti）会容错降级为「可选用 + 黄标警示」，不再整条跳过。
 function validateIdeaFaithful(j, idea){
-  const { must, short } = ideaKeyTerms(idea);
-  if(short || !must.length) return '';                    // 极短输入/无关键词：豁免（靠提示词硬边界约束）
+  const { coined, soft, short } = ideaKeyTerms(idea);
+  if(short || (!coined.length && !soft.length)) return '';       // 极短/无关键词：豁免
   const blob = JSON.stringify(j);
-  const miss = must.filter(w => !blob.includes(w));
-  return (miss.length <= must.length * 0.5) ? '' : `优化稿未保留用户核心设定词（缺 ${miss.length}/${must.length}）：${miss.slice(0,5).join('、')}`;
+  const missC = coined.filter(w => !blob.includes(w));
+  const missS = soft.filter(w => !blob.includes(w));
+  const total = coined.length + soft.length;
+  // 硬芯专名：丢弃 ≥2 个才提示（容忍单处润色）
+  if(missC.length >= 2){
+    return `未保留用户核心专名（丢 ${missC.length}/${coined.length}）：${missC.slice(0,5).join('、')}`;
+  }
+  // 软词：仅当总体命中率过低（整体缺失 > 2/3）才提示；多数合理改写不再作废
+  if(total && (missC.length + missS.length) > Math.ceil(total * 2 / 3)){
+    return `核心设定词命中率偏低（丢 ${missC.length + missS.length}/${total}）：${(missC.concat(missS)).slice(0,5).join('、')}`;
+  }
+  return '';
 }
 function validateIdeaProOutput(j, ctx){
   // v230/1-A：构想走"自由发挥纯文本"（新 PRO 明确"不要输出 JSON"），纯文本经 extractJsonObject 得 null——无 JSON 即放行；
@@ -3405,6 +3440,14 @@ async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
   const txt = _unwrap(await callDeepSeek(system, user, callOpts));
   const report = validateAIOutput(kind, txt, busCtx);
   if(!report.ok){
+    // v1.0.164：tolerateFaithOutline —— 多候选大纲路径可用。忠实度/结构 SCHEMA 失败不再整条丢弃，
+    // 而是把原始文本连同校验警示一并返回，交由调用方「降级为可选用候选项」而非跳过；
+    // 真正硬伤（书名/简介无法解析）由调用方 attempt() 内的 title/logline 检查再次截获，仍会重试/跳过。
+    if(callOpts.tolerateFaithOutline && kind === 'outline' && report.code === 'SCHEMA'){
+      const boxed = new String(txt);
+      try{ boxed._validateWarn = report.details || '未通过结构/忠实度校验'; }catch(e){}
+      return boxed;
+    }
     throw new Error(`${kind} AI 输出校验失败：${report.code} ${report.details || ''}`);
   }
   return txt;
@@ -3854,6 +3897,12 @@ function validateSubplotOutput(j){
 function buildOutlineSys(){
   const parts = [];
   parts.push(OUTLINE_GEN_SYS_PRO);          // 新书目+简介+结构
+  // v1.0.164：忠实度硬约束——用户在构想里加引号/书名号的自造专名与固定设定短语是"词义关键瓣膜"，
+  // 必须逐字原样进入书名/简介/锚点，禁止改写为同义词或增减字数（从源头降低忠实度闸的改写误杀与真实丢词）。
+  parts.push(`\n\n【用户核心设定词 · 必须原样保留】
+用户在【用户构想】中用引号或书名号标出的专名与固定短语（如「被贬马夫」「社稷倾覆」），属于该作者自造或明确定义的核心词，含义与拼写唯一。
+必须：逐字原样写入书名/简介/叙事锚点等任一可见位置，一字不改，禁止改写为同义词或换字换序。
+禁止：弃用该词、擅自改名、或把多个核心词揉成模糊表达。`);
   const lr = state.loglineRange;
   const _m = Number.isFinite(lr&&lr.min)?Math.max(1,Math.floor(lr.min)):100;
   const _x = Number.isFinite(lr&&lr.max)?Math.min(5000,Math.max(1,Math.floor(lr.max))):300;
@@ -3865,10 +3914,13 @@ function buildOutlineSys(){
   // 避免「15 拍塞进 6 章、每个阶段都要一个高潮」这种 AI 无法满足的矛盾指令。bookStagePlan(0) → []，未设章数时走原逻辑。
   const _bplan = bookStagePlan(N);
   const _bStageSeq = _bplan.length ? _bplan.map(p=>p.name).join(' → ') : '';
-  parts.push(`\n\n【全书拍子 · ${bbCfg.label}】${bbCfg.note}
-${_bplan.length
-  ? `全书共 ${N} 章；因章节较少，本书把「${bbCfg.label}」的 ${bbCfg.id} 个拍子按序合并为 ${_bplan.length} 个阶段推进（每阶段 1 章：${_bStageSeq}）。每个阶段应包含一个明确的阶段高潮事件，并标注其「燃点性质」（如：夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰等）。相邻阶段燃点性质必须不同，禁止全书反复用同一种燃点。`
-  : `全书故事按「${bbCfg.label}」的 ${bbCfg.id} 个阶段升格推进；每个阶段应包含一个明确的阶段高潮事件，并标注其「燃点性质」（如：夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰等）。相邻阶段的燃点性质必须不同，禁止全书反复使用同一种性质的燃点。`}`);
+  const _ai = bbCfg.ai || {};
+  const _stages = beatStageNames();
+  const _duties = beatStageDuties();
+  const _dutyList = _duties.map((d,i)=>`${i+1}.「${_stages[i]||''}」：${d}`).join('\n');
+  let _beatBlk = `\n\n【全书拍子 · ${bbCfg.label}】本书采用「${bbCfg.label}」共 ${_stages.length} 个阶段，按下列顺序逐级升格推进：\n${_dutyList||'（阶段职责见下）'}\n${_ai.must||''}\n${_ai.forbid||''}`;
+  if(_bplan.length) _beatBlk += `\n（全书共 ${N} 章、少于拍段数：已把「${bbCfg.label}」的 ${bbCfg.id} 个拍子按序合并为 ${_bplan.length} 个阶段推进，每阶段 1 章：${_bStageSeq}。）`;
+  parts.push(_beatBlk);
   // v1.0.146：大纲不再注入章节微拍（微三/微五/微七/双拍）——那是规划师每章 3000 字级的微观节奏，
   // 不属于全书阶段性节奏，注入只会干扰大纲；微观节拍完全交给规划师节拍表步骤。
   parts.push(`\n\n【防套路疲劳 · 全书层约束】
@@ -5513,17 +5565,9 @@ function beatStructureCardHtml(){
   </div>`;
 }
 
-// 当前「全书拍子」的阶段名序列：优先用 BOOK_BEAT_OPTIONS 各拍的阶段标签；四拍兜底为 起承转合
-function beatStageNames(){
-  const bb = currentBookBeatCfg();
-  const map = {
-    4:  ['铺垫','推进','燃点','余波'],
-    7:  ['铺垫','推进','转折','推进','燃点','余波','悬念'],
-    12: ['日常铺垫','意外推进','犹豫转折','助力推进','决心突破','试炼推进','逼近核心','绝境燃点','短暂余波','归程转折','终极燃点','圆满余波'],
-    15: ['开篇铺垫','主题铺垫','背景铺垫','催化推进','内心转折','新境推进','副线铺垫','轻松推进','中部转折','压力推进','至暗燃点','绝望余波','反击转折','终极燃点','收束余波']
-  };
-  return map[bb.id] || [];
-}
+// 当前「全书拍子」的阶段名序列：单一事实源，取自所选拍的 ai.stages（结构展示卡 与 AI 注入 共用同一份，避免两套漂移）；四拍兜底
+function beatStageNames(){ const a=currentBookBeatCfg().ai; return (a && a.stages) || []; }
+function beatStageDuties(){ const a=currentBookBeatCfg().ai; return (a && a.duty) || []; }
 
 // —— 2.4 事实与一致性看板 ——
 function factCardHtml(){
@@ -9407,9 +9451,12 @@ async function genOutlineMulti(btn){
       // 重试过程写入状态栏（原来 toast 一闪而过，失败原因不可见）
       const attempt = async ()=>{
         const txt = await callAIGuarded('outline', { angleNote: `【本候选创意角度】${ang.note}` },
-          {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal});
+          {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal, tolerateFaithOutline: true});
         const o = extractJsonObject(txt);
         if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()) throw new Error('未解析到书名/简介');
+        // v1.0.164：忠实度/结构校验被 callAIGuarded 容错降级时为「可选用+警示」，不整条丢弃；
+        const warn = (txt && txt._validateWarn) || '';
+        if(warn){ try{ o._faithWarn = warn; }catch(e){} }
         return o;
       };
       let cand = null, lastErr = null;
@@ -9423,7 +9470,12 @@ async function genOutlineMulti(btn){
         }
       }
       if(!cand){ toast(`${tag}（${ang.tag}）重试后仍未通过校验，已跳过：${(lastErr && lastErr.message) || '未知错误'}`); }
-      if(cand) items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand, ok: gradeOutlineCandidate(cand).ok, reason: gradeOutlineCandidate(cand).reason });
+      if(cand){
+        const _g = gradeOutlineCandidate(cand);
+        const _warn = cand._faithWarn || '';
+        // v1.0.164：忠实度警示候选不再当硬伤丢弃——标记为「仍可选用」，黄标提示，端上可自行为是否采用把关
+        items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand, ok: _g.ok && !_warn, reason: _g.reason || _warn || '' });
+      }
     }
     if(!items.length) throw new Error('全部候选均未通过校验');
     state._outlineCandidates = { batchTs: Date.now(), items, chosenId: null };
@@ -9465,7 +9517,7 @@ function outlineCandidatesHtml(){
     else {
       let warnSpan = '';
       if(!it.ok){
-        warnSpan = '<span style="color:#b8860b;font-size:11px;white-space:nowrap" title="未通过结构校验：'+esc(it.reason||'')+'。采用时会自动补齐缺失字段，仍可正常使用。">⚠️ 未过校验'+(it.reason?('（'+esc(it.reason)+'）'):'')+'</span>';
+        warnSpan = '<span style="color:#b8860b;font-size:11px;white-space:nowrap" title="未通过校验（'+esc(it.reason||'')+'）。该候选仍可选用，采用时会自动补齐缺失字段，请自行判断是否采纳。">⚠️ 待确认'+(it.reason?('（'+esc(it.reason)+'）'):'')+'</span>';
       }
       adoptHtml = warnSpan + '<button type="button" class="btn small '+(it.ok?'primary':'ghost')+'" data-cand-adopt="'+esc(it.id)+'" style="white-space:nowrap">'+(it.ok?'▶ 选用此版':'⚠️ 仍要选用')+'</button>';
     }
