@@ -626,6 +626,7 @@ body.reader-lock{overflow:hidden}
 .orig-card{margin-top:10px}
 .orig-head{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;color:var(--sub);font-size:13px}
 .orig-head:hover{color:var(--accent)}
+.orig-head .gs-tool{margin-left:auto;padding:3px 10px;font-size:12px}
 .orig-t{font-weight:700;color:var(--text)}
 .orig-fold{font-size:12px;transition:transform .15s}
 .so-fold-head{display:inline-flex;align-items:center;gap:4px;cursor:pointer;user-select:none;color:var(--text);font-size:14px;font-weight:700;padding:2px 0;margin-bottom:4px}
@@ -640,7 +641,7 @@ body.reader-lock{overflow:hidden}
 .so-anchor-foot{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .so-anchor-note{font-size:11px}
 .orig-body{margin-top:8px}
-.orig-text{width:100%;min-height:96px;padding:8px 10px;font-size:13px;line-height:1.6;resize:vertical;
+.orig-text{width:100%;min-height:200px;padding:10px 12px;font-size:13px;line-height:1.7;resize:vertical;
   background:var(--panel2);border:1px solid var(--line);border-radius:8px;color:var(--text);cursor:text}
 .orig-text:focus{outline:none;border-color:var(--accent)}
 .orig-actions{display:flex;align-items:center;gap:10px;margin-top:6px;flex-wrap:wrap}
@@ -1599,8 +1600,8 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .cp-item .bs-beat-top{ display:flex; align-items:center; gap:7px; min-width:0; }
 .cp-item .bs-type{ display:inline-flex; align-items:center; gap:6px; flex:none; font-size:12px; font-weight:800; color:var(--accent); background:color-mix(in srgb,var(--accent) 13%, transparent); border:1px solid color-mix(in srgb,var(--accent) 35%, var(--line)); border-radius:20px; padding:2px 10px 2px 4px; cursor:help; line-height:1.6; }
 .cp-item .bs-type-idx{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:800; flex:none; }
-.cp-item .bs-beat-hint{ font-size:11px; color:var(--muted,var(--sub)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-.cp-item .bs-event{ width:100%; box-sizing:border-box; font-size:13px; line-height:1.55; color:var(--txt,currentColor); background:transparent; border:1px dashed color-mix(in srgb,var(--line) 95%, transparent); border-radius:9px; padding:6px 9px; }
+.cp-item .bs-beat-hint{ flex:1 1 auto; display:block; min-width:0; font-size:11px; color:var(--muted,var(--sub)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cp-item .bs-event{ width:100%; box-sizing:border-box; font-size:13px; line-height:1.55; color:var(--txt,currentColor); background:transparent; border:1px dashed color-mix(in srgb,var(--line) 95%, transparent); border-radius:9px; padding:6px 9px; overflow-wrap:break-word; word-break:break-word; resize:vertical; font-family:inherit; }
 .cp-item .bs-event::placeholder{ color:color-mix(in srgb,var(--muted,var(--sub)) 70%, transparent); }
 .cp-item .bs-event:focus{ outline:none; border-style:solid; border-color:var(--accent); background:color-mix(in srgb,var(--accent) 6%, transparent); }
 .cp-item .bs-beat-meta{ display:flex; flex-wrap:wrap; gap:6px; }
@@ -1612,3 +1613,29 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .cp-item .bs-meta-fore{ flex:1 1 170px; }
 .cp-item .bs-meta-fore input{ width:100%; }
 .cp-item .bs-head + .muted{ font-size:11px; color:var(--muted,var(--sub)); }
+
+/* =========================================================
+ * v1.0.159 长书优化：每章节拍表折叠 + 批量控制
+ * 100 章时页面默认只显示每章一行表头，点开才渲染拍卡，
+ * 避免一次性平铺全部节拍导致长距离滚动。
+ * ========================================================= */
+.cp-plans-tool{ display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin:0 0 6px; }
+.cp-plans-tool .btn{ padding:4px 10px; font-size:12px; }
+.cp-plans-tool-tip{ font-size:11px; margin-left:2px; }
+.cp-item .bs-head{ cursor:pointer; user-select:none; }
+.cp-item .bs-head:hover{ opacity:.92; }
+.cp-item .bs-arrow{ display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; flex:none; font-size:11px; color:var(--accent); background:color-mix(in srgb,var(--accent) 12%, transparent); border-radius:5px; transition:transform .15s ease; }
+.cp-item .bs-head.open .bs-arrow{ transform:none; }
+.cp-item .bs-head-stat.done{ background:color-mix(in srgb,var(--accent) 14%, transparent); border-color:color-mix(in srgb,var(--accent) 38%, var(--line)); color:var(--accent); }
+.cp-item .bs-beats-wrap{ display:flex; flex-direction:column; gap:8px; padding-top:2px; }
+.cp-item .bs-beats-wrap[hidden], .cp-item .bs-beats-wrap.hidden{ display:none; }
+
+/* =========================================================
+ * v1.0.161 全书拍子卡片：优点/缺点分段展示
+ * 四拍·万法之祖 / 七拍·商业网文首选 / 十二拍·奇幻成长 / 十五拍·剧本感
+ * 去西式限定名，突出定位与「拍序 + 优缺点」实义，主题变量自动适配。
+ * ========================================================= */
+.book-beat-pc{ margin-top:5px; font-size:11px; line-height:1.45; color:var(--sub); border-top:1px dashed color-mix(in srgb,var(--line) 90%, transparent); padding-top:5px; }
+.book-beat-pc .pc-k{ display:inline-block; font-weight:800; margin-right:4px; padding:0 6px; border-radius:8px; font-size:10px; line-height:1.7; }
+.book-beat-pc.pro .pc-k{ background:color-mix(in srgb,var(--accent) 15%, transparent); color:var(--accent); }
+.book-beat-pc.con .pc-k{ background:color-mix(in srgb,#e5484d 13%, transparent); color:#e5484d; }

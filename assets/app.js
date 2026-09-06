@@ -50,7 +50,7 @@ let gglib = [];                  // v8 词典库：[{id, name, note, savedAt, g:
 const state = {
   mode: 'shortfilm',    // 'shortfilm' 短片 / 'longnovel' 经典长篇小说
   recipe: 'mesh',       // (兼容旧字段) 旧式单一范式 id；新项目用 recipeSet
-  recipeSet: { rhythm:null, titleStyle:[] }, // 长篇写作范式：标题风格(可多选)；结构范式体系已移除(v11)
+  recipeSet: {},   // 内含 recFold 等界面状态；节奏/标题风格范式已整体移除
   wordRange: null,      // (兼容遗留) 不再作为长篇必填；保留字段避免旧快照破坏
   chapterRange: null,   // (兼容遗留) 同上
   totalWords: null,     // (兼容遗留) 同上
@@ -367,7 +367,11 @@ function resolveActiveSpec(taskKey){
     chapterTemp: (cfg.chapterTemp==null ? 0.5 : cfg.chapterTemp),   // v10.8 分任务温度：章节
     qcTemp:      (cfg.qcTemp==null ? 0.2 : cfg.qcTemp),              // 分任务温度：词库提取（严谨低温）
     planTemp:    (cfg.planTemp==null ? 0.4 : cfg.planTemp),          // v10.11 分任务温度：章节规划（节拍表）
-    stripTemp:   (cfg.stripTemp==null ? 1.0 : cfg.stripTemp)          // v1.0.115 分任务温度：本章梗概（速读，创作温度偏高）
+    stripTemp:   (cfg.stripTemp==null ? 1.0 : cfg.stripTemp),         // v1.0.115 分任务温度：本章梗概（速读，创作温度偏高）
+    subplotTemp: (cfg.subplotTemp==null ? 0.25 : cfg.subplotTemp),    // 分任务温度：支线进度更新（契约类窄采样）
+    auditTemp:   (cfg.auditTemp==null ? 0.2 : cfg.auditTemp),        // 分任务温度：审校/锚点提取（契约类窄采样）
+    rollingTemp: (cfg.rollingTemp==null ? 0.3 : cfg.rollingTemp),    // 分任务温度：滚动摘要（忠实压缩）
+    contentAdviseTemp: (cfg.contentAdviseTemp==null ? 0.6 : cfg.contentAdviseTemp)  // 分任务温度：内容建议（建议类）
   };
 }
 function currentSpecLabel(){
@@ -419,7 +423,7 @@ function projectSnapshot(){
   return {
     mode: state.mode || 'shortfilm',
     recipe: state.recipe || 'mesh',
-    recipeSet: state.recipeSet || { rhythm:null, titleStyle:[] },
+    recipeSet: state.recipeSet || {},
     wordRange: state.wordRange || null,
     chapterRange: state.chapterRange || null,
     totalWords: state.totalWords || null,
@@ -552,7 +556,7 @@ function applyProject(p){
 function clearState(){
   state.mode = 'shortfilm';
   state.recipe = 'mesh';
-  state.recipeSet = { rhythm:null, titleStyle:[] };
+  state.recipeSet = {};
   state.wordRange = null; state.chapterRange = null; state.totalWords = null; state.chapterCount = null;
   state.idea = ''; state.outline = null; state.coverPrompt = ''; state.coverWithTitle = false; state.outlineConfirmed = false;
   state.glossAdherence = 60; state.glossAllowFill = false; state.glossAutoFill = true; state.gsCollapsed = true;
@@ -579,18 +583,13 @@ function clearState(){
   wsDraft = null;   // v2.1 新项目草稿重置
   currentStep = 1;
 }
-// 兼容旧版单一范式 → 三维 recipeSet
+// 兼容旧档 recipe/recipeSet → 现用 recipeSet（节奏/标题风格范式已移除）
 function migrateRecipeSet(set, legacyRecipe){
-  // 新格式：set 存在即按新格式处理（rhythm 为 null 也是合法新格式值，表示未选）；结构范式已移除(v11)
-  if(set && typeof set === 'object'){
-    return {
-      rhythm: (typeof set.rhythm === 'string' && RHYTHM_IDS.includes(set.rhythm)) ? set.rhythm : null,
-      titleStyle: Array.isArray(set.titleStyle) ? set.titleStyle.filter(id=> TITLE_STYLE_IDS.includes(id)) : []
-    };
-  }
-  // 旧 recipe 单一 id 迁移（仅保留节奏；结构/分层等范式已废弃 v11）
-  const legacyMap = { web:{rhythm:'web'}, web100:{rhythm:'web'} };
-  return legacyMap[legacyRecipe] || { rhythm:null };
+  // 节奏/标题风格范式已整体移除（遗留清理）：仅保留 recFold 等对象字段，丢弃已废弃的 rhythm/titleStyle
+  const safe = (set && typeof set === 'object') ? { ...set } : {};
+  delete safe.rhythm;
+  delete safe.titleStyle;
+  return safe;
 }
 // ============ 存储层 v12：每项目一条 localStorage，超限单条自动降级 IndexedDB ============
 // 设计（保持内存模型 lib={curId,items} 不变，仅换落盘/加载通道，调用方无需改动）：
@@ -1267,14 +1266,6 @@ const PROMPTS = {
 
 };
 
-/* =========================================================
- * 长篇写作范式：节奏 / 标题风格（结构范式体系已移除 v11）
- * ---------------------------------------------------------
- * 节奏(RHYTHMS, 单选互斥)      web黄金网文 / repress压抑反转 / slice慢生活
- *                              mystery悬疑解谜 / epic群像史诗 / fatal悲剧宿命 / inward文艺向内
- * 标题风格(TITLE_STYLES, 可多选可空)   归纳/画龙点睛/文学语句 等
- * 页面选择与介绍折叠遵循 v2 方案；默认节奏为 web（黄金网文）。
- * ========================================================= */
 const SIZE_DEFAULT = { min:3000, max:5000 };
 
 // v10.13 优化构想：调用 IDEA_POLISH_SYS 把粗糙构想优化为结构化高质量版本。
@@ -1757,95 +1748,16 @@ function openPolishBatchPreview(idx){
 }
 function closePolishBatchPreview(){ const p=$('#polbPreview'); if(p) p.remove(); }
 
-const RHYTHMS = [
-  { id:'web', name:'黄金网文', tag:'爽点密集', short:'黄金网文', src:'经典 · 网文爆款体系',
-    outlineNote:'节奏遵循黄金网文强节奏——开篇尽快抛核心冲突与悬念（金手指/秘密）；因果链清晰、角色抉择有代价、实力或关系阶梯递进；情绪节奏有张有弛（爽点-压抑-爆发交替）。',
-    chapterNote:'严格遵循黄金网文强节奏——开篇(前1-2段)尽快进入事件或情绪；以对话与行动推动剧情、少冗长环境描写；本章须兑现一个"爽点/进展"；因果清晰、有记忆点的人设。',
-    desc:'当前商业网文最有效的节奏配方，核心是“爽点管理”：全程用小高潮喂给读者，持续满足与追更。',
-    mech:'开篇抛冲突悬念；因果清晰、抉择有代价、实力/关系阶梯递进；情绪爽点-压抑-爆发交替。',
-    fit:'升级流、逆袭、热血爽文等重代入感连载；读者重爽感、重追更。',
-    effect:'留存与追更率高、最懂市场；代价是易套路化，需靠人物与爽点创新破局。' },
-  { id:'repress', name:'压抑反转流', tag:'现实虐文', short:'压抑反转', src:'现实 · 黑暗向节奏',
-    outlineNote:'节奏为压抑反转流——回报延迟、挫折长期，主角不会立刻打脸、苦难不马上消解；情绪是隐忍煎熬、积蓄良久才释放；困境层层叠加、主角反复受挫。',
-    chapterNote:'遵循压抑反转流——本段情绪以隐忍煎熬为主，不立刻给胜利与奖励；困境层层叠加、主角反复受挫；把发泄点压到很后，部分努力可以没有回报；章末压在反转来临前或苦难加剧处，勾着读者等释放。',
-    desc:'与爽文相反：回报延迟、挫折长期、反转来得晚，部分努力无回报；情绪隐忍煎熬、积蓄良久才释放。',
-    mech:'困境层层叠加、主角反复受挫、不会立刻打脸；冲突发生后不立刻给胜利，反转往往很晚、甚至部分努力无回报。',
-    fit:'社会向、悬疑、悲剧、历史写实网文；追求真实沉重的情感冲击而非即时爽感。',
-    effect:'压抑到极点的释放更有力量、人物弧光深；但需控节奏，避免“虐而无解”劝退读者。' },
-  { id:'slice', name:'慢生活流', tag:'种田日常', short:'慢生活', src:'现实 · 治愈向节奏',
-    outlineNote:'节奏为慢生活流——低外部冲突、少大起大落，冲突是细碎生活矛盾；剧情推进极慢，聚焦人物感受、生活细节、人际关系；爽点来自安宁烟火与人物陪伴，非升级逆袭。',
-    chapterNote:'遵循慢生活流——聚焦日常生活与人物相处，不追求强冲突；剧情推进慢、冲突多为细碎小事；细腻刻画感官与情绪、烟火气与陪伴感；爽点来自安宁与温暖，而非打脸逆袭。',
-    desc:'种田/日常/治愈：低外部冲突、少大起大落，冲突是细碎生活矛盾；推进极慢，聚焦感受、细节、关系。',
-    mech:'以日常与生活矛盾代替强冲突，推进极慢；爽点来自安宁烟火与人物陪伴。',
-    fit:'种田、日常、治愈、慢热的温馨长篇；读者追求沉浸与陪伴而非刺激。',
-    effect:'氛团队入手温柔治愈、黏性高、抗弃文；代价是追读节奏需靠情感维系。' },
-  { id:'mystery', name:'悬疑解谜流', tag:'悬念悬置', short:'悬疑解谜', src:'正统 · 悬疑推理节奏',
-    outlineNote:'节奏为悬疑解谜流——冲突不快速解决，故意压住答案、延迟兑现；不断抛谜团线索、危机接踵但不揭真相；旧问题搁置、释放留到中后期。',
-    chapterNote:'遵循悬疑解谜流——答案要压住，冲突不要立刻收束；不断抛谜团与线索，危机接踵但不揭真相；旧问题先搁置，答案压住不揭。',
-    desc:'悬念悬置：冲突不快速解决、故意压住答案、延迟兑现；不断抛谜团线索、危机接踵但不揭真相。',
-    mech:'正统悬疑节奏是“悬置＞即时解决”：埋下悬念、转开视角、旧问题搁置、释放拖到中后期。',
-    fit:'悬疑、推理、解谜、谍战类长篇；读者重“猜中/揭晓”的智力快感。',
-    effect:'抓人、让人放不下、揭晓时爆点强；代价是伏笔回收要求高，烂尾风险大。' },
-  { id:'epic', name:'群像史诗节奏', tag:'宏大史诗', short:'群像史诗', src:'历史 · 宏大奇幻节奏',
-    outlineNote:'节奏为群像史诗——不以单一主角得失为节奏开关，视角在多人间切换；主角会失败、配角命运独立；大事件周期长、一卷几十章才完成一次大起落。',
-    chapterNote:'遵循群像史诗——视角在多人间切换，不以单一主角成败为节奏开关；主角也会失败、配角命运独立；大事件跨度长、不追求每章小爽点；多线并进、交织成时代洪流。',
-    desc:'历史/宏大奇幻：不以单一主角得失为节奏开关，视角在多人间切换、配角命运独立、大事件周期长。',
-    mech:'大事件以卷为单位起落，视角多线切换，主角可失败、配角命运独立，格局宏大。',
-    fit:'历史演义、宏大奇幻、权谋群像类长篇；读者重世界构建与时代感。',
-    effect:'格局与史诗感强、人物群像丰满、可承载大世界；代价是个体代入感弱、节奏偏慢。' },
-  { id:'fatal', name:'悲剧宿命流', tag:'命运悲剧', short:'悲剧宿命', src:'文学 · 悲剧节奏',
-    outlineNote:'节奏为悲剧宿命——努力≠胜利、结局被命运预先约束；抗争不一定换来圆满，一次次抗争爬升迎短暂光亮再跌落；情绪很少彻底宣泄、留有怅然。',
-    chapterNote:'遵循悲剧宿命——抗争不一定换来圆满，努力可能徒劳；爬升后迎短暂光亮再跌落；情绪很少彻底宣泄、刻意留怅然与无力感，让悲剧宿命感贯穿。',
-    desc:'努力≠胜利、结局被命运预先约束：抗争不一定圆满，一次次爬升迎短暂光亮再跌落；情绪少有宣泄、留怅然。',
-    mech:'以“命运不可抗”为底色，抗争服务于悲剧张力而非胜利；情绪罕有彻底宣泄。',
-    fit:'悲剧、宿命、史诗型沉重作品；读者重情绪厚重感与命运叩问。',
-    effect:'情感厚重、后劲足、文学性强；代价是致郁、不适配追求爽感的读者。' },
-  { id:'inward', name:'文艺向内流', tag:'心理向内', short:'文艺向内', src:'文学 · 心理向节奏',
-    outlineNote:'节奏为文艺向内——节奏由内心驱动，外部事件只是载体；冲突多发生在心里，剧情推进慢、大事件少，重点是人物纠结、自我认知与情感变化。',
-    chapterNote:'遵循文艺向内——节奏由人物内心驱动，外部事件仅是载体；冲突多在心理层面；推进慢、大事件少；着力刻画纠结、自我认知与情感变化、文笔细腻。',
-    desc:'情绪/心理向：节奏由内心驱动，外部事件是载体；冲突多在心里，推进慢、大事件少，重纠结与自我认知。',
-    mech:'以内心冲突代替外部事件驱动叙事，细腻刻画人物情绪与认知变化。',
-    fit:'文艺、情感、成长类长篇；读者重文笔、情绪共鸣与人物内省。',
-    effect:'文笔与情绪质感强、人物立体、差异化明显；代价是节奏慢、爽点少，需要读者耐性。' }
-];
 
-const RHYTHM_IDS = RHYTHMS.map(r=> r.id);
 
-// 章节标题风格（可多选；不选则大纲阶段不注入任何标题要求，标题由 AI 自由发挥）
-const TITLE_STYLES = [
-  { id:'summary',  name:'归纳', tag:'归纳概括', short:'归纳', src:'自定义 · 标题风格',
-    desc:'标题能概括本章核心事件，读者看标题即知本章讲什么。',
-    mech:'要求 AI 以本章核心事件/情节推进为基准拟题，标题与内容强对应。',
-    fit:'追求"目录即导览"、读者快速定位剧情的作品。',
-    effect:'标题信息密度高、便于检索回顾；代价是可能牺牲悬念感。',
-    note:'章节标题须具备归纳作用：能概括本章核心事件，读者看标题即知本章讲什么，忌与内容脱节。' },
-  { id:'point',    name:'画龙点睛', tag:'点题升华', short:'点睛', src:'自定义 · 标题风格',
-    desc:'标题点出本章主题与情感内核，用双关/象征/意境词升华。',
-    mech:'要求 AI 提炼本章情感与主题落点，用一个点睛词或意象完成升华。',
-    fit:'情感向、主题鲜明、追求回味与记忆点的作品。',
-    effect:'标题有回味与张力、记忆点强；代价是需要主题先行、对 AI 提炼要求高。',
-    note:'章节标题须画龙点睛：点出本章主题与情感内核，可用双关、象征或意境词升华，忌平铺直叙。' },
-  { id:'literary', name:'文学语句', tag:'诗化表达', short:'文学', src:'自定义 · 标题风格',
-    desc:'标题用诗化、意象或典故化表达，讲究语言美感与余韵。',
-    mech:'要求 AI 以文学笔法拟题（诗化/意象/典故），拒绝大白话。',
-    fit:'文风典雅、追求整体气质的作品。',
-    effect:'标题有文学美感、辨识度高；代价是可能与"归纳"取向冲突、需把握分寸。',
-    note:'章节标题须有文学语句质感：采用诗化、意象或典故化表达，讲究语言美感与余韵，而非大白话。' },
-  { id:'neat',     name:'字数工整', tag:'字数统一', short:'工整', src:'自定义 · 标题风格',
-    desc:'全书每章标题字数统一，整齐有节奏。',
-    mech:'要求 AI 全书标题保持相同字数（建议 4-6 字，可对仗）。',
-    fit:'追求形式美、目录整齐划一的章回体/古风作品。',
-    effect:'目录整齐、节奏感强；代价是字数约束下拟题难度上升。',
-    note:'章节标题须字数工整：全书每章标题字数统一（建议 4-6 字，可对仗），整体整齐有节奏感。' }
-];
-const TITLE_STYLE_IDS = TITLE_STYLES.map(s=> s.id);
 
-// v10.18 标题风格(tone)/梗概风格(texture) 残留分组已移除（v11）：TONE_TITLE_STYLES / TEXTURE_PLAN_STYLES 不再参与写作风格库与注入。
+
+
 
 /* =========================================================
  * v2.0 / v10.17 写作风格选择器：内置词库 29 项，v10.17 起全部归入「章节风格(element)」组；v10.21 节奏与网感新增 6 项、语言质感新增 5 项、情绪与张力新增 5 项，内置合计 45 项
  * 组别：v11 起仅保留「章节风格(element)」一组，由用户所选词条按五大类 cat 分块展示。
- * 注入：章节正文用完整章节风格（buildChapterSys/chapterStyleNote）；全书规划师用轻量名列表（writeStyleNamesBlock）。
+ * 注入：章节正文用完整章节风格（chapterStyleNote）；全书规划师用轻量名列表（writeStyleNamesBlock）。
  * 每项 note 为可执行 AI 指令；注入时统一附加一致性红线。
  * ========================================================= */
 const WRITE_STYLES = [
@@ -2676,17 +2588,7 @@ function writeStyleNamesBlock(){
   return `【写作风格（第一优先）】写作风格：${names}${conc?('，'+conc):''}。\n本指令为本章规划的最高优先要求：当其与其它要求冲突时以本指令为准；唯一不可逾越红线：不破坏人名/地名/专名一致性、不违反基础剧情逻辑与人物设定。`;
 }
 
-// 当前所选
-function selRhythm(){ return state.recipeSet && RHYTHMS.find(r=> r.id === state.recipeSet.rhythm) || null; }
-// 章节标题风格（多选）：返回选中的样式对象数组；未选返回 []
-function selTitleStyles(){ return (state.recipeSet && Array.isArray(state.recipeSet.titleStyle)) ? state.recipeSet.titleStyle.filter(id=> TITLE_STYLE_IDS.includes(id)).map(id=> TITLE_STYLES.find(s=> s.id===id)).filter(Boolean) : []; }
-function hasTitleStyle(id){ return Array.isArray(state.recipeSet && state.recipeSet.titleStyle) && state.recipeSet.titleStyle.includes(id); }
-// 标题风格注入块：选中才生成，未选返回空（不发送任何标题要求，AI 自由发挥）
-function titleStyleNote(){
-  const arr = selTitleStyles();
-  if(!arr.length) return '';
-  return '【章节标题风格（用户指定，必须遵守）】\n' + arr.map(s=>'·'+s.note).join('\n');
-}
+
 
 // 默认体量：用户填了哪一侧就用哪一侧；都没填回退默认字数区间 3000-5000
 // 归一化：把可能残缺的区间补全（min/max 任一缺省则用对侧/默认补足），保证派生计算不出现 NaN
@@ -3193,10 +3095,10 @@ const CHAPTER_PLAN_SYS = CHAPTER_PLAN_SYS_PRO;
  * 决定全书的宏观剧情节奏（注入大纲生成的拍子指导），与下方单章微节拍 BEAT_OPTIONS 独立。
  * ========================================================= */
 const BOOK_BEAT_OPTIONS = [
-  { id:4,  label:'四拍', emoji:'📜', subtitle:'万法之祖 · 起承转合', desc:'最通用的底层骨架：起（铺垫）、承（推进）、转（转折/燃点）、合（余波/结局）。适合结构清晰、篇幅中等的作品。', note:'按「起→承→转→合」划分全书三幕/四段，燃点性质简洁有力。' },
-  { id:7,  label:'七拍', emoji:'⚡', subtitle:'情绪过山车 · 商业网文首选', desc:'把「承」拆成两次推进并加入悬念钩子：铺垫→推进→转折→推进→燃点→余波→悬念。节奏感极强，适合快节奏强冲突。', note:'全书大循环按七段推进，情绪高低交替，章末必留钩。' },
-  { id:12, label:'十二拍', emoji:'🏛️', subtitle:'英雄之旅 · 奇幻/成长史诗', desc:'起承转合的哲学细化版：详细描绘主角内心成长的每个心理阶段。适合长线成长、玄幻修仙、奇幻冒险。', note:'前期铺垫较长，重点写心理蜕变与伙伴/敌人矩阵。' },
-  { id:15, label:'十五拍', emoji:'🎬', subtitle:'救猫咪 · 剧本质感/悬疑推理', desc:'把「中段」拆得最细：中点、坏人逼近、一无所有、灵魂黑夜、反击、决战。适合逻辑严密、多重反转的故事。', note:'强调中段布局与多线并置，反转节点需提前预埋。' }
+  { id:4,  label:'四拍', emoji:'📜', subtitle:'万法之祖 · 四段底层骨架', desc:'中国古典乃至全世界故事的底层骨架：起（铺垫）→承（推进）→转（转折/燃点）→合（余波/结局）。', pro:'极度合适、永不过时；结构清晰，适合篇幅中等、想在落笔前先立龙骨的作品。', con:'太过骨架化——大神靠四字就能写出神作，新手实操易卡文，常不知每部分具体该塞什么。', note:'按「起→承→转→合」划分全书三幕/四段，燃点性质简洁有力。' },
+  { id:7,  label:'七拍', emoji:'⚡', subtitle:'商业网文首选 · 七段强节奏', desc:'把「承」拆成两次推进、再补悬念钩子：铺垫→推进→转折→推进→燃点→余波→悬念。', pro:'节奏感极强，读者像坐过山车；快节奏强冲突，男频升级流 / 女频飒爽文的标配。', con:'全书都是 7 步循环，读多了容易让读者产生「套路疲劳」。', note:'全书大循环按七段推进，情绪高低交替，章末必留钩。' },
+  { id:12, label:'十二拍', emoji:'🏛️', subtitle:'奇幻/成长史诗 · 心理蜕变', desc:'极细地刻画主角内心成长的每一个心理阶段（拒绝召唤、历险试炼、灵魂黑夜等），心理线与剧情线同步推进。', pro:'长线叙事、心理蜕变刻画深，适合玄幻修仙 / 奇幻冒险 / 人物传记。', con:'前期铺垫过长（前 5 拍都在准备出发），不适合开局就要炸场的题材。', note:'前期铺垫较长，重点写心理蜕变与伙伴/敌人矩阵。' },
+  { id:15, label:'十五拍', emoji:'🎬', subtitle:'剧本感/悬疑推理 · 中段拆分', desc:'把「中段」拆得最细：中点、坏人逼近、一无所有、灵魂黑夜、反击、决战，层层反转。', pro:'逻辑严密、多重反转，适合悬疑 / 推理 / 职场商战等注重布局的故事。', con:'对新手过于繁琐，容易为了填满 15 拍而注水。', note:'强调中段布局与多线并置，反转节点需提前预埋。' }
 ];
 const BOOK_BEAT_DEFAULT_ID = 7;
 function currentBookBeatId(){ return state.bookBeat ? Number(state.bookBeat) : BOOK_BEAT_DEFAULT_ID; }
@@ -3212,6 +3114,8 @@ function bookBeatHtml(){
           <div style="font-size:18px;margin-bottom:4px">${b.emoji} ${b.label}</div>
           <div style="font-weight:600;font-size:13px;margin-bottom:4px">${b.subtitle}</div>
           <div style="font-size:12px;color:var(--muted);line-height:1.4">${b.desc}</div>
+          ${b.pro?`<div class="book-beat-pc pro"><span class="pc-k">优点</span>${b.pro}</div>`:''}
+          ${b.con?`<div class="book-beat-pc con"><span class="pc-k">缺点</span>${b.con}</div>`:''}
         </label>
       `).join('')}
     </div>
@@ -3728,7 +3632,7 @@ const NARRATIVE_IRON_SOFT = `〔软约束 · 尽力而为、随题材微调〕
 · 快节奏场景必须优先大白话短句，禁止绕弯长句，保证读者一目十行不卡壳。`;
 
 function narrativeIronBlock(role){
-  if(state._narrIron === false) return '';
+  // C fix: 禁则清单 / 语言分层为独立叙事中间件，各自按其开关与 scope 生效，不再被「叙事铁律总开关」整块吞噬
   const parts = [];
   const ban = banListBlockFor(role);
   if(ban) parts.push(ban);
@@ -3736,12 +3640,16 @@ function narrativeIronBlock(role){
     const lang = langLayerInjection();
     if(lang) parts.push(lang);
   }
+  const sep = '\n\n';
+  if(state._narrIron === false){
+    const block = parts.filter(Boolean).join('\n');
+    return block ? sep + '【叙事纪律（铁律已关闭，仅保留禁则/语言分层等中间件）】\n' + block : '';
+  }
   const iron = role === 'chapter' ? NARRATIVE_IRON_HARD + '\n' + NARRATIVE_IRON_SOFT : NARRATIVE_IRON_HARD;
   const head = role === 'chapter'
     ? '【叙事铁律 · 本章写作总纲】'
     : '【叙事铁律 · 规划纪律总纲】（禁止项同样约束规划阶段的设计）';
-  const block = parts.filter(Boolean).join('\n');
-  return '\n\n' + head + '\n' + block + '\n' + iron;
+  return sep + head + '\n' + parts.filter(Boolean).join('\n') + '\n' + iron;
 }
 
 // v10.15 重生成全部章节标题：保留大纲骨架，只重出标题；服从既有设定 + 用户建议 + 防套路第一优先。
@@ -4176,7 +4084,7 @@ async function extractNewGlossary(bodyTexts){
   if(!body.trim()) return {characters:[], places:[], propernouns:[]};
   // 4.8 旗舰版（P2）：user 统一经 buildAIPrompt('glossary') 从 AIBus 上下文组装（与旧内联拼装等价）
   const user = buildAIPrompt('glossary', { content: body });
-  const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('glossary'), temperature: 0.25, topP: 0.5, taskKey:'glossary'}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样，提升 JSON 合规率；v242/911-② 词典 8192 档
+  const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('glossary'), temperature: resolveActiveSpec().qcTemp, topP: 0.5, taskKey:'glossary'}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样，提升 JSON 合规率；v242/911-② 词典 8192 档
   const j = parseJson(txt) || {};
   // 4.7 Pro（3.8）：解析后校验（不阻断，仅告警；7 字段缺失由 keepChar + completeCharFields 兜底补齐）
   const _glRep = validateGlossaryExtract(j);
@@ -4284,7 +4192,7 @@ async function extractGlossaryFromChapter(i){
   const _self = (async()=>{
     try{
       const user = buildAIPrompt('glossary', { content: body.slice(0, 50000) });
-      const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('glossary'), temperature: 0.25, topP: 0.5, taskKey:'glossary'}));   // v242/911-② 词典 8192 档
+      const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('glossary'), temperature: resolveActiveSpec().qcTemp, topP: 0.5, taskKey:'glossary'}));   // v242/911-② 词典 8192 档
       const n = mergeExtractedGlossary(sanitizeGlossaryExtract(parseJson(txt) || {}), i+1);
       if(n.total > 0){ persist(); toast(`第 ${i+1} 章新增词典：+${n.c} 人物（7字段）/ +${n.p} 地名 / +${n.k} 专名`); }
     }catch(e){ /* 静默失败，不阻塞正文 */ }
@@ -4303,7 +4211,7 @@ async function extractSubplotUpdates(chIdx, content){
   if(!body) return {subplots:[]};
   // 4.8 旗舰版（P2）：user 统一经 buildAIPrompt('subplot') 从 AIBus 上下文组装（与旧内联拼装等价）
   const user = buildAIPrompt('subplot', { idx: chIdx });
-  const txt = unwrapAIResult(await callDeepSeek(SUBPROGRESS_UPDATE_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.25, topP: 0.5, taskKey:'subplot'}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样
+  const txt = unwrapAIResult(await callDeepSeek(SUBPROGRESS_UPDATE_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: resolveActiveSpec().subplotTemp, topP: 0.5, taskKey:'subplot'}));   // 4.8 旗舰版（板块二-2）：契约类任务窄采样
   const j = parseJson(txt) || {};
   // 4.7 Pro（3.7）：解析后校验（不阻断，仅告警）
   const _subRep = validateSubplotOutput(j);
@@ -4577,20 +4485,9 @@ function chapterSysBase(){
     .split('四个事件').join(cnt + ' 段节拍事件');
 }
 
-function buildChapterSys(styleOverride){
-  const parts = [];
-  parts.push(chapterSysBase());
-  const styleNote = chapterStyleNote(styleOverride);
-  if(styleNote) parts.unshift(styleNote);          // 写作风格说明置顶
-  const iron = narrativeIronBlock('chapter');   // v1.0.133 叙事铁律（统一入口：禁则硬约束+语言分层硬软+软约束引导）
-  if(iron) parts.push(iron);
-  parts.push('\n【篇幅体量】\n'+sizeChapterInjection());
-  return parts.join('\n\n');
-}
-
 // 4.5：longOutlineSys 已删除，统一使用 buildOutlineSys()
 // 4.5 longChapterSys 新版：强化 L1-L4 五层上下文约束（L1 节拍表/L2 上一章正文/L3 相关词典/L4 滚动摘要）
-// 4.7 Pro（3.5）：正文 System 改由 LONG_CHAPTER_SYS_PRO 驱动，写作风格说明置顶（与 buildChapterSys 同一组装逻辑，供实际生成链路使用）
+// 4.7 Pro（3.5）：正文 System 改由 LONG_CHAPTER_SYS_PRO 驱动，写作风格说明置顶（供实际生成链路使用）
 const longChapterSys = (styleOverride) => {
   const parts = [];
   parts.push(chapterSysBase());
@@ -4913,14 +4810,6 @@ function writeStyleCard(){
         <button type="button" class="btn small ghost" data-ws-fold-all title="展开全部词条类别">⤵ 全部展开</button>
         <button type="button" class="btn small ghost" data-ws-fold-none title="收起全部词条类别">⤴ 全部收起</button>
       </div>
-      ${ isLong() ? `
-      <div class="ws-lang-layer" title="开启：正文按题材自动调节语言底色，对白口语化、书面语只用于情绪峰值；关闭：不注入任何语言分层约束">
-        <label class="gs-autofill" style="display:inline-flex;align-items:center;gap:6px">
-          <input type="checkbox" data-lang-layer ${state.langLayer?'checked':''} />
-          <b>语言分层自动调节</b>
-        </label>
-        <span class="muted" style="font-size:11px">书面语造氛围、口语推剧情；随题材自动定底色。仅长篇生效</span>
-      </div>` : '' }
       ${writeStyleChipsHtml(draft, 'ws', { plus:false, cardFold:true, showTip:false })}
       <div class="ws-tools">
         <button type="button" class="ws-chip ws-chip-plus" data-ws-add="element" title="点击新建文风词条">＋</button>
@@ -5032,15 +4921,6 @@ function bindWriteStyle(){
   // v10.22 五大类分类折叠（主卡，事件委托处理动态渲染）：点类标题展开/收起，偏好持久化到 state.chapterStyle.catOpen
   // 兼容重生成面板（.ws-subcat-t 无 role，不响应）；render 重建后 .ws-card 为新节点，dataset 为空会重新绑定一次
   const wsCard = $('.ws-card');
-  // v1.0.129 语言分层开关（仅长篇显示；事件冒泡导致重复绑定，先清理旧监听）
-  const langToggle = $('[data-lang-layer]');
-  if(langToggle){
-    langToggle.onchange = ()=>{
-      state.langLayer = langToggle.checked;
-      persist();
-      toast(state.langLayer ? '已开启语言分层自动调节（正文按题材自动定语言底色，书面语造氛围、口语推剧情）' : '已关闭语言分层自动调节（正文不再注入语言分层约束）');
-    };
-  }
   // v10.51 一键全部展开/收起（仅作用于词条五大类 data-ws-catfold；组合配方 data-ws-combofold 不动）
   const fa = wsCard && wsCard.querySelector('[data-ws-fold-all]');
   if(fa) fa.onclick = ()=>{ const st=writeStyleState(); st.catOpen=st.catOpen||{};
@@ -5931,13 +5811,10 @@ function origIdeaCard(){
     <div class="orig-head" role="button" tabindex="0" data-orig-toggle title="展开/收起">
       <span class="orig-t">📝 原始构想</span>
       <span class="orig-fold">▸</span>
+      <button type="button" class="btn small ghost gs-tool" data-orig-copy title="复制构想原文">📋 复制</button>
     </div>
     <div class="orig-body" hidden>
       <textarea readonly class="orig-text" spellcheck="false">${esc(idea || '（无构想记录）')}</textarea>
-      <div class="orig-actions">
-        <button type="button" class="btn ghost gs-tool" data-orig-copy>📋 复制</button>
-        <span class="muted orig-note">只读展示，不可编辑；修改构想需重新生成大纲才会更新此快照。</span>
-      </div>
     </div>
   </div>`;
 }
@@ -5945,7 +5822,8 @@ function origIdeaCard(){
 // v10.2 原始构想只读卡绑定：展开/收缩切换 + 复制（复用全局 copyText，自带 toast）
 function bindOrigIdea(){
   const og = $('[data-orig-toggle]');
-  if(og) og.onclick = ()=>{
+  if(og) og.onclick = (e)=>{
+    if(e.target.closest('[data-orig-copy]')) return;   // v1.0.162：标题行里的复制按钮不触发展开/收起
     const body = $('.orig-body'); if(!body) return;
     const on = !body.hidden;
     body.hidden = on;
@@ -6036,7 +5914,7 @@ async function extractStoryAnchors(opts){
   const btn = opts.btn;
   if(btn){ btn.disabled = true; busy(btn,true,'提取中…'); }
   try{
-    const txt = unwrapAIResult(await callDeepSeek(ANCHOR_EXTRACT_SYS, `【完整简介】\n${body}`, {temperature:0.2, topP:0.5, signal:_abortCtl?.signal, maxTokens:clampMaxTokens('json'), taskKey:'audit'}));   // 4.8 旗舰版（板块二-2/3）：JSON 窄采样 + 限长
+    const txt = unwrapAIResult(await callDeepSeek(ANCHOR_EXTRACT_SYS, `【完整简介】\n${body}`, {temperature:resolveActiveSpec().auditTemp, topP:0.5, signal:_abortCtl?.signal, maxTokens:clampMaxTokens('json'), taskKey:'audit'}));   // 4.8 旗舰版（板块二-2/3）：JSON 窄采样 + 限长
     const j = parseJson(txt) || {};
     const a = clampAnchor(j.anchor, 60), t = clampAnchor(j.thesis, 120);
     if(!a && !t){ if(!opts.silent) toast('未提取到有效核心定位/深层命题'); return; }
@@ -6913,6 +6791,9 @@ function titlesGenUser(opts){
   // 注入风格说明
   const styleNote = chapterStyleNote();
   if(styleNote) parts.push(styleNote);
+  // B fix: 禁则清单注入标题出口，使「生效范围→标题」选项真正生效（banListBlockFor('title') 内部已按 scope/开关/长篇门控）
+  const _banTitle = banListBlockFor('title');
+  if(_banTitle) parts.push(_banTitle);
   if(opts.n){
     parts.push(`请生成恰好 ${opts.n} 个章节标题（第1章…第${opts.n}章）。只输出如下 JSON：{"titles":["第1章 标题",...,"第${opts.n}章 标题"]}。标题数量必须严格等于 ${opts.n}，每个标题≤18字。`);
   } else {
@@ -7005,7 +6886,7 @@ function chapterPlanBlock(){
           </span>
           <span class="bs-beat-hint">${beatNoteFor(b.type)?esc(beatNoteFor(b.type)):''}</span>
         </div>
-        <input type="text" class="bs-event" data-bs-event="${i}:${bi}" value="${esc(b.event||'')}" placeholder="本节拍事件：在这段节奏里发生什么">
+        <textarea class="bs-event" data-bs-event="${i}:${bi}" rows="2" placeholder="本节拍事件：在这段节奏里发生什么">${esc(b.event||'')}</textarea>
         <div class="bs-beat-meta">
           <label class="bs-meta"><span class="bs-meta-ic">😐</span><input type="text" class="bs-emo" data-bs-emo="${i}:${bi}" value="${esc(b.emotional||'')}" placeholder="情绪基调"></label>
           <label class="bs-meta"><span class="bs-meta-ic">👤</span><input type="text" class="bs-ent" data-bs-ent="${i}:${bi}" value="${esc((b.requiredEntities||[]).join('、'))}" placeholder="必须实体（顿号分隔）"></label>
@@ -7013,17 +6894,23 @@ function chapterPlanBlock(){
         </div>
       </div>
     `).join('');
+    // v1.0.159：长书优化——每章节拍表默认折叠成一行（折叠态只显示表头），点开才渲染该章节拍卡片；顶部提供「全部展开/收起」
+    const _beatOpen = state.cpBeatOpen || {};
+    const open = !!_beatOpen[i];
     return `
       <div class="cp-item" data-cp-item="${i}">
         <span class="cp-no">${i+1}</span>
         <div class="cp-body-col">
           <div class="bs-block">
-            <div class="bs-head">
+            <div class="bs-head ${beats.length? 'fold' : 'empty'} ${open?'open':''}" data-cp-beat-toggle="${i}" role="button" tabindex="0" title="点击展开/收起本章节拍表">
+              <span class="bs-arrow">${open?'▾':'▸'}</span>
               <b class="bs-head-title">📋 节拍表（${currentBeatCfg().label}）</b>
-              <span class="bs-head-stat">${beats.length}/${beatCnt()} 段</span>
+              <span class="bs-head-stat ${beats.length>=beatCnt()?'done':''}">${beats.length}/${beatCnt()} 段</span>
               <button type="button" class="btn small ghost" data-bs-add="${i}">＋ 补全${beatCnt()}段</button>
             </div>
-            ${beatHtml || '<span class="muted">暂无节拍，可点上方「补全${beatCnt()}段」由 AI 补齐</span>'}
+            <div class="bs-beats-wrap"${open?'':' hidden'}>
+            ${beatHtml || '<span class="muted">暂无节拍，可点上方「补全'+beatCnt()+'段」由 AI 补齐</span>'}
+            </div>
           </div>
         </div>
       </div>`;
@@ -7073,7 +6960,12 @@ function chapterPlanBlock(){
         }).join('')}
       </div>
       <div class="cp-stage-hint muted">先在上方挑选「章节微拍节奏」，再点「⚡ 一键四步」或四步中的任一步；四步可任意顺序单独点击。切换微拍后，规划师节拍表、AI 生成内容与章节正文均随之变化。</div>
-      ${hasPlans ? `<div class="cp-list">${items}</div>
+      ${hasPlans ? `<div class="cp-plans-tool">
+          <button type="button" class="btn small ghost" data-cp-beat-expand title="展开全部章节的节拍表">▾ 全部展开</button>
+          <button type="button" class="btn small ghost" data-cp-beat-collapse title="收起全部章节的节拍表（长书默认）">▸ 全部收起</button>
+          <span class="cp-plans-tool-tip muted">节拍表默认折叠，点章节表头展开查看/编辑；长书（多章）时划动更省力。</span>
+        </div>
+        <div class="cp-list">${items}</div>
         <p class="muted" style="margin:6px 0 0">节拍表由 AI 分批生成，写正文时注入为【L1 本章节拍表】（硬性执行清单）。</p>`
         : `<p class="sub">可选步骤：分四步规划全书——①每章节拍表（${currentBeatCfg().label}）、②定稿全书章节标题、③初期万物词典、④跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
     </div>
@@ -7138,6 +7030,22 @@ function bindBeatSheet(){
       }
     };
   });
+  // v1.0.159：章节表头点击折叠/展开（补全按钮、编辑框点击不触发展开收起）
+  $$('[data-cp-beat-toggle]').forEach(h=>{
+    h.addEventListener('click', (e)=>{
+      if(e.target.closest('[data-bs-add]') || e.target.closest('[data-bs-event]') || e.target.closest('.stop-btn')) return;
+      const i = +h.dataset.cpBeatToggle;
+      state.cpBeatOpen = state.cpBeatOpen || {};
+      state.cpBeatOpen[i] = !state.cpBeatOpen[i];
+      render();
+    });
+    h.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); h.click(); } });
+  });
+  // 批量展开 / 收起
+  const _btEx = document.querySelector('[data-cp-beat-expand]');
+  if(_btEx) _btEx.onclick = ()=>{ const n=(o.chapterPlans||[]).length; const st={}; for(let i=0;i<n;i++) st[i]=true; state.cpBeatOpen=st; render(); };
+  const _btCo = document.querySelector('[data-cp-beat-collapse]');
+  if(_btCo) _btCo.onclick = ()=>{ state.cpBeatOpen={}; render(); };
   // 编辑保存
   $$('[data-bs-event],[data-bs-emo],[data-bs-ent],[data-bs-fore]').forEach(inp=>{
     inp.onchange = ()=>{
@@ -8984,7 +8892,7 @@ function bindView(){
   // v10.18 结构骨架 / 可复用词典折叠（默认收起，点标题展开）
   $$('[data-rec-fold]').forEach(h=> h.onclick = ()=>{
     const key = h.dataset.recFold;
-    state.recipeSet = state.recipeSet || {rhythm:null,titleStyle:[]};
+    state.recipeSet = state.recipeSet || {};
     if(!state.recipeSet.recFold) state.recipeSet.recFold = {};
     state.recipeSet.recFold[key] = !state.recipeSet.recFold[key];
     const body = h.parentNode && h.parentNode.querySelector('.recipe-fold-b');
@@ -9829,7 +9737,7 @@ async function genPlannerTitles(btn, opts){
     const user = titlesGenUser({ req:'' });
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
     const cands = await Promise.all([
-      callAIWithContract(callDeepSeek(REGEN_TITLES_SYS, user, {temperature:0.3, topP:0.5, onStream, signal:_abortCtl?.signal, taskKey:'plannerTitles'}), {needJson:true, expectedCount:n, countPath:'titles', taskName:'规划师-标题-A'}),
+      callAIWithContract(callDeepSeek(REGEN_TITLES_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.5, onStream, signal:_abortCtl?.signal, taskKey:'plannerTitles'}), {needJson:true, expectedCount:n, countPath:'titles', taskName:'规划师-标题-A'}),
     ]);
     const best = pickBestTitles(cands, n);
     if(!best.ok) throw new Error(best.error);
@@ -9873,7 +9781,7 @@ async function genPlannerBeats(btn, opts){
       const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（批次 ${bi+1}/${batches.length}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
       _streamBuf = '';
       const cands = await Promise.all([
-        callAIWithContract(callDeepSeek(buildBeatsSys(), user, {temperature:0.35, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerBeatsBatch, taskName:`节拍表批次 ${bi+1}/${batches.length}-A`}),
+        callAIWithContract(callDeepSeek(buildBeatsSys(), user, {temperature:resolveActiveSpec().planTemp, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:validatePlannerBeatsBatch, taskName:`节拍表批次 ${bi+1}/${batches.length}-A`}),
       ]);
       const best = pickBestChapterPlan(cands, n);
       if(!best.ok) throw new Error(`批次 ${bi+1} 失败：${best.error || '所有候选均无效'}`);
@@ -9951,7 +9859,7 @@ async function genPlannerGlossary(btn, opts){
     if(sourceHasGlossary((o.glossary)||{})) parts.push(`【现有词典】${JSON.stringify(o.glossary,null,2)}`);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const res = await callAIWithContract(callDeepSeek(PLANNER_GLOSSARY_SYS, user, {temperature:0.3, topP:0.6, maxTokens:clampMaxTokens('glossary'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-词典'});   // v242/911-② 词典 8192 档
+    const res = await callAIWithContract(callDeepSeek(PLANNER_GLOSSARY_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.6, maxTokens:clampMaxTokens('glossary'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-词典'});   // v242/911-② 词典 8192 档
     if(!res.ok) throw new Error(res.error);
     const g = res.data && res.data.glossary;
     if(!g || (!Array.isArray(g.characters) && !Array.isArray(g.places) && !Array.isArray(g.propernouns))) throw new Error('词典结构缺失');
@@ -10005,7 +9913,7 @@ async function genPlannerForeshadow(btn, opts){
     parts.push(`【全书章数】${total}`);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const res = await callAIWithContract(callDeepSeek(PLANNER_FORESHADOW_SYS, user, {temperature:0.3, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-伏笔'});
+    const res = await callAIWithContract(callDeepSeek(PLANNER_FORESHADOW_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-伏笔'});
     if(!res.ok) throw new Error(res.error);
     const fs = (res.data && Array.isArray(res.data.foreshadows)) ? res.data.foreshadows : [];
     if(!fs.length) throw new Error('未提取到伏笔条目');
@@ -10478,7 +10386,7 @@ async function chSumGenerate(i, genBtn){
   const sys = getSystemPrompt('strip', { targetZhs: target });
   const user = buildAIPrompt('strip', { idx: i, targetZhs: target });
   try{
-    const txt = unwrapAIResult(await callDeepSeek(sys, user, {temperature: 0.3, topP: 0.5, signal: _abortCtl?.signal, maxTokens: clampMaxTokens('strip'), taskKey:'strip'}));   // 4.8 旗舰版（板块二-2/3）：梗概类窄采样 + 限长
+    const txt = unwrapAIResult(await callDeepSeek(sys, user, {temperature: resolveActiveSpec().stripTemp, topP: 0.5, signal: _abortCtl?.signal, maxTokens: clampMaxTokens('strip'), taskKey:'strip'}));   // 4.8 旗舰版（板块二-2/3）：梗概类窄采样 + 限长
     let strip = String(txt||'').trim();
     if(!strip){ toast('未生成到本章梗概'); return; }
     strip = strip.replace(/^```[\s\S]*?\n/, '').replace(/\n```\s*$/,'').trim();   // 去 markdown 代码块围栏
@@ -10682,10 +10590,13 @@ function buildChapterUser(i, opt={}){
   const fc = (o._factCard || {});
   const _prevHasBody = i > 0 && !!(state.chapters[i-1] && state.chapters[i-1].content && String(state.chapters[i-1].content).trim());
   const _hookList = (fc.unresolvedHooks||[]).map(h=>h.text).filter(Boolean);
-  if(fc.lastScene || _hookList.length){
+  // A fix: 把伏笔台账「已逾期」的伏笔一并注入后续章节，兑现看板"逾期会提醒 AI 必须兑现"的承诺（与未收束伏笔分开呈现、避免重复）
+  const _ovdText = (((state.outline&&state.outline._foreshadowLedger)||{}).overdue||[]).map(x=>(x&&x.text)?String(x.text):'').filter(Boolean);
+  if(fc.lastScene || _hookList.length || _ovdText.length){
     const _seg = [];
     if(!_prevHasBody) _seg.push(`上一章结尾状态：${fc.lastScene||'（未记录）'}`);
     if(_hookList.length) _seg.push(`未收束伏笔：${_hookList.join('、')}`);
+    if(_ovdText.length) _seg.push(`⚠️ 已逾期伏笔（本章必须兑现或明显推进，不得遗漏）：${_ovdText.join('、')}`);
     parts.push(`【衔接事实】${_seg.join('；')}`);
   }
   // L1 节拍表（每章必变，放恒定前缀之后）
@@ -11012,7 +10923,7 @@ async function ensureChapterDigests(onlyIdx){
     if(o._chapterDigests[idx] && o._chapterDigests[idx].text) continue;
     try{
       const res = await callDeepSeek(CHAPTER_DIGEST_SYS, `第 ${idx+1} 章正文：\n` + String(state.chapters[idx].content||'').slice(0,6000),
-        {maxTokens: clampMaxTokens('summary'), temperature: 0.3, topP: 0.5, taskKey:'rolling'});
+        {maxTokens: clampMaxTokens('summary'), temperature: resolveActiveSpec().rollingTemp, topP: 0.5, taskKey:'rolling'});
       o._chapterDigests[idx] = { ts: Date.now(), text: String(res.text||'').trim().slice(0,400) };
       persist();
     }catch(e){ return; }   // 一次失败即退出，下次触发再续
@@ -11037,7 +10948,7 @@ async function generateRollingSummaries(){
     const _hooks = (_l4 && Array.isArray(_l4.unresolvedHooks) && _l4.unresolvedHooks.length)
       ? '【未收束伏笔（摘要须保留相关线索）】\n' + _l4.unresolvedHooks.map(h=>h.text||'').join('、') + '\n\n' : '';
     try{
-      const res = await callDeepSeek(ROLLING_SUMMARY_SYS, _hooks + bodies, {maxTokens: clampMaxTokens('summary'), temperature: 0.3, topP: 0.5, taskKey:'rolling'});   // 4.8 旗舰版（板块二-2/3）：摘要类窄采样 + 限长
+      const res = await callDeepSeek(ROLLING_SUMMARY_SYS, _hooks + bodies, {maxTokens: clampMaxTokens('summary'), temperature: resolveActiveSpec().rollingTemp, topP: 0.5, taskKey:'rolling'});   // 4.8 旗舰版（板块二-2/3）：摘要类窄采样 + 限长
       o._rollingSummaries.push({key, text: String(res.text||'').trim().slice(0,500)});
       persist();
     }catch(e){ /* 静默失败 */ }
@@ -11407,7 +11318,7 @@ async function aiRefineAdvice(i){
   try{
     const ctx = buildAiRefineCtx(i);
     const {system, user} = aiRefineAdvicePrompt(ctx, raw);
-    const res = unwrapAIResult(await callDeepSeek(system, user, {temperature:0.6, topP:0.5, maxTokens:clampMaxTokens('json'), taskKey:'contentAdvice'}));   // 4.8 旗舰版（板块二-2/3）：建议类 JSON 窄采样 + 限长
+    const res = unwrapAIResult(await callDeepSeek(system, user, {temperature:resolveActiveSpec().contentAdviseTemp, topP:0.5, maxTokens:clampMaxTokens('json'), taskKey:'contentAdvice'}));   // 4.8 旗舰版（板块二-2/3）：建议类 JSON 窄采样 + 限长
     const list = parseAiJsonList(res);
     const ls = Array.isArray(list) ? list.filter(x=> x && String(x.text||'').trim()) : [];
     if(!ls.length) throw new Error('AI 未返回有效建议，请重试');
@@ -12554,7 +12465,7 @@ function renderForeshadowLedger(){
       <div class="ne-fs-col"><h5>已回收 (${fs.resolved?fs.resolved.length:0})</h5>${resolved}</div>
       <div class="ne-fs-col overdue"><h5>逾期报警 (${fs.overdue?fs.overdue.length:0})</h5>${overdue}</div>
     </div>
-    <p class="hint">逾期伏笔会在后续章节生成时被强制置顶，提醒 AI 必须兑现。</p>
+    <p class="hint">逾期伏笔会在后续章节生成的「衔接事实」中强制呈现并标注“本章必须兑现或明显推进”，提醒 AI 兑现已埋线索。</p>
   `);
 }
 
@@ -12614,8 +12525,8 @@ function renderIronPanel(){
         <div class="bl-note muted">统一注入三大写作要求：硬约束（禁止/必须）为铁律不可逾越，软约束尽力而为、随题材微调。</div>
       </div>
       <div class="ne-bl-enable" style="margin-top:8px">
-        <label class="mini-check"><input type="checkbox" data-lang-layer2 ${langOn?'checked':''}> <b>语言分层自动调节（默认开，仅长篇生效）</b></label>
-        <div class="bl-note muted">书面语造氛围、口语推剧情；随题材自动定语言底色。</div>
+        <label class="mini-check"><input type="checkbox" data-lang-layer2 ${langOn?'checked':''}> <b>语言分层自动调节（默认开，仅长篇生效，不注入规划师）</b></label>
+        <div class="bl-note muted">书面语造氛围、口语推剧情；随题材自动定语言底色。属叙事纪律（非文风词条）：不随写作风格预设迁移，仅作用于章节正文。</div>
       </div>
       <div style="margin-top:12px">
         <div style="font-weight:700;margin-bottom:4px">硬约束（铁律）</div>
@@ -12747,6 +12658,10 @@ function echoTemps(){
   $('#cfgTempChapter').value = (c.chapterTemp==null ? '' : c.chapterTemp);
   $('#cfgTempQC').value = (c.qcTemp==null ? '' : c.qcTemp);
   $('#cfgAiRecipeTemp').value = (c.aiRecipeTemp==null ? '' : c.aiRecipeTemp);   // v1.0.122 AI配方助手温度（默认0.9）
+  $('#cfgTempSubplot').value = (c.subplotTemp==null ? '' : c.subplotTemp);   // 支线进度
+  $('#cfgTempAudit').value = (c.auditTemp==null ? '' : c.auditTemp);         // 审校/锚点提取
+  $('#cfgTempRolling').value = (c.rollingTemp==null ? '' : c.rollingTemp);   // 滚动摘要
+  $('#cfgTempContent').value = (c.contentAdviseTemp==null ? '' : c.contentAdviseTemp);   // 内容建议
 }
 
 // v10.16 温度保存（从 saveSettings 拆出，主题面板「保存温度」与设置弹窗「保存」共用）
@@ -12761,6 +12676,10 @@ function saveTemps(){
   editCfg.chapterTemp = rd('#cfgTempChapter', 0.5);
   editCfg.qcTemp      = rd('#cfgTempQC', 0.2);
   editCfg.aiRecipeTemp = rd('#cfgAiRecipeTemp', 0.9);   // v1.0.122 AI配方助手温度（默认0.9）
+  editCfg.subplotTemp = rd('#cfgTempSubplot', 0.25);
+  editCfg.auditTemp   = rd('#cfgTempAudit', 0.2);
+  editCfg.rollingTemp = rd('#cfgTempRolling', 0.3);
+  editCfg.contentAdviseTemp = rd('#cfgTempContent', 0.6);
 }
 
 function _curSpec(){
