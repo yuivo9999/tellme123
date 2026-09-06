@@ -4542,14 +4542,15 @@ function chapterLenBounds(){
 function sizeChapterInjection(){
   const n = realChapterCount();   // v1.0.119 用真实章节数（对齐 users 看到的章数），无章节时不注入
   const b = chapterLenBounds();
+  const floor = (b && +b.floor > 0) ? b.floor : 2700;
   const total = n ? `全书共 ${n} 章；` : '';
-  return `${total}本章正文目标 ${b.lo.toLocaleString()}—${b.hi.toLocaleString()} 字，硬下限 ${b.floor.toLocaleString()} 字（首写一次到位）。
-【字数铁律 · 本章落地即达标】
-· 本章必须一次写足到 ≥ ${b.floor.toLocaleString()} 字才算完成；这是硬性交付标准，禁止写成梗概式短场景、禁止一笔带过、禁止提前收尾。
-· 开写前先把本章目标约 ${b.lo.toLocaleString()} 字按【微拍配比】预铺到各节拍上，再逐拍用五感细节（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围写实写足。
-· 剧情完整的前提下优先增厚铺垫、交锋与余波，禁止把多个节拍挤进一句话带过。
+  return `${total}本章正文目标 ${b.lo.toLocaleString()}—${b.hi.toLocaleString()} 字，硬下限 ${floor.toLocaleString()} 字（一次写完、当场达标，禁止靠事后补字数）。
+【字数铁律 · 首写即达标】
+· 本章必须一次写足到 ≥ ${floor.toLocaleString()} 字才算完成；这是硬性交付标准，禁止写成梗概式短场景、禁止一笔带过、禁止提前收尾。
+· 开写前先把本章目标约 ${b.lo.toLocaleString()} 字按【微拍配比】预铺到各节拍，再按 user 侧【分段达成契约】逐拍分段写满：每拍用五感细节（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围写实写足。
+· 剧情完整的前提下优先增厚铺垫、交锋与余波，禁止把多个节拍挤进一句话带过，也不得堆砌标点/空行凑数。
 · 一边写一边对照：已写篇幅是否足以支撑每拍应得的分量；不足必须继续扩写到位，而不是就此了事。
-· 输出完全文后，必须另起一行单独输出：<!-- LEN: 本章实际字数 -->（精确数字）。`;
+· 长度以正文落库为准，末尾不输出任何 LEN/字数标记。`;
 }
 // 更新体量派生提示（页面内）
 function bindSizeHint(){
@@ -9751,9 +9752,12 @@ const PLAN_BATCH_SIZE = 25;
 
 /* ============ v1.0.138 规划师四段拆分 ============ */
 const PLANNER_STAGES = [
-  { id:'beats',      num:'①', label:'节拍表'   },
-  { id:'titles',     num:'②', label:'章节标题' },
-  { id:'glossary',   num:'③', label:'万物词典' },
+  // v1.0.172：顺序改为「标题→词典→节拍表→伏笔网」。原为 节拍表→标题→词典→伏笔网，
+  // 但 plannerBatchContext 生成节拍表时直接读取 o.chapters[].title（第N章《标题》）与词典实体做输入——
+  // 节拍表强依赖标题与词典；而标题只依赖大纲、词典只依赖大纲+书名。故标题（骨架）先出，能落地的再依次生成。
+  { id:'titles',     num:'①', label:'章节标题' },
+  { id:'glossary',   num:'②', label:'万物词典' },
+  { id:'beats',      num:'③', label:'节拍表'   },
   { id:'foreshadow', num:'④', label:'伏笔网'   }
 ];
 function stageLabel(id){ const s=PLANNER_STAGES.find(x=>x.id===id); return s ? s.num+s.label : id; }
@@ -10129,7 +10133,7 @@ async function genPlannerAll(btn){
       `【取消】全部重跑：四步按顺序覆盖生成（直接覆盖现有内容）`
     );
     if(!skipDone){
-      if(!confirm(`全部重跑将按顺序生成：①节拍表（${currentBeatCfg().label}）→②章节标题→③万物词典→④伏笔网，会覆盖现有规划内容，继续？`)) return;
+      if(!confirm(`全部重跑将按顺序生成：①章节标题→②万物词典→③节拍表（${currentBeatCfg().label}）→④伏笔网，会覆盖现有规划内容，继续？`)) return;
     }
   }
   const stages = skipDone ? PLANNER_STAGES.map(s=>s.id).filter(id=>!plannerStageDone(id)) : PLANNER_STAGES.map(s=>s.id);
@@ -10618,10 +10622,56 @@ function adherenceHint(a){
   return '几乎放弃：仅作背景语感参考，允许完全重新构建设定。';
 }
 // 拆分章节输出：AI 输出全文即正文，直接落库
+// v1.0.173（分段达成策略）：正文由【分段达成契约】驱动，按「（节拍N：拍名）」括号小标逐段产出。
+// splitChapterOutput 是正文落库的唯一收口（ideal position）——
+// Modification A：在这里剥掉分段小标行（去标记），防止小标残留在落库正文里。
+// 一致性要求：此处剥离正则须与 buildChapterUser 分段达成契约要求的写法严格一致，
+// 统一为括号小标，并兼容中文/半角括号、有无序号、有无冒号/间隔、拍名可有可无（兼容旧数据残留的两种写法）。
 // 省 token 策略：正文沿用写入时的 max_tokens 上限；
 // v10.11 已去除「AI 返回本章梗概」契约，v1.0.115 本章梗概(strip)改由事后速读生成（单章梗概面板）。
+const SEG_MARK_LINE = /^\s*[（(]\s*节拍\s*\d*\s*[：:、.,，．－—-]?\s*[^（）()\r\n]{0,34}?[）)]\s*$/;
+const SEG_MARK_HEAD = /^\s*[（(]\s*节拍\s*\d*\s*[：:、.,，．－—-]?\s*[^（）()\r\n]{0,34}?[）)]\s*/;
+function stripSegmentMarkers(txt){
+  if(!txt) return txt;
+  const s = String(txt);
+  const lines = s.split(/\r?\n/);
+  const out = [];
+  let changed = false;
+  for(const raw of lines){
+    if(SEG_MARK_LINE.test(raw)){ changed = true; continue; }                          // 独立小标行 → 整行删除
+    if(SEG_MARK_HEAD.test(raw)){ out.push(raw.replace(SEG_MARK_HEAD,'')); changed = true; continue; }  // 行首内联小标 → 仅去前缀
+    out.push(raw);
+  }
+  if(!changed) return s;
+  return out.join('\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+// v1.0.173：为【分段达成契约】把全章目标按「微拍配比」分配到各拍，返回 [{k, t, label}]。
+// 以目标字数(lo，默认3000)为基数逐拍预分配——模型擅长把有界小节写满、不擅长自我拉长一整章，
+// 故把"拉长一整章"改成"逐拍填满有界小节"，确保落地即达 3000 上下、稳过硬下限。
+function segWordTargets(bounds, plan){
+  const totalBase = (bounds && +bounds.lo > 0) ? Math.round(+bounds.lo) : 3000;
+  const beats = (plan && Array.isArray(plan.beats) && plan.beats.length) ? plan.beats : null;
+  if(!beats) return [];
+  const cfg = currentBeatCfg();
+  const raw = String((cfg && cfg.wc) || '');
+  const m = raw.match(/^\s*([\d/]+)/);
+  let ratios = null;
+  if(m){
+    const parts = m[1].split('/').map(Number);
+    if(parts.length === beats.length && parts.every(n => n > 0)) ratios = parts;
+  }
+  const res = [];
+  const sum = ratios ? ratios.reduce((a,b)=>a+b,0) : 0;
+  for(let k=0;k<beats.length;k++){
+    let t;
+    if(ratios) t = Math.max(120, Math.round(totalBase * ratios[k] / sum));
+    else t = Math.max(120, Math.round(totalBase / beats.length));
+    res.push({ k, t, label: beatLabelFor((beats[k] && beats[k].type)) });
+  }
+  return res;
+}
 function splitChapterOutput(txt){
-  return { content: String(txt||'').trim(), strip: '' };
+  return { content: stripSegmentMarkers(txt), strip: '' };
 }
 async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride, signal){
   const mt = chapterMaxTokens();
@@ -10869,10 +10919,24 @@ ${ob2.join('\n')}
   parts.push('【发挥空间】在不违背上一章承接、本章主线与标题的前提下，鼓励引入推进剧情所需的新人物、新线索、新细节——新实体将自动收录进万物词典，后续章节自动沿用。');
   parts.push(USER_PRIO_BILL);
   if(opt.advice) parts.push(`【人工干预要求（用户指定 · 第二优先）】\n${opt.advice}`);
-  // v1.0.167：末位篇幅契约——放在 user 提示词最末端（紧挨生成的最后 token，模型最优先服从），强化"首写即写足"。
-  // 针对长上下文下模型倾向写紧凑、即使 system 已有硬下限也时常压短的现象；不做任何后验续写，靠首写的末位最后指令一次达标。
+  // v1.0.173：末位篇幅契约 → 分段达成契约（采用图片策略：模型擅长把有界小节写满、不擅长把一整章自我拉长）。
+  // 把"一次写足一整章"改为"强制按节拍逐段填满"：先按微拍配比给每拍分配有界目标字数，
+  // 要求每拍以（节拍N：拍名）括号小标起段、写足该拍后才进入下一拍，全部拍写足才算交付。
+  // 仍放在 user 提示词最末端（紧挨生成的最后 token，模型最优先服从）；小标写法与 splitChapterOutput 的去标记正则严格一致，落库时被剥掉、不留结构残留。
   const _lb = chapterLenBounds() || {floor:2700, lo:3000, hi:3600};
-  parts.push(`\n【末位篇幅契约 · 达成后才允许交稿】本章正文字数必须 ≥ ${_lb.floor.toLocaleString()} 字（目标 ${_lb.lo.toLocaleString()}—${_lb.hi.toLocaleString()} 字）。请按【微拍配比】逐拍写满：每拍都写出流动的连贯动作、直接对话、环境与心理的完整场景，技巧是"把每个节拍当作独立小场景铺满，再自然接下一拍"。禁止用概括性旁白、纯短句对话流、堆砌标点/空行来凑字数。十分关键：在正文仍未写足目标字之前，禁止输出任何"收束/尾声/结尾"式的结语——写足目标并行进到剧情应有限度收束后，本章才算交付完成。`);
+  const _segs = segWordTargets(_lb, plan);
+  const _segHead = _segs.length
+    ? `已把全章目标预分配到各拍（各拍合计 ≥ ${_lb.floor.toLocaleString()} 字）。请逐拍完成、逐拍写满：`
+    : `本章无节拍表，请分段铺满全章、逐段写足，禁止一口气推完再回头补字数。`;
+  const _segLines = _segs.length
+    ? '\n　' + _segs.map(seg => `（节拍${seg.k+1}：${seg.label}）→ 该拍至少 ${seg.t.toLocaleString()} 字`).join('\n　')
+    : '';
+  parts.push(`【分段达成契约 · 逐拍写满才准交稿】全章正文字数必须 ≥ ${_lb.floor.toLocaleString()} 字（目标 ${_lb.lo.toLocaleString()}—${_lb.hi.toLocaleString()} 字）。${_segHead}${_segLines}
+【逐拍写法】
+1. 每拍各写一个"有小起承、场景/动作/对话/心理完整"的有界小节（小节内容正在当下场景里实时展开，不是转述梗概）：第一拍从上一章结尾/开篇任务自然承接，后续每拍由上拍结尾的剧情顺势续写，整章保持一条连续流动的叙事线、禁止硬跳切。
+2. 进入每一拍时，在正文中单独起一行写出该拍的分段小标，格式严格为（节拍N：拍名），例如（节拍1：开篇铺垫）——它是给长度自检的锚点，原样单独成行、不得藏进句子里，写完由程序自动剥落、不进入成文。
+3. 该拍未写足分配字数前不进入下一拍；篇幅不足时增厚该拍现场的连贯动作、直接对话、环境与心理，禁止用概括性旁白、纯对话流、堆砌标点/空行来充数。
+4. 全部小节都写足目标之后，本章才算交付完成；在此之前禁止输出任何"收束/尾声/结尾/本章完"式的结语。`);
   // 4.8 旗舰版（板块一-2）：按 24000 字符预算裁剪上下文，防止超上下文窗口
   return budgetChapterContext(parts, 24000).join('\n\n');
 }
