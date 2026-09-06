@@ -1197,12 +1197,13 @@ L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词�
 【输出要求】
 1. 仅输出本章正文，不得包含标题、章节序号、元评论、分析、json、markdown 代码块。
 2. 正文直接以小说段落呈现，段落之间用空行分隔。
-3. 正文必须覆盖本章节拍表中的四个事件（setup / rise / climax / hook），不得遗漏。
+3. 正文必须覆盖本章节拍表中的四个事件（setup / rise / climax / hook），不得遗漏；但这些节拍是本章内**按因果连续推进的故事小节，不是几个互不相干的独立片段**——相邻节拍之间必须有自然的衔接与过渡（剧情因果驱动、情绪递进、动作延续，或时间/空间切换的过渡句），严禁生硬跳切、严禁硬转场；只要叙事连续，相邻节拍允许融合在同一场景内连续推进，不必每拍单起一段、各换一个场景。
 4. 必须使用本章 requiredEntities 中的全部实体；词典既有实体的设定不得改动或相悖。在此基础上允许按剧情需要自然引入新人物/新地点/新专名：新人物须在文中体现身份、年龄、性格、与既有人物的关系等可入典信息；新地名/新专名须体现其含义或用途。禁止引入与剧情无关的冗余实体。【名字定稿（v244/914）】设定词典已收录的人名/地名/专名一律为最终定稿（含用户手动定名）：必须原样使用，禁止改名、增删字、换写法或自造变体；即便名字看似不合常见命名习惯，也照词典原样使用。
 5. 人物言行须符合其性格设定；对话须有辨识度；时间线须与上一章衔接。
 6. 若 L0 叙事铁律有禁用词/禁写内容，请在输出前自检：是否已遵守硬铁律的全部禁止项。
 7. 结尾须指向下一章标题，埋下线索或悬念，但不得提前揭示下一章具体情节（若上下文未给出下一章标题，则按本章剧情自然收束即可，不强求指向标题）。
 8. 正文长度以【篇幅体量】块为准（v243/910-⑷：原硬性字数区间已废除，口径统一交由体量块裁决；情节充实优先于字数）。
+9. 场景与节拍的自然衔接铁律：全章必须是一条连续流动的叙事线——每个节拍事件的结尾自然引出下一个节拍的开头；时间/地点/视点的切换必须给出过渡（时间词、空间移动、镜头焦点转移或因果钩子），禁止节拍间硬跳切、禁止把每个节拍写成孤立片段。节拍之外的衔接与过渡文字（非情节推进的铺垫/转场内容）同样是正文的组成部分，不是多余的填充。
 
 【内部一致性自检（不写入输出）】
 - 时间线不矛盾
@@ -2868,10 +2869,67 @@ function dynamicChapterParams(idx){
     phase
   };
 }
-// v1.0.143：structure 已整体移除。以下三函数保留签名（供各调用点稳定执行）但不再产出任何结构/阶段信息，返回空。
-function chapterPlanStages(){ return []; }
-function chapterActBlock(){ return ''; }
-function structureSkeletonBlock(){ return ''; }
+// v1.0.149：structure 已整体移除，但「大纲节拍的结构」作为全书拍子的阶段成果重新起效（用户方案①）。
+// 不再依赖 AI 输出任何 structure 字段，而是复用「大纲节拍的结构卡」（beatStructureCardHtml）的本地均分算法，
+// 按当前所选「全书拍子」阶段数 + 现有章节列表 把各章归入阶段，供规划师节拍表 / 章节标题 / 正文结构定位 / 伏笔网 真正拿到阶段约束。
+// 注意：这不会把全书拍子的「选择值」塞进规划师——只是把大纲阶段映射注入，作为节奏指导，仍符合「拍数只注入大纲生成」的分工。
+function chapterPlanStages(o){
+  const outline = o || state.outline || {};
+  const chs = Array.isArray(outline.chapters) ? outline.chapters : [];
+  const plan = bookStagePlan(chs.length);
+  if(!plan.length) return [];
+  const stages = []; let cur = 0;
+  plan.forEach((p)=>{
+    const n = p.n;
+    const slice = chs.slice(cur, cur + n);
+    const first = cur + 1;
+    cur += n;
+    stages.push({ first, last: cur, name: p.name, titles: slice.map(c => (c && c.title) ? String(c.title) : '') });
+  });
+  return stages;
+}
+// 本章结构定位：正文生成时注入本章所属的「全书拍子」阶段，明确本章在全书结构中的任务与纪律。
+function chapterActBlock(i){
+  const stages = chapterPlanStages(state.outline);
+  if(!stages.length) return '';
+  const st = stages.find(s => (i+1) >= s.first && (i+1) <= s.last) || null;
+  if(!st) return '';
+  return `【本章结构定位】本章（第 ${i+1} 章）落在全书「${currentBookBeatCfg().label}」的「${st.name}」阶段（第 ${st.first}—${st.last} 章）。本章节拍事件须落在此阶段内、服务该阶段走向；属于本阶段的节拍事件必须兑现，不属于本阶段的事件不得越过阶段提前兑现。`;
+}
+// 结构骨架（供伏笔网生成注入）：输出「大纲节拍的结构」阶段列表，让伏笔设计有结构依据。
+function structureSkeletonBlock(){
+  const stages = chapterPlanStages(state.outline);
+  if(!stages.length) return '';
+  const txt = stages.map(s=>`第 ${s.first}—${s.last} 章「${s.name}」`).join('；');
+  return `【大纲节拍的结构】全书按「${currentBookBeatCfg().label}」划分为 ${stages.length} 个阶段推进：${txt}。伏笔植入与回收须落在合理的阶段跨度内，不得越过所对应阶段提前兑现。`;
+}
+// v1.0.151：全书拍子 → 章节阶段的演算规则（chapterPlanStages 与「大纲节拍的结构卡」共用，保证显示与注入一致）。
+//   · 章节数 ≥ 拍段数：按整除基数把各章均分到每个拍段（余数向前补），每个阶段 ≥1 章。
+//   · 章节数 < 拍段数（少章数小说，如 6 章配 十二拍/十五拍）：不再截断丢弃，而是把 M 个拍子按出现顺序
+//     均匀合并成「章节数」个阶段（每阶段承载 1 章），使全书节拍弧（含结尾燃点/收束）在少章书中被完整呈现；
+//     阶段名取合并区间「首拍→尾拍」，如「反击转折→收束余波」。
+function bookStagePlan(chapterCount){
+  const full = beatStageNames();
+  const C = Math.floor(chapterCount) || 0;
+  const M = full.length;
+  if(!C || !M) return [];
+  if(C >= M){
+    const base = Math.floor(C / M), rem = C % M;
+    return full.map((name, si) => ({ name, n: base + (si < rem ? 1 : 0) }));
+  }
+  const groups = [];
+  for(let g = 0; g < C; g++){
+    const s = Math.floor(g * M / C);
+    const e = Math.floor((g + 1) * M / C) - 1;
+    groups.push({ name: mergedBeatName(full, s, e), n: 1 });
+  }
+  return groups;
+}
+function mergedBeatName(full, s, e){
+  const a = full[s] || full[0];
+  if(e <= s) return a;
+  return `${a}→${full[e] || a}`;
+}
 // 体量提示（拼入大纲提示词）：只给固定章节数，不给任何字数限制
 function outlineSizeNote(){
   const n = chapterCountVal();
@@ -3896,8 +3954,14 @@ function buildOutlineSys(){
   const N = chapterCountVal();              // v235/E1：未填时不取默认 30，避免"30 章"提示词污染（AI 误以为真是 30 章）
   // 全书拍子与防套路疲劳约束（v1.0.143：structure 已移除，改为纯节奏指导，不再要求输出结构字段）
   const bbCfg = currentBookBeatCfg();
+  // v1.0.151：少章数小说（章数 < 拍段数，如 6 章配 十二/十五拍）时，按演算规则把全书拍子合并为符合章数的阶段段，
+  // 避免「15 拍塞进 6 章、每个阶段都要一个高潮」这种 AI 无法满足的矛盾指令。bookStagePlan(0) → []，未设章数时走原逻辑。
+  const _bplan = bookStagePlan(N);
+  const _bStageSeq = _bplan.length ? _bplan.map(p=>p.name).join(' → ') : '';
   parts.push(`\n\n【全书拍子 · ${bbCfg.label}】${bbCfg.note}
-全书故事按「${bbCfg.label}」的 ${bbCfg.id} 个阶段升格推进；每个阶段应包含一个明确的阶段高潮事件，并标注其「燃点性质」（如：夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰等）。相邻阶段的燃点性质必须不同，禁止全书反复使用同一种性质的燃点。`);
+${_bplan.length
+  ? `全书共 ${N} 章；因章节较少，本书把「${bbCfg.label}」的 ${bbCfg.id} 个拍子按序合并为 ${_bplan.length} 个阶段推进（每阶段 1 章：${_bStageSeq}）。每个阶段应包含一个明确的阶段高潮事件，并标注其「燃点性质」（如：夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰等）。相邻阶段燃点性质必须不同，禁止全书反复用同一种燃点。`
+  : `全书故事按「${bbCfg.label}」的 ${bbCfg.id} 个阶段升格推进；每个阶段应包含一个明确的阶段高潮事件，并标注其「燃点性质」（如：夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰等）。相邻阶段的燃点性质必须不同，禁止全书反复使用同一种性质的燃点。`}`);
   // v1.0.146：大纲不再注入章节微拍（微三/微五/微七/双拍）——那是规划师每章 3000 字级的微观节奏，
   // 不属于全书阶段性节奏，注入只会干扰大纲；微观节拍完全交给规划师节拍表步骤。
   parts.push(`\n\n【防套路疲劳 · 全书层约束】
@@ -5513,21 +5577,18 @@ function beatStructureCardHtml(){
       </div>
     </div>`;
   }
-  // 把 N 章尽量均匀归入 M 个阶段（先按整除基数，余数向前补）
-  const M = stageNames.length;
-  const base = Math.floor(totalCh / M);
-  const rem  = totalCh % M;
-  const sizes = stageNames.map((_,si)=> base + (si < rem ? 1 : 0));
+  // 章数 ≥ 拍段数：按整除基数均分；章数 < 拍段数（少章数小说）：按演算规则把拍子合并成符合章数的阶段段（见 bookStagePlan）
+  const plan = bookStagePlan(totalCh);
   const beams = []; let cur = 0;
-  stageNames.forEach((name, si)=>{
-    const n = sizes[si];
+  plan.forEach((p, si)=>{
+    const n = p.n;
     const slice = n ? chs.slice(cur, cur+n) : [];
     cur += n;
     beams.push(`
       <div class="bs-beam">
         <div class="bs-beam-top">
           <span class="bs-beam-idx">${si+1}</span>
-          <span class="bs-beam-k">${esc(name)}</span>
+          <span class="bs-beam-k">${esc(p.name)}</span>
           <span class="bs-beam-meta">${n ? `第 ${cur-n+1}—${cur} 章 · ${n} 章` : '本章阶段暂无对应章'}</span>
         </div>
         <div class="bs-beam-chs">${slice.map((c, j)=>{
@@ -5536,15 +5597,20 @@ function beatStructureCardHtml(){
         }).join(' ')}</div>
       </div>`);
   });
+  const fwSeq = plan.map(p=>p.name).join(' → ');
+  const mergeNote = totalCh < stageNames.length
+    ? `当前章节较少，已将「${esc(bb.label)}」的 ${stageNames.length} 个拍子按序合并为 ${plan.length} 个阶段（每阶段 1 章），确保结尾燃点/收束完整。`
+    : '';
   return `<div class="card bs-card">
     <div class="bs-head" role="presentation">
       <h3 style="margin:0">📐 大纲节拍的结构</h3>
-      <span class="bs-head-stat">${esc(bb.label)} · ${M} 段 · ${totalCh} 章</span>
+      <span class="bs-head-stat">${esc(bb.label)} · ${plan.length} 段 · ${totalCh} 章</span>
     </div>
     <div class="bs-body">
-      <div class="bs-fw"><span class="bs-fw-chip">${esc(bb.label)}</span><span class="bs-fw-seq">${stageNames.map(s=>esc(s)).join(' → ')}</span></div>
+      <div class="bs-fw"><span class="bs-fw-chip">${esc(bb.label)}</span><span class="bs-fw-seq">${fwSeq}</span></div>
       <div class="bs-beams">${beams.join('')}</div>
       <p class="muted" style="margin:6px 0 0;font-size:11px">章节按所选「全书拍子」划分为阶段（本地映射，随章节列表自动更新）。切换拍数后用「🔄 重生成大纲」生效。</p>
+      ${mergeNote ? `<p class="muted" style="margin:4px 0 0;font-size:11px;color:var(--accent)">${mergeNote}</p>` : ''}
     </div>
   </div>`;
 }
@@ -10601,6 +10667,8 @@ function buildChapterUser(i, opt={}){
     // 4.7 Pro（3.5）：补情绪弧 + 本章必须使用实体汇总
     beatText += `情绪弧：${plan.emotionalArc||'按上下文自然推进'}\n`;
     beatText += `必须使用实体汇总：${(plan.requiredEntities||[]).join('、')||'无'}\n`;
+    // v1.0.153：节拍表是本章「一条连续叙事线」上的关键节点，须用过渡衔接成一个整体，禁止各拍割裂成独立断篇
+    beatText += `串联要求：下面 ${(currentBeatCfg().types||[]).length} 个节拍是本章同一段连续剧情上的关键节点——写作时必须用因果、情绪递进、动作延续或时间/空间过渡把它们紧密衔接成一篇流畅的正文；节拍之间禁止生硬跳切、禁止各写各的断章；只要叙事连续，相邻节拍可融合在同一场景内推进，节拍之间的衔接过渡文字同样是正文的一部分。\n`;
     beatText += `【微拍配比】当前「${currentBeatCfg().label}」：${currentBeatCfg().wc||''}；本章燃点须克制为一枚小高潮（强度约全书终极燃点的千分之一），勿提前打光主角底牌；只解决一个具体小麻烦。\n`;
     plan.beats.forEach((b, idx)=>{
       beatText += `${idx+1}. [${beatLabelFor(b.type)}] ${b.event}（情绪：${b.emotional||'按上下文'}）——必须出现：${(b.requiredEntities||[]).join('、')||'无'}${(b.foreshadowing||[]).length ? '；埋伏笔：'+b.foreshadowing.join('、') : ''}\n`;

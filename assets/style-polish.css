@@ -288,6 +288,29 @@ input[type="checkbox"], input[type="radio"]{ accent-color: var(--accent); width:
 }
 :where([data-theme="dark"],[data-theme="light"],[data-theme="aurora"],[data-theme="paper"]) .gen-count-out{ font-weight:800; font-size:15px; }
 
+/* ✚ v1.0.152 批量生成 / 区间生成：步进器与区间章数输入统一为与「区间生成」按钮同高（var(--h-btn)，默认 42px），
+   消除同一行「前小后大」的不美观；所有主题一致生效（含黑板/机甲/赛博/古风强皮肤，它们继承此通用布局规则）。 */
+.multi-gen{ align-items:center; }
+.multi-gen .gen-stepper{
+  height:var(--h-btn,42px); box-sizing:border-box; padding:0 7px; gap:5px;
+  align-items:center;
+}
+.multi-gen .gen-step{
+  height:calc(var(--h-btn,42px) - 2px); min-height:0; width:40px; min-width:40px;
+  display:flex; align-items:center; justify-content:center; box-sizing:border-box; font-size:18px;
+}
+.multi-gen .gen-count-out{
+  height:calc(var(--h-btn,42px) - 2px); min-height:0; min-width:46px;
+  display:flex; align-items:center; justify-content:center;
+  padding:0 10px; box-sizing:border-box; font-size:15px; font-weight:800; line-height:1;
+}
+.range-gen{ align-items:center; }
+.range-gen .rg-label{ align-items:center; }
+.range-gen .rg-input{
+  height:var(--h-btn,42px); width:56px; box-sizing:border-box;
+  display:flex; align-items:center; justify-content:center; font-size:14px;
+}
+
 /* 选项 chip（创作规范 / 写作风格词条 / 配色）：选中渐变 */
 :where([data-theme="dark"],[data-theme="light"],[data-theme="aurora"],[data-theme="paper"]) .spec-opt{
   border-radius:999px; transition: all var(--dur) var(--ease);
