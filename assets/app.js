@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.197';   // v1.0.197 词典人物新增 mannerism（习惯小动作/口头禅）字段：非人人皆有，生成为主角/重要配角写具体内容、判定没有则填「无」；贯通生成提示（GLOSSARY_SYS/规划师/逐章提取/复用底稿）、校验收紧至 8 字段、词典卡展示可编辑、正文注入与格式化为「小动作/口头禅」，token 档位 glossary 8192→9216 防截断。v1.0.196 全书末章结局拍（BEAT_ENDING，末章末拍以结局替悬念）。v1.0.195 大纲生成防失败兜底（salvageOutlineFromText）。v1.0.194 大纲候选收敛 6→3（商业/反差/情感）且章首轻量版选项A开场六式菜单。
+const APP_VERSION = '1.0.198';   // v1.0.198 修复大纲多候选恒现"待确认校验：缺：叙事锚点、深层主题"：候选角度指令要求必给 anchor/thesis＋候选生成即 fillOutlineSoftFields 补齐软字段（缺则由简介推导/占位），卡片不再每次报软缺、比选不阻塞。v1.0.197 词典人物新增 mannerism（习惯小动作/口头禅）字段且古风主题 .btn.ghost 去掉继承的深色虚化阴影。v1.0.196 全书末章结局拍（BEAT_ENDING）。v1.0.195 大纲防失败兜底（salvageOutlineFromText）。v1.0.194 大纲候选收敛 6→3（商业/反差/情感）且章首轻量版选项A开场六式菜单。
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -3295,14 +3295,14 @@ const BEAT_OPTIONS = [
       { key:'climax', label:'核心进展', uiHint:'给出本章最要紧的进展或成果，回应开头的期待。', note:'给出本章的关键进展或成果，回应开头建立的期待（~1500字）', aiDirective:'必须给出本章关键进展并回应前文期待、占篇幅最大；禁止无进展的注水对白或冗余环节。', wc:'~1500字' },
       { key:'hook',   label:'收束+悬念', uiHint:'收好本章成果，在衔接处留个新信息点当引子。', note:'收束本章成果，在衔接处留下新的信息点以引出下一章（~1200字）', aiDirective:'必须收束本章成果，并在章末留下一个新信息点引出下一章；禁止以强行悬念或重复信息收尾。', wc:'~1200字' }
   ]},
-  { id:7,  label:'微七拍', emoji:'🍵', desc:'慢热细腻型：逐步推进、以情感联结动人，结尾留一份温暖期许', wc:'七段细分（共约3000字/章）', types:[
-      { key:'daily',     label:'日常铺垫', uiHint:'呈现一段平和的日常，铺垫本章氛围。', note:'呈现一段平和的日常场景，奠定本章氛围', aiDirective:'必须呈现平和的日常场景奠定氛围；禁止在本拍制造冲突或信息倾倒。' },
-      { key:'interact',  label:'小互动', uiHint:'一次细微往来，让人物关系更近一点。', note:'一次细微的往来，令人物之间的关系更近', aiDirective:'必须通过一次具体的小互动推进人物关系；禁止空泛寒暄。' },
-      { key:'misunder',  label:'小误会', uiHint:'一次轻微的理解偏差，带起一点小波澜。', note:'一次轻微的理解偏差，带来一点波澜', aiDirective:'必须用一次轻微偏差造成小波澜且尺度克制；禁止让误会失控成激烈对立或长时间冷场。' },
-      { key:'heart',     label:'推心置腹', uiHint:'一次走心交流，情感再进一步。', note:'一次深入的交流，令人物情感进一步接近', aiDirective:'必须借一次深入交流推进情感；禁止用说教或空谈代替具体情节。' },
-      { key:'warm',      label:'温情高点', uiHint:'一个小而暖的瞬间，作为本段的温情落点。', note:'小而温暖的时刻（如一次贴心的举动）', aiDirective:'必须给出一个具体贴切的温暖时刻、注意分寸；禁止强行煽情。', wc:'注意分寸' },
-      { key:'glow',      label:'温润余波', uiHint:'情绪缓缓回落，让读者回味。', note:'情绪缓缓回落，余味悠长', aiDirective:'必须让上一拍的情绪自然回落、留下余味；禁止突然跳入新冲突。' },
-      { key:'promise',   label:'明日之约', uiHint:'用一句约定或期许收章，为之后留个盼头。', note:'以一句约定或期许收章，为后续留下期待', aiDirective:'必须以约定/期许/承诺收章并为后续留期待；禁止以封闭式总结收尾。' }
+  { id:7,  label:'微七拍', emoji:'🍵', desc:'慢热细腻型：逐步推进、以情感联结动人，结尾留一份温暖期许', wc:'350/400/500/600/550/400/200（共约3000字/章）', types:[
+      { key:'daily',     label:'日常铺垫', uiHint:'先立时间、地点、气温等感官氛围，让读者进得来。', note:'以时节/气温/光线等感官细节立境，交代时间地点与主角当下去向（~350字）', aiDirective:'必须用具体的气候、光线、气味等感官细节把日常铺开并立境；禁止在本拍制造冲突或信息倾倒。', wc:'~350字' },
+      { key:'interact',  label:'小互动', uiHint:'引入一个活物或熟识的人，几句最简往来，让画面活起来。', note:'借一个活物或熟识的人带出极简对话的细微往来（~400字）', aiDirective:'必须借具体活物或熟人带出一段日常互动、对话点到为止；禁止空泛寒暄、禁止长篇对话独白。', wc:'~400字' },
+      { key:'misunder',  label:'小误会', uiHint:'一次轻微又双向的理解偏差，带起一点克制的小波澜。', note:'一次双向无恶意的轻微误解，读者是"早知道"的知情者（~500字）', aiDirective:'必须设计成双向无恶意的轻微偏差、并让读者处于知情位置制造张力；禁止让误会失控成激烈对立或长时间冷场。', wc:'~500字' },
+      { key:'heart',     label:'谈心推进', uiHint:'借一件共同的琐事把两人推近，走到情感破冰的一刻。', note:'借外在事件（雨/食事/修葺等）促成靠近，推动一次真心交流（~600字）', aiDirective:'必须用一个具体外在契机把两人推近并推进一段走心对话；禁止用说教或空谈代替具体情节。', wc:'~600字' },
+      { key:'warm',      label:'温馨燃点', uiHint:'全段唯一的小高点，力度极轻：只写身体本能，不靠告白。', note:'本段唯一燃点但力度极轻：以手温/指尖/汤暖等生理细节呈现暖意（~550字）', aiDirective:'必须以极轻的生理细节（心跳漏拍、耳朵发烫、低头搅汤、嘴角微弯）呈现暖意；禁止直接表白、禁止大动作煽情。', wc:'~550字' },
+      { key:'glow',      label:'细腻余波', uiHint:'情绪缓缓回落，镜头拉远到周遭的声音、气味与光。', note:'情绪回落，镜头拉远收进环境的声音/气味/光线，余味悠长（~400字）', aiDirective:'必须让上一拍的情绪自然回落、以环境感官细节收束；禁止突然跳入新冲突。', wc:'~400字' },
+      { key:'promise',   label:'明日约定', uiHint:'用一句"明天/改日"的约定或期许收章，留一个弱悬念与盼头。', note:'以一句约定/期许收章，留弱悬念与明日的延续感（~200字）', aiDirective:'必须以约定/期许/承诺收章并留弱悬念与延续感；禁止封闭式总结、禁止开放式烂尾。', wc:'~200字' }
   ]},
   { id:2,  label:'双拍结构', emoji:'🔍', desc:'悬疑/惊悚/推理：长铺垫+短揭示，前段积累后段收束', wc:'2500/500（共约3000字/章）', types:[
       { key:'hold',   label:'长段铺垫', uiHint:'前面一大段都用来铺线索、攒信息，把气氛一点点垫起来。', note:'用较长篇幅铺设线索、逐步积累信息，营造渐进的氛围（~2500字）', aiDirective:'必须用长篇幅连续铺设线索、逐步积累信息、营造渐进氛围；禁止情绪化辞藻堆砌、禁止段落间信息断裂。', wc:'~2500字' },
@@ -9825,6 +9825,7 @@ function outlineAngleDirective(ang, idx, total){
 你是用「${ang.tag}」这个角度，把用户的构想重新设想成一本书。本批共 ${total} 个候选，各代表完全不同的创作角度：你必须让本候选在 书名、主角设定方式、剧作重心、类型口味 四个维度的组合上，与其他候选形成肉眼可辨的差异，禁止写成只是换了个题目的同一篇。
 · 硬核保真：用户在【用户构想】中加引号/书名号的核心词（如「被贬马夫」「社稷倾覆」）必须逐字原样出现、一字不改。
 · 除硬核外放开重塑：允许按本角度改动主角的身份细节/动机/处境、重写主线的冲突组织与叙事焦点，把故事真正"用这个角度重讲一遍"。
+· 每个候选都必须同时给出 anchor（核心一句话定位：题材+主角+核心冲突，≤50字）与 thesis（深层主题命题，≤80字，点出该角度挖掘的内核）；禁止省略留空——若确实难措辞，anchor 引用 logline 前半、thesis 提炼一句主题，也务必真实给出。
 ${ang.rise}`;
 }
  
@@ -9869,6 +9870,9 @@ async function genOutlineMulti(btn){
         if(salv.salvaged){ try{ o._softWarn = o._salvaged || '未能完整解析为标准结构，已自动抢救为可编辑骨架'; }catch(e){} }
         const warn = (txt && txt._validateWarn) || '';
         if(warn){ try{ o._faithWarn = warn; }catch(e){} }
+        // v1.0.197：候选生成即补齐 soft 字段（anchor/thesis 缺失时由简介推导/占位），
+        // 消除候选卡上每次生成都恒现的「待确认校验：缺：叙事锚点、深层主题」；数据完整、不再作软缺警示，且不阻塞比选。
+        fillOutlineSoftFields(o);
         return o;
       };
       let cand = null, lastErr = null;
@@ -10345,10 +10349,16 @@ async function genPlannerBeats(btn, opts){
   try{
     const totalN = (o.chapters||[]).length;
     if(!totalN){ if(!opts.silent) toast('请先设置全书章节数'); return false; }
-    const batches = [];
-    for(let start=0; start<totalN; start+=PLAN_BATCH_SIZE) batches.push({start, end: Math.min(start+PLAN_BATCH_SIZE, totalN)});
+    // v1.0.198 微拍批次量化：每批输出的体量按「每章拍数」归一——以微五(5拍×25章)为基准，高拍数微拍（微七=7拍→~18章/批）不再按固定 25 章硬塞进单次调用，
+    // 避免单批响应过长 / 超 maxTokens 截断，从而出现「节拍表一直生成中」的长时间卡顿；微三/微五/双拍取 min(25, ceil(125/拍数)) 不受影响或更细。
+    const _bc = Math.max(1, beatCnt());
+    const _bsz = Math.max(1, Math.min(PLAN_BATCH_SIZE, Math.ceil((PLAN_BATCH_SIZE * 5) / _bc)));
+    const pending = [];
+    for(let start=0; start<totalN; start+=_bsz) pending.push({start, end: Math.min(start+_bsz, totalN)});
     let wrote = 0;
-    for(const [bi,b] of batches.entries()){
+    let _doneN = 0;
+    while(pending.length){
+      const b = pending[0]; _doneN++;
       const n = b.end - b.start;
       let user = plannerBatchContext(b);
       // v1.0.175：时间锚跨批承接——把上一批的"现实主线末尾时点"透传给本批，确保首页首拍时间不间断、不倒退
@@ -10357,7 +10367,7 @@ async function genPlannerBeats(btn, opts){
         const _prevTail = _prevPlan && Array.isArray(_prevPlan.beats) ? String((_prevPlan.beats[_prevPlan.beats.length-1]||{}).time||'').trim() : '';
         if(_prevTail){ user += `\n\n【上一章末尾时间锚（承接硬约束）】第 ${b.start} 章（上一批末章）结束于「${_prevTail}」。\n· 本批第 ${b.start+1} 章首拍的"现实·时点"必须承接该末尾时点（从其之后/衔接处继续），禁止整体倒退到更早时段；\n· 若首拍需以闪回/梦境等异支线开场，也须在主线时点之后正常进入并随后收回，不得破坏主线时间顺序。`; }
       }
-      const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（批次 ${bi+1}/${batches.length}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
+      const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（批次 ${_doneN}/${_doneN + pending.length - 1}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
       _streamBuf = '';
       // v1.0.196：本批含全书末章时，末章末拍须以「结局(ending)」收束而非悬念，并把末章下标透传给校验层放行
       const _finalAbs = totalN - 1;
@@ -10368,10 +10378,24 @@ async function genPlannerBeats(btn, opts){
         user += `\n\n【全书末章·结局拍（硬约束）】本批第 ${_finalOffset + 1} 章，即全书第 ${_finalAbs + 1} 章，是全书最后一章。该章**最后一拍禁止用 hook（悬念）**，必须改为「结局」节拍：本章最后一段 beats 的 type 固定为 "ending"，其余各拍类型照常按微拍顺序。其 event 必须收束全书主线与各主要人物归宿、给出核心冲突的最终解决与确定结局或明确余味；禁止留悬念钩子、禁止开放式烂尾。`;
       }
       const cands = await Promise.all([
-        callAIWithContract(callDeepSeek(buildBeatsSys(), user, {temperature:resolveActiveSpec().planTemp, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:(j)=> validatePlannerBeatsBatch(j, { finalOffset: _finalOffset }), taskName:`节拍表批次 ${bi+1}/${batches.length}-A`}),
+        callAIWithContract(callDeepSeek(buildBeatsSys(), user, {temperature:resolveActiveSpec().planTemp, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:(j)=> validatePlannerBeatsBatch(j, { finalOffset: _finalOffset }), taskName:`节拍表批次 ${_doneN}-A`}),
       ]);
       const best = pickBestChapterPlan(cands, n);
-      if(!best.ok) throw new Error(`批次 ${bi+1} 失败：${best.error || '所有候选均无效'}`);
+      if(!best.ok){
+        const err = String(best.error || '所有候选均无效');
+        // v1.0.198 截断自动拆批：高拍数/长章数导致的单批输出被 maxTokens 截断（finishReason=length）时，
+        // 不再让整批长时间失败转圈，而是把本段拆成两半重跑（至多逐层减半，n=1 时不再拆、直接报错）。
+        const truncated = /截断|truncat|finishReason/i.test(err);
+        if(truncated && n > 2){
+          const mid = b.start + Math.ceil(n/2);
+          pending.shift();
+          pending.unshift({start:b.start, end:mid}, {start:mid, end:b.end});
+          if(!opts.silent) toast('节拍表单批过长被截断，已自动拆小重跑…');
+          continue;
+        }
+        throw new Error(`批次 ${_doneN} 失败：${err}`);
+      }
+      pending.shift();
       if(!Array.isArray(o.chapterPlans)) o.chapterPlans = new Array(totalN).fill(null);
       (best.data.chapterPlans||[]).forEach((p,i)=>{
         const idx = b.start + i;
@@ -10384,13 +10408,13 @@ async function genPlannerBeats(btn, opts){
         if(Array.isArray(p.beats) && p.beats.length>=beatCnt()) wrote++;
       });
       o._plannerProgress = o._plannerProgress || {};
-      o._plannerProgress.beats = { done: bi+1, total: batches.length, ts: Date.now() };   // v225/P4：批次进度持久化，刷新后可见半程态
+      o._plannerProgress.beats = { done: _doneN, total: _doneN + pending.length, ts: Date.now() };   // v225/P4：批次进度持久化，刷新后可见半程态
       persist();
     }
     render();
     markAIDone('chapterPlan');
     o._plannerProgress = o._plannerProgress || {};
-    o._plannerProgress.beats = { done: batches.length, total: batches.length, ts: Date.now() };   // v225/P4：全部批次完成
+    o._plannerProgress.beats = { done: _doneN, total: _doneN, ts: Date.now() };   // v225/P4：全部批次完成（v1.0.198 修正：用 _doneN 而非未定义的 batches.length，避免成功收尾抛 TypeError 被误判为失败）
     refreshPlannerStageBar(null, null);
     if(!opts.silent) toast(`节拍表已生成：${wrote} 章 · 每章${beatCnt()}段（${currentBeatCfg().label}）`);
     return true;

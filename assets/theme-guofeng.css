@@ -237,6 +237,7 @@
   border: 1px solid rgba(212,168,75,0.5);
   color: var(--gf-gold);
   box-shadow: none;
+  text-shadow: none;   /* v1.0.197 修复浅色宣纸上金色小字发糊：去掉 .btn 继承的 0 1px 2px rgba(0,0,0,.5) 深色虚影，金色字以清晰细腻显示 */
 }
 
 /* 底部令牌导航 */
