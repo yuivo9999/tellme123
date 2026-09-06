@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.181';   // v1.0.145 重生成弹窗：双按钮置顶一行（左=直接重生成/右=带建议），删除顶部描述；v1.0.144 structure 彻底清除
+const APP_VERSION = '1.0.182';   // v1.0.145 重生成弹窗：双按钮置顶一行（左=直接重生成/右=带建议），删除顶部描述；v1.0.144 structure 彻底清除
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -3625,7 +3625,17 @@ function buildAIPrompt(kind, extra){
 
 // —— 4.8 新增组装函数（与项目既有内联拼装等价，供 buildAIPrompt 统一路由） ——
 function buildIdeaPolishUser(ctx){
-  return `【用户构想】\n${ctx.rawIdea || ''}`;
+  // v1.0.182：注入用户当前选定的叙事结构——让优化构想的「结构」字段与全书拍子/章节微拍/章节数真实对齐，不再闭眼给通用比例
+  const lines = [`【用户构想】\n${String(ctx.rawIdea || '').trim()}`];
+  const bb = currentBookBeatCfg();
+  const mb = currentBeatCfg();
+  const cc = chapterCountVal();
+  const parts = [];
+  if(bb) parts.push(`全书拍子·${bb.label}（${bb.subtitle}）\n阶段：${((bb.ai && bb.ai.stages) || []).join(' → ')}`);
+  if(mb) parts.push(`章节微拍·${mb.label}${mb.wc ? `（${mb.wc}）` : ''}`);
+  if(cc) parts.push(`全书章节数：${cc} 章`);
+  if(parts.length) lines.push(`【已选叙事结构】\n${parts.join('\n\n')}`);
+  return lines.join('\n\n');
 }
 function buildRecipeUser(ctx){
   return aiRecipeUser(ctx.idea);
@@ -3856,7 +3866,7 @@ const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想�
 题材（时代/类型基调）：…
 主角（身份/目标/核心缺陷/钩点）：…
 核心冲突（全书的引擎：谁与什么冲突、为何难解）：…
-结构（全书阶段与大致比例，如 前20%铺垫→中60%升级→后20%收束）：…
+结构（全书阶段与大致比例：若上方【用户构想】后已给出【已选叙事结构】（全书拍子阶段/章节微拍/章节数），全书阶段必须与该拍子贯通、勿自创一套不相容的分段；未给出则按一般起承转合给出比例）：…
 风格（基调 + 2-3 个落地方式）：…
 目标（想带给读者的体验）：…
 核心词（必须原样保留入书名/简介/锚点的专名与固定短语，用引号括起）：…
