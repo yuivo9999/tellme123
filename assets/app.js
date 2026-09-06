@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.189';   // v1.0.189 全局时间线改 diff 输出：只重排需改时间的拍，输出量从"全书"降到"少数改动项"，提速明显；v1.0.188 叙事主体升级为五种（主角线/双主角/铁三角/四方/五人团），双主角全链路独立注入；solo 严格隔离不污染；v1.0.187 章首铁律；v1.0.186 叙事主体·团队
+const APP_VERSION = '1.0.191';   // v1.0.191 修章首矫枉过正：去掉"首句从人物动作切入"与章首的重叠指令，改成硬性"首句不得以主角名/称谓开头"+多样化切入；右上角快速大纲开关改为红色打勾/不打勾；v1.0.190 全局时间线改「按段串行」：≤8章对半切2段、>8章5章起步；跨段承接、自动重试2次、中断可续跑（分段轨道+单个续跑按钮）；废弃方案1 diff（v1.0.189）；v1.0.188 叙事主体升级为五种（主角线/双主角/铁三角/四方/五人团），双主角全链路独立注入；solo 严格隔离不污染；v1.0.187 章首铁律；v1.0.186 叙事主体·团队
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -3821,7 +3821,7 @@ const NARRATIVE_IRON_HARD = `〔硬约束 · 铁律，不可逾越，冲突时�
 · 书面语是藏起来的底牌：旁白可按题材适度书面，但对白必须口语；书面语必须只在超大高潮、深情告白、终极顿悟时用来「提咖」，禁止在赶路、打斗、系统提示等快节奏场景滥用。`;
 
 const NARRATIVE_IRON_SOFT = `〔软约束 · 尽力而为、随题材微调〕
-· 必须给主角绑定 1-2 个专属小动作/口头禅/下意识小习惯，写到自然出现、不刻意。例：主角一紧张就转无名指上的旧戒指、说谎前先摸耳垂。
+· 必须给核心人物绑定 1-2 个专属小动作/口头禅/下意识小习惯，写到自然出现、不刻意。例：人物一紧张就转无名指上的旧戒指、说谎前先摸耳垂。
 · 每章必须至少落地 1-2 处生活化细碎细节作真实毛边（一瓶水、一句口误、一个没用上的打火机）。
 · 语言底色必须随题材稳定贯穿全书，禁止中途漂移：都市/网游/沙雕→贴近生活口语；仙侠/红楼风→适度书面高级感。
 · 快节奏场景必须优先大白话短句，禁止绕弯长句，保证读者一目十行不卡壳。`;
@@ -3851,7 +3851,7 @@ function narrativeIronBlock(role){
   }
   // v1.0.187 章首反机械化：治"每章都拿主角名+动作开头"的把式开场
   if(role === 'chapter'){
-    ironFull += '\n【章首铁律】严禁每章都以"主角姓名/称谓 + 动作"的同一模式起首（如每章第一句都是「沈暮 + 动作」）。每章开头必须换一种方式切入，且相邻章节尽量不重复同一种：优先随上文**续写式**——直接接住上一章结局未完成的对话/动作/悬念（可从中句、悬停处、只剩半句的话切入），而非让主角在别处重新开始；其次可选**场景/环境式**（从一个能即时带出情绪与冲突的场景细节/物件/光线/动静切入，主角稍后才点名）、**他人/群像式**（从他人口中或反应侧写主角处境，主角不占句首）、**悬念回接式**（以章末钩子的延续、一句质问或一个反常细节起首）。同一主语姓名不得连续多章占据句首；承接优先于新建——上一章有可续处就绝不另起炉灶。';
+    ironFull += '\n【章首铁律】章首开法**必须**有变化：**禁止**全书或连续多章重复同一种开法，尤其**禁止**每章都"姓名+动作"、或每章都从时间词起句。下面各方式**可以**混用、**必须**轮流换着来，相邻两章**禁止**用同一种，小说整体**禁止**某一种超过三成。①续写式（优先）：**必须**接住上一章结局未完成的对话/动作/悬念（可从中句、悬停处、只剩半句的话切入），**禁止**大段另起炉灶；例："『这话可说不得。』上回话到一半，屋里便只剩扇子敲桌沿的声响。"；②场景/环境式：从能即时带出情绪与冲突的场景细节/物件/光线/动静切入，人物稍后才点名；例："檐角铜铃被夜风拨响时，堂屋的灯还亮着，桌上摊着两封未拆的信。"；③人物开句式：以某人的姓名称谓开句**可以**，但**禁止**连续两章都用姓名开句、更**禁止**全书每章都姓名开头；④时间开句式：以时间词开句**可以**，但**禁止**连续两章都用时间词开句、也**禁止**机械报时；⑤他人/群像式：从他人口中或反应侧写入物处境，出场人物不占句首；例："『那人的名讳一提就烫嘴。』有人压着嗓子嘀咕。"；⑥悬念回接式：以章末钩子的延续、一句质问或一个反常细节起首；例："那封密信最终会不会落到衙门手中，成了压在每个人心口的石头。"承接优先于新建——上一章有可续处就**必须**续写、**禁止**另起炉灶。';
   }
   const head = role === 'chapter'
     ? '【叙事铁律 · 本章写作总纲】'
@@ -5736,7 +5736,7 @@ function viewStory(){
       <div class="quick-brief" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:12px 0 2px">
         <label class="qt-outline-toggle" id="quickOutlineToggle" title="默认关闭。打开后点「生成大纲」将跳过 6 个候选角度选择，直接生成并落地 1 个默认大纲；关闭则保持一次给 6 个候选供比选。">
           <input type="checkbox" id="chkQuickOutline" ${state.quickOutline?'checked':''} />
-          <span class="qt-sw">⚡</span>
+          <span class="qt-sw"><span class="qt-check">✓</span></span>
           <span class="qt-tx">只生成一个默认大纲（跳过 6 选）</span>
         </label>
       </div>
@@ -10151,6 +10151,15 @@ function refreshPlannerStageBar(running, failed){
   });
   const all = bar.querySelector('[data-cp-all]');
   if(all) all.classList.toggle('running', !!running);
+  // v1.0.190：全局时间线按段续跑——有持久化半程态时在阶段条下重建分段轨道 + 续跑按钮（刷新后仍可续）
+  if(running !== 'timeline'){
+    const tlProg = (o._plannerProgress||{}).timeline;
+    const N = (o.chapters||[]).length;
+    if(tlProg && N && Number.isInteger(tlProg.done) && tlProg.done > 0 && tlProg.done < tlProg.total){
+      const segs = timelineSegments(N);
+      if(segs.length === tlProg.total){ renderSegTrack(segs, tlProg.done, -1, -1, `续跑将从第 ${tlProg.done+1}/${tlProg.total} 段开始`); showTimelineResume(segs, tlProg.done); }
+    } else if(plannerStageDone('timeline')){ hideTimelineTrack(); }
+  }
 }
 // v225/P5-A：填完章节数即可进入规划师——无章节数组时按 N 生成占位（空标题），规划师五阶段均可直接跑
 function ensureChaptersPlaceholder(){
@@ -10343,59 +10352,111 @@ async function genPlannerBeats(btn, opts){
 // ==================== v1.0.183：④ 全局时间线（规划师新阶段，接在节拍表后） ====================
 // 以全局视角统一重排全书各章/各拍的时间锚：消除逐批机械排期、让时间跨度为情节服务，回写节拍表
 // 并写入 o._globalTimeline（供时间线看板与承接真相源读取），正文据此承接、不再章首生硬报时。
-const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」。你拥有整本书的全局视野：能看到全书所有章节标题、每章每拍的剧情事件与它们目前各自的时间锚。你的唯一职责：找出其中**真正需要改时间**的节拍并给出新的时点，把它们串成一整条**连贯、可信、有节奏**的全球时间线，让每章正文不再机械、不在章首生硬报时。
-【输出格式】这是"改动用 diff"，严格只输出如下 JSON（不要解释、不要 markdown 代码块）；**只列需要改时间的节拍，未改动的拍一律不要写出来**：
-{"updates":[{"index":1,"beats":[{"beatIdx":3,"time":"支线·时点，如 现实·第3天·上午"}]}, ...], "global_notes":"用一句话说明全书时间跨度与节奏安排"}
-说明：index 为要改动的章号（从 1 起，对应输入里第几章，某章无需改动就整章省略）；beats 里只放该章被改动的拍，beatIdx 是拍序号（从 1 起，对应该章第几拍）；time 是该拍新的"支线·时点"。仅当某拍当前时点确实会造成问题才改；整本都没问题就输出 "updates":[]。
+// ===== ④ 全局时间线 · v1.0.190 方案2：按段串行重排、跨段承接、中断可续跑 =====
+// 时间统筹师系统提示（分段版）：只重排「本批」章节，全量输出其时间锚 + 头(anchor)/尾(end) 承接
+const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」。你可能只拿到全书某一批（一段）章节，也可能兼有上一批末尾时点。你的职责：把**本批**章节的现有时间锚重新排成一整条**连贯、可信、有节奏**的全球时间线的一段，让正文不再机械、不在章首生硬报时，并让本批能无缝接到上一批之后。
+【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
+{"anchor":"本批现实主线起始时点（若给了上一批末尾则必须晚于/衔接它并写在这里；没给则写全书现实主线起点）","end":"本批现实主线结束时点（供下一批承接）","chapters":[{"index":1,"beats":[{"type":"<本批内该章原拍type，原样照抄>","time":"支线·时点，如 现实·第3天·上午"}, ...]}, ...], "global_notes":"用一句话说明本批时间跨度与节奏安排"}
 【硬性规则】
-1. 逐章逐拍复核现有时间锚，仅对"现实主线单调倒退、跨章不承接、支线进入/回收混乱、机械等差常数"等确实需要修正的拍给出新 time；其余一律不动、不出现在 updates 里——禁止为了"看着整齐"去重打所有时点。
-2. 现实（主线）支线必须在全书串成一条单调不倒退的连续时钟：第 N 章的时点必须晚于或衔接第 N-1 章末尾，严禁整体倒退；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰，切换必须由剧情出入点解释。
-3. 时间跨度由剧情事件决定、绝不由章节序号决定：严禁"第N章=第N天"的等差排期。同一事件内的多拍落同一时刻/同一日；赶路/养伤/修炼/等待/多日布局可整段跳到数日/数旬/数月之后；紧迫戏压缩到同一日内甚至数小时内。时点贴合并可被事件解释，前后衔接自然、全书时间成立。
-4. 时间节奏要有起伏：有的章时间基本不流动（同一日/同一刻内展开多拍），有的章跨数天，全书绝不是均匀的钟表。
-5. 每个 time 只写"支线名 + 一个时点"（≤12 字），用顿号或·分隔，不要多余解释。
-6. 只有当某拍的 time 确实需要改动时才写进 updates；如果前置/后续的承接问题是因为别的拍导致的，改那个拍而不是叠改一大片。`;
+1. index 从 1 起，对应当前本批内部第几章（1=本批第一章），数量必须与本批给定章节数完全一致；每章 beats 的数量与 type 必须照抄，只许改动 time。
+2. 现实（主线）支线：本批第一个现实时点（anchor）必须晚于或衔接上一批末尾（给了就严禁倒退）；本批现实支线内部全程单调不倒退；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰，切换须由剧情出入点解释。
+3. 时间跨度由剧情事件决定、绝不由章节序号决定：严禁"第N章=第N天"等差排期。同一事件内多拍落同一时刻/同一日；赶路/养伤/修炼/等待/多日布局可整段跳数日/数旬/数月；紧迫戏压缩到同一日内甚至数小时。
+4. 时间节奏要有起伏：本批里有的章时间基本不流动，有的章跨数天，绝不均匀。
+5. 每个 time 只写"支线名 + 一个时点"（≤12 字），用顿号或·分隔，不要多余解释。`;
 
-// 全局时间线"diff"输出校验：只验证 updates 结构的合法性（index/beatIdx 为正整数、time 非空）；空 updates 也合法（表示无需改动）
-function validateTimelineDiffOutput(j){
+// 分段输出校验：结构 + 每章 beat 数/type 顺序/必填 time + anchor/end 非空
+function validateTimelineSegOutput(j, expectedCount){
   if(!j || typeof j !== 'object') return '返回不是对象';
-  if(!Array.isArray(j.updates)) return '缺少 updates 数组（可为空数组 []）';
-  for(const [ci, cp] of j.updates.entries()){
-    if(!cp || typeof cp !== 'object') return `第 ${ci+1} 个 update 不是对象`;
-    if(!Number.isInteger(+cp.index) || +cp.index < 1) return `第 ${ci+1} 个 update 缺失有效 index`;
-    if(!Array.isArray(cp.beats) || !cp.beats.length) return `update 章${+cp.index} 缺少非空 beats 数组`;
+  if(!String(j.anchor||'').trim()) return '缺少 anchor（本批现实主线起始时点）';
+  if(!String(j.end||'').trim()) return '缺少 end（本批现实主线结束时点，供下一批承接）';
+  if(!Array.isArray(j.chapters) || !j.chapters.length) return '缺少 chapters 数组';
+  if(j.chapters.length !== expectedCount) return `本批 chapters 应为 ${expectedCount} 章，实得 ${j.chapters.length}`;
+  const keys = beatTypeKeys();
+  for(const [ci, cp] of j.chapters.entries()){
+    if(!cp || typeof cp !== 'object') return `本批第 ${ci+1} 个 chapter 不是对象`;
+    if(!Number.isInteger(+cp.index) || +cp.index < 1) return `本批第 ${ci+1} 个 chapter 缺失有效 index`;
+    if(!Array.isArray(cp.beats) || cp.beats.length !== beatCnt()) return `本批第 ${ci+1} 章 beats 应为 ${beatCnt()} 段，实得 ${Array.isArray(cp.beats)?cp.beats.length:'非数组'}`;
     for(let i=0;i<cp.beats.length;i++){
       const b = cp.beats[i];
-      if(!b || typeof b !== 'object') return `update 章${+cp.index} 第 ${i+1} 拍不是对象`;
-      if(!Number.isInteger(+b.beatIdx) || +b.beatIdx < 1) return `update 章${+cp.index} 第 ${i+1} 拍缺失有效 beatIdx`;
-      if(!String(b.time||'').trim()) return `update 章${+cp.index} 第 ${i+1} 拍缺失 time`;
+      if(!b || !String(b.time||'').trim()) return `本批第 ${ci+1} 章第 ${i+1} 拍缺失 time`;
+      if(keys[i] && b.type !== keys[i]) return `本批第 ${ci+1} 章第 ${i+1} 拍 type 应为 ${keys[i]}，实得 ${b.type}`;
     }
   }
   return '';
 }
 
-// 全局时间线用户拼装：全量章节标题 + 各章各拍事件与现有时间锚（全局视野即"上一步生成内容全量喂入"）
-function buildTimelineUser(){
-  const o = state.outline || {};
-  const totalN = (o.chapters||[]).length;
-  const parts = [`【全书章节数】${totalN} 章`];
+// 分区规则：≤8 章对半切 2 段（取中间整章作界，免空段）；>8 章 5 章起步，尾段不足 3 章并入前段
+function timelineSegments(totalN){
+  if(totalN <= 8){
+    const mid = Math.max(1, Math.floor(totalN/2));
+    return [[0,mid],[mid,totalN]].filter(s=>s[1]>s[0]);
+  }
+  const cuts=[]; for(let i=5;i<totalN;i+=5) cuts.push(i);
+  const segs=[]; let st=0;
+  for(const c of cuts){ segs.push([st,c]); st=c; }
+  segs.push([st,totalN]);
+  if(segs.length>1){
+    const last=segs[segs.length-1];
+    if(last[1]-last[0] < 3){ const prev=segs[segs.length-2]; segs[segs.length-2]=[prev[0],last[1]]; segs.pop(); }
+  }
+  return segs;
+}
+
+// 本批用户拼装：处理范围 + 上一批末尾承接上下文 + 本批各章节拍与现有时间锚
+function buildTimelineSegUser(s, e, prevEnd){
+  const o=state.outline||{};
+  const totalN=(o.chapters||[]).length;
+  const parts=[`【全书章节数】${totalN} 章`,`【本次处理范围】第 ${s+1}—${e} 章（本批共 ${e-s} 章）`];
   if(o.title) parts.push(`【书名】${o.title}`);
   if(o.tone) parts.push(`【整体情绪基调】${o.tone}`);
-  const _stg = chapterPlanStages(o);
-  if(_stg && _stg.length) parts.push(`【大纲节拍的结构】全书按阶段推进：${_stg.map(s=>`第 ${s.first}—${s.last} 章「${s.name}」`).join('；')}`);
-  const rows = [];
-  for(let i=0;i<totalN;i++){
-    const c = o.chapters[i] || {};
-    const p = Array.isArray(o.chapterPlans) ? o.chapterPlans[i] : null;
-    const t = String((c.title||'').trim());
-    const beats = (p && Array.isArray(p.beats)) ? p.beats : [];
-    const btxt = beats.map((b,bi)=>`   [${bi+1}] ${b.type||'?'} time=「${String((b.time||'')).trim()||'?'}」 ${String((b.event||'')).slice(0,46)}`).join('\n');
-    rows.push(`第${i+1}章《${t}》\n${btxt || '  （无节拍）'}`);
+  const _stg=chapterPlanStages(o);
+  if(_stg&&_stg.length) parts.push(`【大纲节拍的结构】全书按阶段推进：${_stg.map(x=>`第 ${x.first}—${x.last} 章「${x.name}」`).join('；')}`);
+  if(prevEnd) parts.push(`【上一批已排定的现实主线末尾时点】${prevEnd}\n本批第一个现实时点（anchor）必须晚于或衔接它，严禁整体倒退；回忆/梦境/穿越等非主线支线各自独立计时、不受此限。`);
+  const rows=[];
+  for(let i=s;i<e;i++){
+    const c=o.chapters[i]||{};
+    const p=Array.isArray(o.chapterPlans)?o.chapterPlans[i]:null;
+    const t=String((c.title||'').trim());
+    const beats=(p&&Array.isArray(p.beats))?p.beats:[];
+    const btxt=beats.map((b,bi)=>`   [${bi+1}] ${b.type||'?'} time=「${String((b.time||'')).trim()||'?'}」 ${String((b.event||'')).slice(0,46)}`).join('\n');
+    rows.push(`第${i+1}章《${t}》\n${btxt||'  （无节拍）'}`);
   }
-  parts.push(`【全书各章节拍与现有时间锚】\n${rows.join('\n')}`);
-  const _tb = teamShapeBrief();   // v1.0.186 团队同场共时：团队核心团默认同在一条主线支线、共同推进
-  if(_tb) parts.push(_tb + '\n（时间侧留意：除非剧情明确拆线，各核心主角/成员的时间应落在同一主线支线的同一时点，团队因"分工拆成两路"而分处不同时点的、双主角因"各自独立场景"而位于同一时点的不同现场——都要在节拍/正文给出进入与回收说明，别拆到互相矛盾的时点）');
+  parts.push(`【本批各章节拍与现有时间锚】\n${rows.join('\n')}`);
+  const _tb=teamShapeBrief();   // v1.0.186 团队同场共时：团队核心团默认同在一条主线支线、共同推进
+  if(_tb) parts.push(_tb+'\n（时间侧留意：除非剧情明确拆线，各核心主角/成员的时间应落在同一主线支线的同一时点，团队因"分工拆成两路"而分处不同时点、双主角因"各自独立场景"而位于同一时点不同现场——都要在节拍/正文给出进入与回收说明，别拆到互相矛盾的时点）');
   return parts.join('\n\n');
 }
+
+// 分段轨道 DOM 管理：进度条 + 单个续跑按钮（不生成 20+ 个按钮）
+function tlTrackEl(){
+  const bar=$('.cp-stagebar'); if(!bar) return null;
+  let el=bar.querySelector('.cp-tl-track');
+  if(!el){ el=document.createElement('div'); el.className='cp-tl-track'; bar.insertAdjacentElement('afterend', el); }
+  return el;
+}
+function renderSegTrack(segs, done, runIdx, failIdx, optTxt){
+  const el=tlTrackEl(); if(!el) return;
+  const n=segs.length;
+  const cells=segs.map((sg,i)=>{
+    let cls='cp-tl-cell';
+    if(i===failIdx) cls+=' cp-tl-fail';
+    else if(i===runIdx) cls+=' cp-tl-run';
+    else if(i<done) cls+=' cp-tl-done';
+    else cls+=' cp-tl-todo';
+    return `<span class="${cls}" title="第 ${i+1} 段：第 ${sg[0]+1}–${sg[1]} 章">${i+1}</span>`;
+  }).join('');
+  el.innerHTML=`<div class="cp-tl-head"><span>全局时间线分段</span><span class="cp-tl-count">${done}<i>/</i>${n}</span></div><div class="cp-tl-cells">${cells}</div>${optTxt?'<div class="cp-tl-hint2">'+optTxt+'</div>':''}`;
+}
+function showTimelineResume(segs, failIdx){
+  const el=tlTrackEl(); if(!el) return;
+  if(el.querySelector('.cp-tl-foot')) el.querySelector('.cp-tl-foot').remove();
+  const foot=document.createElement('div'); foot.className='cp-tl-foot';
+  const sg=segs[failIdx];
+  foot.innerHTML=`<span class="cp-tl-hint2 muted">中断于第 ${failIdx+1}/${segs.length} 段（第 ${sg[0]+1}–${sg[1]} 章），已自动重试 2 次未果，可续跑</span><button type="button" class="btn small ghost cp-tl-resume">▶ 续跑第 ${failIdx+1} 段</button>`;
+  el.appendChild(foot);
+  foot.querySelector('.cp-tl-resume').onclick=()=>{ genPlannerTimeline(null,{silent:false,resumeFrom:failIdx}); };
+}
+function hideTimelineTrack(){ const el=$('.cp-tl-track'); if(el) el.remove(); }
 
 // v1.0.184：全局时间线 + 各章节拍事件 上下文块——供 ⑤伏笔网 阶段读取，让伏笔设计贴着全局时间推进、能落地到具体剧情。
 // 若尚未生成时间线/节拍，则静默返回 ''（伏笔网仍可基于标题与结构阶段运行）。
@@ -10425,7 +10486,7 @@ function globalTimelineBlock(){
   return parts.join('\n\n');
 }
 
-// ④ 全局时间线（单批：一次重排全书；需先有节拍表）
+// ④ 全局时间线（v1.0.190：按段串行重排、跨段承接；中断自动重试 2 次，仍失败可续跑）
 async function genPlannerTimeline(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
@@ -10437,59 +10498,88 @@ async function genPlannerTimeline(btn, opts){
     if(!opts.silent) toast('请先完成 ③ 节拍表，再规划全局时间线');
     refreshPlannerStageBar(null, 'timeline'); return false;
   }
+  const segs = timelineSegments(totalN);
+  // 续跑游标：显式 resumeFrom 优先；否则按持久化半程态续跑；都无则从头
+  let resumeFrom = opts.resumeFrom;
+  if(resumeFrom == null){
+    const tlProg = (o._plannerProgress||{}).timeline;
+    if(tlProg && Number.isInteger(tlProg.done) && tlProg.done > 0 && tlProg.done < segs.length && tlProg.total === segs.length) resumeFrom = tlProg.done;
+    else resumeFrom = 0;
+  }
   markAIRunning('chapterPlan');
   refreshPlannerStageBar('timeline', null);
   let preview = plannerPreview(btn, '正在全局重排时间线…'), _streamBuf = '';
   plannerRunBtn(btn, true);
   const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
   if(stopParent) showStopBtn(stopParent);
+  const setProg = d=>{ o._plannerProgress = o._plannerProgress || {}; o._plannerProgress.timeline = { done:d, total:segs.length, ts:Date.now() }; };
   try{
-    const user = buildTimelineUser();
-    const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const cands = await Promise.all([
-      callAIWithContract(callDeepSeek(PLANNER_TIMELINE_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}), {needJson:true, schemaValidator:validateTimelineDiffOutput, taskName:'全局时间线-A'}),   // v1.0.189：diff 输出——只回传需改时间的拍，输出量从"全书"降到"少数改动项"
-    ]);
-    const best = cands.filter(c=>c && c.ok).sort((a,b)=>(b.score||0)-(a.score||0))[0];
-    if(!best) throw new Error((cands[0] && cands[0].error) || '所有时间线候选均无效');
-    let changed = 0;
     const anchors = [];
-    const _upd = Array.isArray(best.data.updates) ? best.data.updates : [];
-    _upd.forEach(cp => {
-      const idx = +cp.index - 1;
-      if(idx < 0 || idx >= totalN) return;
-      const plan = o.chapterPlans[idx]; if(!plan || !Array.isArray(plan.beats)) return;
-      const beats = Array.isArray(cp.beats) ? cp.beats : [];
-      beats.forEach(nb => {
-        const bi = +nb.beatIdx - 1;
-        if(bi < 0 || bi >= plan.beats.length) return;
-        const nt = String(nb && nb.time || '').trim();
-        if(nt && String(plan.beats[bi].time || '').trim() !== nt){ plan.beats[bi].time = nt; changed++; }
-      });
-      const bt = plan.beats;
-      const t0 = bt.length ? String(bt[0].time || '').trim() : '';
-      const t1 = bt.length ? String(bt[bt.length-1].time || '').trim() : '';
-      anchors.push({ index: idx, title: String((o.chapters[idx] && o.chapters[idx].title) || (''+idx+1)), from: t0, to: t1 });
-    });
-    // 未出现在 updates 里的章，其 from/to 沿用节拍表现有首尾时点，保证看板仍显示全书
-    for(let i=0;i<totalN;i++){
-      if(anchors.some(a=>a.index===i)) continue;
-      const plan = o.chapterPlans[i];
-      const bt = (plan && Array.isArray(plan.beats)) ? plan.beats : [];
-      const t0 = bt.length ? String(bt[0].time || '').trim() : '';
-      const t1 = bt.length ? String(bt[bt.length-1].time || '').trim() : '';
-      if(t0 || t1) anchors.push({ index: i, title: String((o.chapters[i] && o.chapters[i].title) || (''+i+1)), from: t0, to: t1 });
+    let prevEnd = '', segNotes = '';
+    let changed = 0;
+    renderSegTrack(segs, resumeFrom, resumeFrom===segs.length ? -1 : resumeFrom, -1, '');
+    for(let si=resumeFrom; si<segs.length; si++){
+      const sg = segs[si]; const s = sg[0], e = sg[1];
+      const user = buildTimelineSegUser(s, e, prevEnd || undefined);
+      let ok = false, lastErr = '';
+      // 首次 + 自动重试最多 2 次（每次修正提示后同段重跑）
+      for(let attempt=0; attempt<3; attempt++){
+        if(_abortCtl && _abortCtl.signal.aborted) throw {name:'AbortError'};
+        renderSegTrack(segs, si, si, -1, `正在重排第 ${si+1}/${segs.length} 段…`+(attempt>0?`（自动重试 ${attempt}）`:''));
+        if(_streamBuf){ _streamBuf=''; if(preview) preview.textContent=''; }
+        const usr = user + (attempt>0 ? `\n【重试提示】上一轮第 ${si+1} 段输出无效，请严格按格式重新输出。原因：${lastErr}` : '');
+        const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
+        const cands = await Promise.all([
+          callAIWithContract(callDeepSeek(PLANNER_TIMELINE_SYS, usr, {temperature:resolveActiveSpec().planTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}), {needJson:true, expectedCount:e-s, countPath:'chapters', schemaValidator:j=>validateTimelineSegOutput(j, e-s), taskName:`全局时间线-段${si+1}${attempt>0?'-重试'+attempt:''}`}),
+        ]);
+        const best = cands.filter(c=>c && c.ok).sort((a,b)=>(b.score||0)-(a.score||0))[0];
+        if(best){
+          // 应用本批：本批内部 index 映射到全书整章索引
+          best.data.chapters.forEach(cp=>{
+            const idx = s + (+cp.index - 1);
+            if(idx < 0 || idx >= totalN) return;
+            const plan = o.chapterPlans[idx]; if(!plan || !Array.isArray(plan.beats)) return;
+            cp.beats.forEach((nb,j)=>{ const bb=plan.beats[j]; if(!bb) return; const nt=String(nb&&nb.time||'').trim(); if(nt && String(bb.time||'').trim()!==nt){ bb.time=nt; changed++; } });
+            const t0 = cp.beats.length ? String(cp.beats[0].time||'').trim() : '';
+            const t1 = cp.beats.length ? String(cp.beats[cp.beats.length-1].time||'').trim() : '';
+            anchors.push({ index: idx, title: String((o.chapters[idx] && o.chapters[idx].title) || (''+idx+1)), from: t0, to: t1 });
+          });
+          prevEnd = String(best.data.end||'').trim() || '';
+          if(!segNotes) segNotes = String(best.data.global_notes||'').trim() || '';
+          ok = true;
+          break;
+        } else {
+          lastErr = (cands[0] && cands[0].error) || '候选无效';
+          if(attempt < 2) await new Promise(r=>setTimeout(r, 1500));   // 自动重试间隔
+        }
+      }
+      if(!ok){
+        setProg(si);          // 已成功 si 段
+        persist();
+        renderSegTrack(segs, si, -1, si, `第 ${si+1} 段生成失败`);
+        showTimelineResume(segs, si);
+        addToFixQueue({kind:'chapterPlan', error:'全局时间线-段'+(si+1)+'：'+lastErr});
+        refreshPlannerStageBar(null, 'timeline');
+        if(!opts.silent) toast(`全局时间线中断于第 ${si+1}/${segs.length} 段（已自动重试 2 次）；可在分段轨道下点「续跑第 ${si+1} 段」继续`);
+        return false;
+      }
+      setProg(si+1);
+      persist();              // 段级进度持久化：刷新后仍可续跑
+      renderSegTrack(segs, si+1, -1, -1, '');
     }
     anchors.sort((a,b)=>a.index-b.index);
-    o._globalTimeline = { chapters: anchors, notes: String((best.data && best.data.global_notes) || '').trim(), ts: Date.now() };
+    o._globalTimeline = { chapters: anchors, notes: segNotes, ts: Date.now() };
+    if(o._plannerProgress) delete o._plannerProgress.timeline;   // 完成即清半程态
     persist();
     render();
     markAIDone('chapterPlan');
     refreshPlannerStageBar(null, null);
-    if(!opts.silent) toast(`全局时间线完成：重排 ${changed} 处时间锚${o._globalTimeline.notes ? '｜'+o._globalTimeline.notes.slice(0,28) : ''}`);
+    hideTimelineTrack();
+    if(!opts.silent) toast(`全局时间线完成：重排 ${changed} 处时间锚（共 ${segs.length} 段）${segNotes ? '｜'+segNotes.slice(0,28) : ''}`);
     return true;
   }catch(e){
-    if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'全局时间线：'+e.message});
-    if(!opts.silent) toast(e.name==='AbortError' ? '已停止全局时间线' : '全局时间线失败：'+e.message);
+    if(e && e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'全局时间线：'+(e&&e.message)});
+    if(!opts.silent) toast((e && e.name==='AbortError') ? '已停止全局时间线' : '全局时间线失败：'+(e&&e.message));
     refreshPlannerStageBar(null, 'timeline');
     return false;
   }finally{
@@ -11443,7 +11533,7 @@ ${prevFull}
         const _prevTailT = String((hookBeatPrev && hookBeatPrev.time)||'').trim();
         const _curHeadT = (plan && Array.isArray(plan.beats) && plan.beats.length) ? String((plan.beats[0]&&plan.beats[0].time)||'').trim() : '';
         if(_prevTailT || _curHeadT){
-          ob2.push(`- 时间承接：上章末拍时间${_prevTailT?`「${_prevTailT}」`:'（未标注）'} → 本章首拍时间${_curHeadT?`「${_curHeadT}」`:''}。本章正文开头从该时点自然续写、禁止把剧情安排到更早时段；异支线开场须显式进入并随后收回。续写仍以情节与人物切入，时间用场景细节自然体现（天色/光线/动静/人物状态），禁止"现在是/此刻是/此时是"式报时开场，禁止把时间锚原样照抄进正文；并严禁段落/句子以时间词开篇（"清晨/天色/夜色/翌日/午后/入夜/黄昏"等时间状语一律不放句首）——首句从人物动作、对话或物件切入，时间自第二句起用场景细节自然带出，仅当本章时间较上章确已跳变时才允许紧接首句交代一次且仍融入叙述。`);
+          ob2.push(`- 时间承接：上章末拍时间${_prevTailT?`「${_prevTailT}」`:'（未标注）'} → 本章首拍时间${_curHeadT?`「${_curHeadT}」`:''}。本章正文开头从该时点自然续写、禁止把剧情安排到更早时段；异支线开场须显式进入并随后收回。续写仍以情节与人物切入，时间用场景细节自然体现（天色/光线/动静/人物状态），禁止"现在是/此刻是/此时是"式生硬报时，禁止把时间锚原样照抄进正文；时间开句**可以**但**禁止**每章都从时间起、也**禁止**连续两章都用时间词开句，时间尽量自第二句起用场景细节自然带出，仅当本章时间较上章确已跳变时才允许紧接首句交代一次且仍融入叙述。`);
         }
       }
       if(ob2.length){

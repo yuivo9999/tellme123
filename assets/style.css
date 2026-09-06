@@ -1652,10 +1652,12 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .qt-brief{ flex:1; }
 .qt-outline-toggle{ display:inline-flex; align-items:center; gap:7px; cursor:pointer; font-size:12px; user-select:none; color:var(--sub,var(--muted,inherit)); }
 .qt-outline-toggle input{ position:absolute; opacity:0; width:0; height:0; }
-.qt-outline-toggle .qt-sw{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; background:color-mix(in srgb,var(--accent) 12%,transparent); border:1px solid var(--line); color:var(--accent); font-size:13px; transition:all .18s ease; }
-.qt-outline-toggle input:checked + .qt-sw{ background:var(--accent); color:#fff; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 28%,transparent); }
+.qt-outline-toggle .qt-sw{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; background:color-mix(in srgb,var(--accent) 10%,transparent); border:1px solid var(--line); color:var(--sub,var(--muted)); font-size:15px; transition:all .18s ease; }
+.qt-outline-toggle .qt-check{ font-weight:800; line-height:1; opacity:0; transform:scale(.4); transition:transform .18s ease, opacity .18s ease; }
+.qt-outline-toggle input:checked + .qt-sw{ background:#e5484d; border-color:#e5484d; color:#fff; box-shadow:0 0 0 3px color-mix(in srgb,#e5484d 30%,transparent); }
+.qt-outline-toggle input:checked + .qt-sw .qt-check{ opacity:1; transform:scale(1); }
 .qt-outline-toggle .qt-tx{ color:var(--txt,currentColor); transition:color .15s; }
-.qt-outline-toggle:hover .qt-tx{ color:var(--accent); }
+.qt-outline-toggle:hover .qt-tx{ color:#e5484d; }
 
 .tl-group{ margin:0 0 10px; }
 .tl-branch{ font-weight:600; font-size:13px; margin-bottom:6px; }
@@ -1697,3 +1699,23 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .book-beat-pc .pc-k{ display:inline-block; font-weight:800; margin-right:4px; padding:0 6px; border-radius:8px; font-size:10px; line-height:1.7; }
 .book-beat-pc.pro .pc-k{ background:color-mix(in srgb,var(--accent) 15%, transparent); color:var(--accent); }
 .book-beat-pc.con .pc-k{ background:color-mix(in srgb,#e5484d 13%, transparent); color:#e5484d; }
+
+/* =========================================================
+ * v1.0.190 全局时间线·分段轨道（方案2：按段串行 + 续跑）
+ * 单个续跑按钮 + 一条分段进度条——不生成 20+ 个按钮。
+ * ========================================================= */
+.cp-tl-track{ margin:2px 0 10px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; background:color-mix(in srgb,var(--panel2) 55%, transparent); }
+.cp-tl-head{ display:flex; align-items:center; justify-content:space-between; font-size:11.5px; color:var(--sub); margin-bottom:8px; }
+.cp-tl-count{ font-weight:700; color:var(--accent); }
+.cp-tl-count i{ font-style:normal; opacity:.5; padding:0 2px; }
+.cp-tl-cells{ display:flex; gap:4px; }
+.cp-tl-cell{ flex:1 1 0; min-width:0; height:22px; display:flex; align-items:center; justify-content:center; border-radius:5px; font-size:10.5px; line-height:1; cursor:default; }
+.cp-tl-cell.cp-tl-done{ background:var(--ok,#37c98b); color:#08120d; }
+.cp-tl-cell.cp-tl-run{ background:var(--accent2,#3da9ff); color:#06202e; animation:cpTlPulse 1s ease-in-out infinite; }
+.cp-tl-cell.cp-tl-fail{ background:#e5484d; color:#fff; }
+.cp-tl-cell.cp-tl-todo{ background:color-mix(in srgb,var(--line) 45%, transparent); color:var(--muted,var(--sub)); }
+@keyframes cpTlPulse{ 50%{ opacity:.55; } }
+.cp-tl-hint2{ margin-top:8px; font-size:11.5px; color:var(--sub); line-height:1.5; }
+.cp-tl-foot{ margin-top:10px; display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap; }
+.cp-tl-foot .muted{ font-size:11.5px; }
+.cp-tl-resume{ flex-shrink:0; }
