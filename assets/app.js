@@ -2352,7 +2352,7 @@ function aiRecipeCard(){
 function aiRecipeResultHtml(lib){
   if(aiRp && aiRp.err) return `<p class="muted" style="color:var(--danger);margin:8px 0 0">⚠️ ${esc(aiRp.err)}</p>`;
   if(!aiRp || !Array.isArray(aiRp.list) || !aiRp.list.length){
-    return `<p class="muted" style="margin:8px 0 0">${ aiSource==='outline' ? '📤 已读取主线简述，可点「✨」从描述入口，或重新上传后 AI 再次通读。' : '👆 输入描述后点「✨ 生成配方」，AI 将给出 2~6 个组合配方；词库覆盖不了时会附建议新词条（鼓励创造），可自行决定是否加入词库。' }</p>`;
+    return '';   // v1.0.156：移除「生成配方」下方的空状态提示文字（输入描述后点… / 已读取主线简述…），用户要求不要
   }
   // libIds 更新（可能已入库缺口词条）
   const libIds = (lib||writeStyleLib()).map(s=>s.id);
@@ -2929,11 +2929,6 @@ function mergedBeatName(full, s, e){
   const a = full[s] || full[0];
   if(e <= s) return a;
   return `${a}→${full[e] || a}`;
-}
-// 体量提示（拼入大纲提示词）：只给固定章节数，不给任何字数限制
-function outlineSizeNote(){
-  const n = chapterCountVal();
-  return `全书共 ${n} 章（已由用户定死）。请严格生成恰好 ${n} 个章节，章号从 1 到 ${n} 连续，每章给出标题与梗概，不得增加也不得减少章节。全程不限制任何字数（不设单章字数、不设全书字数），按内容需要自然成稿。`;
 }
 /* 万物词典统一要求块：无论选哪种结构都追加到大纲提示词，保证模型输出 glossary（建议7/决策8/9）
  * glossary 等顶层字段仍以“下方追加块”形式补充（S2）。v1.0.144：structure 已彻底移除，仅以 remaining 的逐章 chapterPlans 承载节奏。 */
@@ -7004,11 +6999,18 @@ function chapterPlanBlock(){
     const beats = (p && Array.isArray(p.beats)) ? p.beats : [];
     const beatHtml = beats.map((b, bi)=>`
       <div class="bs-beat" data-bs-beat="${i}:${bi}">
-        <span class="bs-type" title="${esc(beatNoteFor(b.type))}">${esc(beatLabelFor(b.type))}</span>
-        <input type="text" class="bs-event" data-bs-event="${i}:${bi}" value="${esc(b.event||'')}" placeholder="事件">
-        <input type="text" class="bs-emo" data-bs-emo="${i}:${bi}" value="${esc(b.emotional||'')}" placeholder="情绪">
-        <input type="text" class="bs-ent" data-bs-ent="${i}:${bi}" value="${esc((b.requiredEntities||[]).join('、'))}" placeholder="必须实体（顿号分隔）">
-        <input type="text" class="bs-fore" data-bs-fore="${i}:${bi}" value="${esc((b.foreshadowing||[]).join('、'))}" placeholder="伏笔（顿号分隔）">
+        <div class="bs-beat-top">
+          <span class="bs-type" title="${esc(beatNoteFor(b.type))}">
+            <span class="bs-type-idx">${bi+1}</span>${esc(beatLabelFor(b.type))||'（待定拍）'}
+          </span>
+          <span class="bs-beat-hint">${beatNoteFor(b.type)?esc(beatNoteFor(b.type)):''}</span>
+        </div>
+        <input type="text" class="bs-event" data-bs-event="${i}:${bi}" value="${esc(b.event||'')}" placeholder="本节拍事件：在这段节奏里发生什么">
+        <div class="bs-beat-meta">
+          <label class="bs-meta"><span class="bs-meta-ic">😐</span><input type="text" class="bs-emo" data-bs-emo="${i}:${bi}" value="${esc(b.emotional||'')}" placeholder="情绪基调"></label>
+          <label class="bs-meta"><span class="bs-meta-ic">👤</span><input type="text" class="bs-ent" data-bs-ent="${i}:${bi}" value="${esc((b.requiredEntities||[]).join('、'))}" placeholder="必须实体（顿号分隔）"></label>
+          <label class="bs-meta bs-meta-fore"><span class="bs-meta-ic">🧵</span><input type="text" class="bs-fore" data-bs-fore="${i}:${bi}" value="${esc((b.foreshadowing||[]).join('、'))}" placeholder="伏笔（顿号分隔）"></label>
+        </div>
       </div>
     `).join('');
     return `
@@ -7016,8 +7018,12 @@ function chapterPlanBlock(){
         <span class="cp-no">${i+1}</span>
         <div class="cp-body-col">
           <div class="bs-block">
-            <div class="bs-head">节拍表（${currentBeatCfg().label}）<button type="button" class="btn small ghost" data-bs-add="${i}">＋ 补全${beatCnt()}段</button></div>
-            ${beatHtml || '<span class="muted">暂无节拍，可点上方按钮由 AI 补齐</span>'}
+            <div class="bs-head">
+              <b class="bs-head-title">📋 节拍表（${currentBeatCfg().label}）</b>
+              <span class="bs-head-stat">${beats.length}/${beatCnt()} 段</span>
+              <button type="button" class="btn small ghost" data-bs-add="${i}">＋ 补全${beatCnt()}段</button>
+            </div>
+            ${beatHtml || '<span class="muted">暂无节拍，可点上方「补全${beatCnt()}段」由 AI 补齐</span>'}
           </div>
         </div>
       </div>`;
@@ -7319,7 +7325,7 @@ function glossaryCardHtml(){
     <button type="button" class="btn ghost gs-tool" data-gs-subboard ${(g.subplots&&g.subplots.length)?'':'hidden'} title="列出未收束且消失过久的副线，提示是否安排回归">🧵 副线看板</button>
     <input type="file" id="gsImportFile" accept=".json,application/json" hidden />
   </span>`;
-  if(empty) return `<div class="card"><h3 class="gs-card-title">📇 设定表 · 万物词典 ${tools}</h3><p class="sub">当前大纲未含万物词典。此词典会在生成大纲时自动确立，作为全书人名/地名/专名的一致性基准；请重生成大纲以启用。</p></div>`;
+  if(empty) return `<div class="card gs-card"><div class="gs-card-head"><h3 class="gs-card-title">📇 设定表 · 万物词典</h3></div><div class="gs-card-body">${tools}<p class="sub">当前大纲未含万物词典。此词典会在生成大纲时自动确立，作为全书人名/地名/专名的一致性基准；请重生成大纲以启用。</p></div></div>`;
   // 可折叠条目：点击展开/收起该条目全部字段（建议1·此轮）
   // 折叠态只显示名字 + 一行简述；展开态显示该条全部可编辑介绍，文字再多也能全部看到。
   const fmt = (o, keys)=>{ const ks = (keys||[]).filter(k=>o[k]); return ks.map(k=>o[k]).join(' · '); };
@@ -7380,10 +7386,10 @@ function glossaryCardHtml(){
     <div class="gs-card-head">
       <h3 class="gs-card-title" role="button" tabindex="0" data-gs-card-toggle>
         <span class="gs-card-t"><span class="gs-card-arrow">${collapsed?'▸':'▾'}</span>📇 设定表 · 万物词典（${total} 条）</span>
-        ${tools}
       </h3>
     </div>
     <div class="gs-card-body"${collapsed?' style="display:none"':''}>
+    ${tools}
     <p class="sub">有改则改</p>
     <div class="gs-panel" id="gsHistory" hidden><div class="gs-panel-title">🕘 历史更改</div><div id="gsHistoryList"></div></div>
     ${(['char','place','proper','sub']).map(t=>{
@@ -9354,14 +9360,24 @@ function applyOutlineObject(o, opts){
   }
   // 4.10 修复：大纲 AI 已不再输出 navBeacon。但 navBeacon 仍被 AIBus/规划师/沙盘等下游消费，
   // 这里用优化构想简报 _lastPolishBrief 回填；若已通过「导入设定」带入 navBeacon 或已存在，则不覆盖。
-  if(!o.navBeacon && state._lastPolishBrief){
-    const _b = state._lastPolishBrief;
-    o.navBeacon = {
-      genre: String(_b.genre||'').trim(),
-      protagonist: String(_b.protagonist||'').trim(),
-      coreConflict: String(_b.coreConflict||'').trim(),
-      tone: String(_b.style||'').trim()
-    };
+  if(!o.navBeacon){
+    if(state._lastPolishBrief){
+      const _b = state._lastPolishBrief;
+      o.navBeacon = {
+        genre: String(_b.genre||'').trim(),
+        protagonist: String(_b.protagonist||'').trim(),
+        coreConflict: String(_b.coreConflict||'').trim(),
+        tone: String(_b.style||'').trim()
+      };
+    } else if(String(state.idea||'').trim()){
+      // v1.0.155：无「优化构想」简报时，从纯文本构想粗提导航灯塔，避免题材定位空洞
+      const _idea = String(state.idea||'').trim();
+      const _grab = (re)=>{ const _m = _idea.match(re); return (_m && _m[1]) ? _m[1].trim() : ''; };
+      const _genre = _grab(/(?:题材|类型)[：:]\s*([^\n，。；;,]{1,20})/);
+      const _prot  = _grab(/(?:主角|主人公|男主|女主)[：:]\s*([^\n，。；;,]{1,20})/);
+      const _conf  = _grab(/(?:核心冲突|冲突|看点)[：:]\s*([^\n。；;]{2,40})/) || _idea.slice(0, 40);
+      o.navBeacon = { genre:_genre, protagonist:_prot, coreConflict:_conf, tone:'' };
+    }
   }
   o.userIdea = state.idea;
   if(!Array.isArray(o.chapterPlans)) o.chapterPlans = [];
@@ -9771,9 +9787,10 @@ function validatePlannerBeatsBatch(j){
   const _keys = beatTypeKeys();
   for(const [i,p] of j.chapterPlans.entries()){
     if(!p || typeof p !== 'object') return `第 ${i+1} 个 chapterPlan 不是对象`;
-    if(!Array.isArray(p.beats) || p.beats.length < beatCnt()) return `第 ${i+1} 章 beats 不足 ${beatCnt()} 段（当前选定「${currentBeatCfg().label}」）`;
+    if(!Array.isArray(p.beats) || p.beats.length !== beatCnt()) return `第 ${i+1} 章 beats 应为 ${beatCnt()} 段（当前选定「${currentBeatCfg().label}」），实得 ${Array.isArray(p.beats)?p.beats.length:'非数组'}`;
     for(const [k,b] of p.beats.entries()){
       if(!_keys.includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
+      if(_keys[k] && b.type !== _keys[k]) return `第 ${i+1} 章第 ${k+1} 个 beat 顺序应为「${_keys[k]}」，实得「${b.type}」`;
       if(!String(b.event||'').trim()) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 event`;
     }
   }
@@ -9897,6 +9914,11 @@ async function genPlannerBeats(btn, opts){
 async function genPlannerGlossary(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
+  // v1.0.155：③词典前置要求章节标题（②），避免基于空标题生成、质量下降
+  if(!((state.outline && state.outline.chapters || []).some(c=>String((c&&c.title)||'').trim()))){
+    if(!opts.silent) toast('请先生成章节标题（规划师第②步），再生成万物词典');
+    refreshPlannerStageBar(null,'glossary'); return false;
+  }
   markAIRunning('chapterPlan');
   refreshPlannerStageBar('glossary', null);
   let preview = plannerPreview(btn, '正在生成万物词典…'), _streamBuf = '';
@@ -9924,6 +9946,8 @@ async function genPlannerGlossary(btn, opts){
     const _minK = Math.max(5, Math.ceil(_totalCh/10));
     parts.push(`【词典规模要求】人物 ≥${_minC} 条、地点 ≥${_minP} 条、专名 ≥${_minK} 条；章节标题未提及的可按题材惯例合理衍生（标注「（衍生）」），不足下限视为不合格`);
     parts.push(`【章节标题】${titles||'(无)'}`);
+    // v1.0.155：消除词典「悬空引用」——把「大纲节拍的结构」阶段数据真实下发，词典以结构与标题为准
+    const glSkel = structureSkeletonBlock(); if(glSkel) parts.push(glSkel);
     if(sourceHasGlossary((o.glossary)||{})) parts.push(`【现有词典】${JSON.stringify(o.glossary,null,2)}`);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
@@ -9953,6 +9977,11 @@ async function genPlannerGlossary(btn, opts){
 async function genPlannerForeshadow(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
+  // v1.0.155：④伏笔前置要求章节标题（②），避免基于空标题设计跨章伏笔、质量下降
+  if(!((state.outline && state.outline.chapters || []).some(c=>String((c&&c.title)||'').trim()))){
+    if(!opts.silent) toast('请先生成章节标题（规划师第②步），再生成伏笔网');
+    refreshPlannerStageBar(null,'foreshadow'); return false;
+  }
   // v234/P3：缺上游只提示不阻断——伏笔网跨章设计有节拍表参考更佳
   const o0 = state.outline || {};
   const hasBeats0 = (o0.chapterPlans||[]).some(p=>p && Array.isArray(p.beats) && p.beats.length);

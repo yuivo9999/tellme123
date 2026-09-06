@@ -1580,3 +1580,35 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
   display:inline-flex;
   align-items:center;
 }
+
+/* =========================================================
+ * v1.0.157 规划师·节拍表展示美化
+ * 全书规划师每章节拍表（微X拍）——节拍卡片化。
+ * 全部用主题变量 + color-mix，dark/light/aurora/paper
+ * 及黑板/机甲/赛博/古风四套强皮肤自动继承。
+ * 关键：保留 .bs-event/.bs-emo/.bs-ent/.bs-fore 与
+ * data-bs-* 属性不变（编辑存根依赖它们）。
+ * ========================================================= */
+.cp-item .bs-block{ display:flex; flex-direction:column; gap:8px; min-width:0; }
+.cp-item .bs-head{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; cursor:default; padding:0 0 2px; }
+.cp-item .bs-head-title{ font-size:13px; font-weight:800; color:var(--txt,currentColor); display:inline-flex; align-items:center; gap:5px; }
+.cp-item .bs-head-stat{ font-size:11px; font-weight:600; color:var(--accent2); background:color-mix(in srgb,var(--accent2) 12%, transparent); border:1px solid color-mix(in srgb,var(--accent2) 30%, var(--line)); border-radius:20px; padding:1px 8px; }
+.cp-item .bs-head .btn{ margin-left:auto; padding:4px 10px; font-size:12px; }
+.cp-item .bs-beat{ overflow:hidden; border:1px solid var(--line); background:color-mix(in srgb,var(--panel2) 55%, transparent); border-radius:12px; padding:9px 11px; display:flex; flex-direction:column; gap:7px; transition:border-color .16s ease, box-shadow .16s ease, background .16s ease; }
+.cp-item .bs-beat:hover{ border-color:color-mix(in srgb,var(--accent) 45%, var(--line)); background:color-mix(in srgb,var(--panel2) 78%, transparent); box-shadow:0 2px 8px color-mix(in srgb,var(--accent) 12%, transparent); }
+.cp-item .bs-beat-top{ display:flex; align-items:center; gap:7px; min-width:0; }
+.cp-item .bs-type{ display:inline-flex; align-items:center; gap:6px; flex:none; font-size:12px; font-weight:800; color:var(--accent); background:color-mix(in srgb,var(--accent) 13%, transparent); border:1px solid color-mix(in srgb,var(--accent) 35%, var(--line)); border-radius:20px; padding:2px 10px 2px 4px; cursor:help; line-height:1.6; }
+.cp-item .bs-type-idx{ display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px; border-radius:50%; background:var(--accent); color:#fff; font-size:10px; font-weight:800; flex:none; }
+.cp-item .bs-beat-hint{ font-size:11px; color:var(--muted,var(--sub)); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
+.cp-item .bs-event{ width:100%; box-sizing:border-box; font-size:13px; line-height:1.55; color:var(--txt,currentColor); background:transparent; border:1px dashed color-mix(in srgb,var(--line) 95%, transparent); border-radius:9px; padding:6px 9px; }
+.cp-item .bs-event::placeholder{ color:color-mix(in srgb,var(--muted,var(--sub)) 70%, transparent); }
+.cp-item .bs-event:focus{ outline:none; border-style:solid; border-color:var(--accent); background:color-mix(in srgb,var(--accent) 6%, transparent); }
+.cp-item .bs-beat-meta{ display:flex; flex-wrap:wrap; gap:6px; }
+.cp-item .bs-meta{ display:inline-flex; align-items:center; gap:5px; min-width:0; }
+.cp-item .bs-meta-ic{ font-size:12px; opacity:.75; flex:none; }
+.cp-item .bs-meta input{ width:112px; box-sizing:border-box; font-size:11px; line-height:1.5; color:var(--txt,currentColor); background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:3px 8px; transition:border-color .15s ease; }
+.cp-item .bs-meta input::placeholder{ color:color-mix(in srgb,var(--muted,var(--sub)) 65%, transparent); }
+.cp-item .bs-meta input:focus{ outline:none; border-color:var(--accent2); }
+.cp-item .bs-meta-fore{ flex:1 1 170px; }
+.cp-item .bs-meta-fore input{ width:100%; }
+.cp-item .bs-head + .muted{ font-size:11px; color:var(--muted,var(--sub)); }
