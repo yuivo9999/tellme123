@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.187';   // v1.0.187 章首铁律：治"每章主角名+动作开场"机械重复（正文System+承接任务书双落地）；v1.0.186 叙事主体·团队；v1.0.185 构想注入章节↔拍子落位
+const APP_VERSION = '1.0.188';   // v1.0.188 叙事主体升级为五种（主角线/双主角/铁三角/四方/五人团），双主角全链路独立注入；solo 严格隔离不污染；v1.0.187 章首铁律；v1.0.186 叙事主体·团队
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -501,7 +501,7 @@ function projectSnapshot(){
     _outlineCandidates: state._outlineCandidates || null,   // v230/3.1：多大纲候选 {batchTs, items:[{id,label,outline}], chosenId}
     _outlineCandsFolded: !!state._outlineCandsFolded,   // v239/905-2：候选大纲区折叠状态（选择完成后可手动折叠，随项目持久化）
     quickOutline: !!state.quickOutline,   // v1.0.178「默认大纲」开关状态随项目持久化
-    teamShape: (state.teamShape==='trio'||state.teamShape==='quad'||state.teamShape==='quint') ? state.teamShape : 'solo',   // v1.0.186 叙事主体·团队随项目持久化
+    teamShape: (state.teamShape==='dual'||state.teamShape==='trio'||state.teamShape==='quad'||state.teamShape==='quint') ? state.teamShape : 'solo',   // v1.0.188 叙事主体（主角线/双主角/团队）随项目持久化
     _chapterPartial: state._chapterPartial || {},   // 4.8 旗舰版（板块一-3）：流式中断续写缓存（刷新不丢）
     scenes: state.scenes,
     storyboard: state.storyboard,
@@ -587,7 +587,7 @@ function applyProject(p){
   state._outlineCandidates = (p._outlineCandidates && typeof p._outlineCandidates === 'object' && Array.isArray(p._outlineCandidates.items)) ? p._outlineCandidates : null;   // v230/3.1 多大纲候选恢复
   state._outlineCandsFolded = !!p._outlineCandsFolded;   // v239/905-2 候选大纲区折叠状态恢复
   state.quickOutline = !!p.quickOutline;   // v1.0.178「默认大纲」开关状态恢复
-  state.teamShape = (p.teamShape==='trio'||p.teamShape==='quad'||p.teamShape==='quint') ? p.teamShape : 'solo';   // v1.0.186 叙事主体·团队恢复
+  state.teamShape = (p.teamShape==='dual'||p.teamShape==='trio'||p.teamShape==='quad'||p.teamShape==='quint') ? p.teamShape : 'solo';   // v1.0.188 叙事主体恢复
   state._chapterPartial = (p._chapterPartial && typeof p._chapterPartial === 'object') ? p._chapterPartial : {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存恢复
   // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 状态已随「叙事》人设/张力/沙盘」清理整体移除（不再持久化）
   normalizeOutline(state.outline);
@@ -2687,24 +2687,35 @@ function chapterCountVal(){
   if(Number.isInteger(v) && v>=1 && v<=200) return v;
   return null;
 }
-// v1.0.186 叙事主体·团队：可选团队形态（核心团总人数 = 1 主角 + N 主要配角），默认 solo=主角线
+// v1.0.188 叙事主体：可选的叙事主体形态（kind 决定注入哪类上下文块）。默认 solo=主角线。
+// kind: solo=单主角 / dual=双主角（男女主同为第一主角，双视角、各自弧线）/ team=一主角+N主配的团队
 const TEAM_OPTIONS = [
-  { id:'solo',  label:'主角线',        n:1, desc:'一位主角，单人主线贯穿全书' },
-  { id:'trio',  label:'铁三角 +2',     n:3, desc:'一主角 + 两位主要配角（如鬼吹灯三人组）' },
-  { id:'quad',  label:'四方团队 +3',   n:4, desc:'一主角 + 三位主要配角' },
-  { id:'quint', label:'五人团 +4',     n:5, desc:'一主角 + 四位主要配角' }
+  { id:'solo',  label:'主角线',      n:1, kind:'solo', desc:'一位主角，个人视角贯穿全书' },
+  { id:'dual',  label:'双主角',      n:2, kind:'dual', desc:'男女主角同为第一主角，双线叙事、双视角（如互为镜像与对照）' },
+  { id:'trio',  label:'铁三角 +2',   n:3, kind:'team', desc:'一主角 + 两位主要配角（如鬼吹灯三人组）' },
+  { id:'quad',  label:'四方团队 +3', n:4, kind:'team', desc:'一主角 + 三位主要配角' },
+  { id:'quint', label:'五人团 +4',   n:5, kind:'team', desc:'一主角 + 四位主要配角' }
 ];
 function currentTeamShape(){
   const v = state.teamShape || 'solo';
   return TEAM_OPTIONS.find(o => o.id === v) || TEAM_OPTIONS[0];
 }
-function isTeamStory(){ return (state.teamShape && state.teamShape !== 'solo'); }
-// 返回注入各 AI 的团队设定块；solo（非团队）时返回空串，注入方自行判断。
-function teamShapeBrief(){
-  if(!isTeamStory()) return '';
+function shapeKind(){ return currentTeamShape().kind; }   // 'solo' | 'dual' | 'team'
+function isSolo(){ return shapeKind() === 'solo'; }
+function isDualStory(){ return shapeKind() === 'dual'; }
+function isTeamStory(){ return shapeKind() === 'team'; }
+// v1.0.188 生成注入各 AI 的「叙事主体」上下文块；主角线（solo）时返回空串——保证单人线绝不被其他多主角设定污染。
+function narrativeShapeBrief(){
+  const k = shapeKind();
+  if(k === 'solo') return '';
+  if(k === 'dual'){
+    return `【叙事主体·双主角】本书为「双主角」叙事：男女主角同为第一主角，各有独立且可并行推进的主线与人物弧线，互为镜像/对照/制衡。两条主线都须被整体叙事真正承接并回收，把某方写成另一方的附庸/陪衬即不合格；双视角切换须有明确触发且受控（通常一方为当下行动 POV，另一方线以各自的场景独立推进，交替呈现），禁止无节制的上帝视角跳转；两位主角之间往往存在核心张力的关系（相知/对峙/救赎/羁绊），这是本书主线的重要组成部分。`;
+  }
   const ts = currentTeamShape();
   return `【叙事主体·团队】本书为「${ts.label}」：一位主角 + ${ts.n-1} 位主要配角（核心团共 ${ts.n} 人）。团队必须"缺一不可"——每位成员都应有可被剧情反复调用的独特能力/资源/担当（如解谜、武力、决策、沟通、补给等），谁也无法单独完成核心目标；成员间存在化学反应与暗流（互补、默契、分歧、救场、归队），并在故事推进中被逐一兑现。禁止把成员写成背景板，禁止主角单刷、队友全程挂机。`;
 }
+// 兼容旧引用名（v1.0.186 叫 teamShapeBrief）：现按叙事主体自动出「双主角」或「团队」块；solo 一律空串
+function teamShapeBrief(){ return narrativeShapeBrief(); }
 // 生成大纲前唯一必填数字：本章节数量一句提示
 function chapterCountHint(){
   const v = chapterCountVal();
@@ -2977,7 +2988,7 @@ const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担
 3. genreTags 只能出现 2-4 个，且必须与 logline 一致。
 4. anchor 必须包含 题材+主角+核心冲突 三要素，≤50字；thesis 必须点出作品的核心主题/情感内核，≤80字；二者均不得为空。
 5. 忠实度硬约束：用户构想中出现的专名、称谓、设定、意象与关键情节点，必须在输出中原样保留；不得替换、改名或省略；如需调整须以用户原文为基准做增量扩展。
-6. 团队叙事（仅当输入含【叙事主体·团队】时生效）：书名/简介须体现"团队共同目标与各自分工"，anchor 须含主角（+凸显团队的行动方式）；深化"缺一不可"的组队理由，禁止把团队写成单枪匹马的背景。
+6. 多主角叙事（仅当输入含【叙事主体·】（双主角或团队）时生效）：书名/简介须体现多主角之间如何组织、共同卷入的冲突与各自的作用，anchor 须含主角并凸显与他人的关系/协作方式；深化"缺一不可/各自弧线"的构成理由，不得把其他主角写成单枪匹马的背景或陪衬。
 7. 只输出上述 JSON，不要 markdown 代码块、不要解释。
 
 【输出示例】
@@ -3325,8 +3336,11 @@ function buildBeatsSys(){
 3. ${cfg.wc||''}（标称字数配比，正文撰写时按此把每拍写足）。
 4. 每拍 event 必须写得足够具体：用一句话写清该拍的人物动作、直接冲突、即时目标与情绪走向（约40字上下，具体不空泛；禁止笼统概括、禁止模板句），正文才能按对应字数把这一拍展开到位。
 5. 每段节拍必须承接前一段续写态势，禁止各自孤立成片；本章各拍合一构成连续一场（或一条连续剧情线），情绪逐拍推进。
-${isTeamStory() ? `6. 【团队拍型（当前「${currentTeamShape().label}」）】每章须让核心团队在场并让每位成员有"存在反应"：event 尽力写清"由谁主导/谁执行"，全书穿插互补、互救、分歧、救场、归队等团队拍型；对话拍要有≥两个声音的对手戏并区分声口；不得整章只写主角独角戏、把配角写成背景板，也不得主角单刷、队友挂机。
-` : `6. 【团队拍型】当前为「主角线」单人叙事，专注单主角的行为与心理即可。
+${shapeKind()==='team' ? `6. 【团队拍型（当前「${currentTeamShape().label}」）】每章须让核心团队在场并让每位成员有"存在反应"：event 尽力写清"由谁主导/谁执行"，全书穿插互补、互救、分歧、救场、归队等团队拍型；对话拍要有≥两个声音的对手戏并区分声口；不得整章只写主角独角戏、把配角写成背景板，也不得主角单刷、队友挂机。
+6b.【时间锚微注】团队核心成员默认共处同支线同时点，除非剧情需要按任务/职责拆线。
+` : shapeKind()==='dual' ? `6. 【双主角拍型（当前「双主角」）】两位主角各有可独立推进的戏线是本作核心：节拍表须让两条主线都拿到实质性推进与镜头（各自的事件、冲突、情绪节拍）；两位主角的交汇/对照/张力拍要成为本书最有记忆点的拍型之一；双线视角切换的节拍要有明确衔接点，禁止全程只写某一方把另一方晾成背景。
+6b.【时间锚微注】双主角可在同一支线同时点各自展开独立场景（非共同场景），若分处不同时点须在节拍上给出进入/回收说明。
+` : `6. 【拍型】当前为「主角线」单人叙事，专注单主角的行为与心理即可。
 `}${_timeOpen ? '7. 【时间锚】每拍须给定 time（见下）。' : ''}
 【输入】会给出：本批次章节标题、核心定位/深层主题、大纲节拍的结构、设定词典、已定稿前文骨架。
 【节拍结构与顺序（严格按此 ${cnt} 段）】
@@ -3386,7 +3400,7 @@ const PLANNER_FORESHADOW_SYS = `你是一位长篇「伏笔设计师」。请基
 3. 回收章的剧情必须能承接该伏笔的兑现。
 4. 伏笔的植入与回收必须落在「大纲节拍的结构」合理跨度内：重大贯穿伏笔的回收章应落在其植入阶段之后、且不越过所对应的推进/合阶段；不得把伏笔植入或回收到与其阶段职责无关的章节。
 5. 【时间线感知】若提供了【全局时间线】，伏笔的植入时点与回收时点须贴着全局时间推进——避免全部伏笔挤在同一时点（如同日）或同一段紧邻章节内批量兑现；重大伏笔应跨出真实可感知的时间跨度（覆盖数章乃至全书），局部小伏笔也要覆盖一段有意义的剧情。
-6. 【团队个人线】（仅当输入含【叙事主体·团队】时生效）：除主角外，为每位主要配角各配至少一条"个人线"伏笔（身世/旧伤/隐瞒/私欲/独立目标），attributes 的植入—回收须跨出真实章距，不能与其角色的团队交集线性合并；成员间的暗流/分歧/隐瞒也是可用的伏笔来源。
+6. 【多主角个人线】（仅当输入含【叙事主体·】（双主角或团队）时生效）：双主角——两位主角各配至少一条可独立推进的伏笔/弧线，且作为互不合并的两条线跨章回收；团队——除主角外给每位主要配角各配至少一条"个人线"伏笔（身世/旧伤/隐瞒/私欲/独立目标）。植入—回收须跨出真实章距，不能与其团队交集或彼此关系线性合并；成员间/双主角间的暗流、分歧、隐瞒也是可用的伏笔来源。
 7. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
 
 // v1.0.116 小说核心锚点提取器：从完整线性简介中提炼「核心一句话定位 + 深层命题」，作为下游 AI 的导航灯塔。
@@ -3829,8 +3843,11 @@ function narrativeIronBlock(role){
   const iron = role === 'chapter' ? NARRATIVE_IRON_HARD + '\n' + NARRATIVE_IRON_SOFT : NARRATIVE_IRON_HARD;
   // v1.0.186 团队铁律（仅本章正文、且为团队叙事时追加）：落定团队"在场即存在/不单刷"的硬约束
   let ironFull = iron;
-  if(role === 'chapter' && isTeamStory()){
+  // v1.0.188 多主角铁律：按叙事主体出「双主角」或「团队」铁律；solo 不追加（保证单人线不被多主角设定污染）
+  if(role === 'chapter' && shapeKind() === 'team'){
     ironFull += '\n【团队铁律】本书为团队叙事，核心团各成员凡在本章出场就必须有"存在性"——有对话、有动作、或有专属于该成员的反应/细节，不得被写成背景板或纯提线木偶；禁止主角一人单刷全篇、队友全程挂机——凡危机须体现靠成员互补能力/配合拆解；多人对话要有可辨识的声口与立场，避免把多条声音堆成一片没有区别的对白。';
+  } else if(role === 'chapter' && shapeKind() === 'dual'){
+    ironFull += '\n【双主角铁律】本书为双主角叙事，两名主角各有独立行动场景与弧线：本章凡涉及双主角，须给双方各自实质性的镜头与推进，不得把某一方写成另一方的附庸/背景；双视角切换必须有明确触发点与衔接（换场景/换段），禁止在同一场景内无节制的视角跳转；两人同场时，其对视/争执/配合要写得有张力与辨识声口。';
   }
   // v1.0.187 章首反机械化：治"每章都拿主角名+动作开头"的把式开场
   if(role === 'chapter'){
@@ -5694,7 +5711,7 @@ function viewStory(){
       <div class="team-pick" id="teamPick">
         ${TEAM_OPTIONS.map(o=>`
         <label class="team-item ${o.id===currentTeamShape().id?'sel':''}" data-team="${o.id}" title="${esc(o.desc)}">
-          <span class="team-ic">${o.id==='solo'?'👤':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span>
+          <span class="team-ic">${o.id==='solo'?'👤':o.id==='dual'?'👫':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span>
           <span class="team-txt"><b>${esc(o.label)}</b><i>${esc(o.desc)}</i></span>
           <input type="radio" name="teamShape" value="${o.id}" style="display:none" ${o.id===currentTeamShape().id?'checked':''}>
         </label>`).join('')}
@@ -10374,7 +10391,7 @@ function buildTimelineUser(){
   }
   parts.push(`【全书各章节拍与现有时间锚】\n${rows.join('\n')}`);
   const _tb = teamShapeBrief();   // v1.0.186 团队同场共时：团队核心团默认同在一条主线支线、共同推进
-  if(_tb) parts.push(_tb + '\n（团队叙事请留意：除非按职责/任务拆线，核心团各成员时间应落在同一主线支线的同一时点，别把团队成员拆到互相矛盾的时间）');
+  if(_tb) parts.push(_tb + '\n（时间侧留意：除非剧情明确拆线，各核心主角/成员的时间应落在同一主线支线的同一时点，团队因"分工拆成两路"而分处不同时点的、双主角因"各自独立场景"而位于同一时点的不同现场——都要在节拍/正文给出进入与回收说明，别拆到互相矛盾的时点）');
   return parts.join('\n\n');
 }
 
@@ -10505,7 +10522,7 @@ async function genPlannerGlossary(btn, opts){
     const glSkel = structureSkeletonBlock(); if(glSkel) parts.push(glSkel);
     // v1.0.186 团队设定注入词典：核心团全员必须立档、可作节拍/正文的人名真源（非 solo 时才有）
     const _tb = teamShapeBrief();
-    if(_tb) parts.push(_tb + '\n（须为核心团每位成员（主角 + 主要配角）立档：identity 含其团队担当/定位，各成员字段齐全，杜绝正文时临时造名）');
+    if(_tb) parts.push(_tb + '\n（须为每位核心主角立档：双主角即两位主角、团队即主角+主要配角；identity 含其定位/担当，各成员字段齐全，杜绝正文时临时造名）');
     if(sourceHasGlossary((o.glossary)||{})) parts.push(`【现有词典】${JSON.stringify(o.glossary,null,2)}`);
     const user = parts.join('\n\n');
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
