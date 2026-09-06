@@ -9515,17 +9515,20 @@ function outlineCandidatesHtml(){
     let adoptHtml;
     if(adopted){ adoptHtml = '<b style="color:var(--ok, #2e9e5b);white-space:nowrap">✅ 当前采用</b>'; }
     else {
-      let warnSpan = '';
-      if(!it.ok){
-        warnSpan = '<span style="color:#b8860b;font-size:11px;white-space:nowrap" title="未通过校验（'+esc(it.reason||'')+'）。该候选仍可选用，采用时会自动补齐缺失字段，请自行判断是否采纳。">⚠️ 待确认'+(it.reason?('（'+esc(it.reason)+'）'):'')+'</span>';
-      }
-      adoptHtml = warnSpan + '<button type="button" class="btn small '+(it.ok?'primary':'ghost')+'" data-cand-adopt="'+esc(it.id)+'" style="white-space:nowrap">'+(it.ok?'▶ 选用此版':'⚠️ 仍要选用')+'</button>';
+      adoptHtml = '<button type="button" class="btn small '+(it.ok?'primary':'ghost')+'" data-cand-adopt="'+esc(it.id)+'" style="white-space:nowrap">'+(it.ok?'▶ 选用此版':'⚠️ 仍要选用')+'</button>';
+    }
+    // v1.0.164：警示不再塞进头部行（nowrap 长文本会把卡片头部挤爆/溢出错排），独立成整行并自然换行；
+    // 头部行只保留「标题 + 选用按钮」，按钮用 flex:none 固定不压缩
+    let warnLine = '';
+    if(!it.ok){
+      warnLine = `<div style="margin:8px 0 0;font-size:11px;line-height:1.55;color:#b8860b">⚠️ <b>待确认校验</b>${it.reason?('：'+esc(it.reason)):''}</div>`;
     }
     return `<div class="card" style="margin-top:10px">
       <div class="card-head-row">
         <b style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(od.title||'未命名')} <span class="muted">［${esc(it.label||'候选')}］</span></b>
-        ${adoptHtml}
+        <span style="display:inline-flex;align-items:center;flex:none;margin-left:8px;white-space:nowrap">${adoptHtml}</span>
       </div>
+      ${warnLine}
       <p class="sub" style="margin:6px 0 0">${esc(String(od.logline||'').slice(0,120))}${String(od.logline||'').length>120?'…':''}</p>
       <div class="btn-row" style="margin-top:8px">
         <button type="button" class="btn small ghost" data-cand-prev="${esc(it.id)}">👁 预览</button>
