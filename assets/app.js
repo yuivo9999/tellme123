@@ -1122,6 +1122,31 @@ function extractJsonObject(text){
   if(arr){ try{ return JSON.parse(arr[0]); }catch(e){} }
   return null;
 }
+// v1.0.170：更健壮的「首个完整根对象」提取器——按括号深度扫描，容忍前置文字/后置杂项/花括号前后多写内容。
+// 比贪心 /\{[\s\S]*\}/ 强：贪心会吃到最后一个 }，若 AI 在 JSON 后补一句含 } 的话，整体 JSON.parse 失败而误判。
+function extractFirstObject(text){
+  const t = String(text||'');
+  try{ const p = JSON.parse(t); if(p && typeof p === 'object' && !Array.isArray(p)) return p; }catch(e){}
+  const m = t.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if(m){ try{ const p = JSON.parse(m[1].trim()); if(p && typeof p==='object' && !Array.isArray(p)) return p; }catch(e){} }
+  let depth = 0, start = -1, inStr = false, esc = false;
+  for(let i=0;i<t.length;i++){
+    const c = t[i];
+    if(esc){ esc = false; continue; }
+    if(c === '\\' && inStr){ esc = true; continue; }
+    if(c === '"'){ inStr = !inStr; continue; }
+    if(inStr) continue;
+    if(c === '{'){ if(start < 0) start = i; depth++; }
+    else if(c === '}'){
+      depth--;
+      if(start >= 0 && depth === 0){
+        try{ const o = JSON.parse(t.slice(start, i+1)); if(o && typeof o === 'object' && !Array.isArray(o)) return o; }catch(e){}
+        start = -1; depth = 0;
+      }
+    }
+  }
+  return null;
+}
 
 /* 按钮忙碌态 */
 function busy(btn, on, label){
@@ -9460,8 +9485,13 @@ async function genOutlineMulti(btn){
       const attempt = async ()=>{
         const txt = await callAIGuarded('outline', { angleNote: outlineAngleDirective(ang, i, N) },
           {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal, tolerateFaithOutline: true});
-        const o = extractJsonObject(txt);
-        if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()) throw new Error('未解析到书名/简介');
+        // v1.0.170：改用括号深度平衡扫描（extractFirstObject），容忍前后杂文；失败时把 AI 原始开头带进报错，
+        // 一眼区分「模型返回不标准」vs「我方解析误判」。
+        const o = extractFirstObject(txt);
+        if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()){
+          const _head = String(txt||'').replace(/\s+/g,' ').slice(0,90);
+          throw new Error(`未解析到书名/简介` + (_head ? `；AI 原始输出开头「${_head}…」` : ''));
+        }
         const warn = (txt && txt._validateWarn) || '';
         if(warn){ try{ o._faithWarn = warn; }catch(e){} }
         return o;
@@ -9537,7 +9567,7 @@ function outlineCandidatesHtml(){
         <span style="display:inline-flex;align-items:center;flex:none;margin-left:8px;white-space:nowrap">${adoptHtml}</span>
       </div>
       ${warnLine}
-      <p class="sub" style="margin:6px 0 0">${esc(String(od.logline||'').slice(0,120))}${String(od.logline||'').length>120?'…':''}</p>
+      <p class="sub" style="margin:6px 0 0;white-space:pre-wrap;word-break:break-word">${esc(String(od.logline||''))}</p>
       <div class="btn-row" style="margin-top:8px">
         <button type="button" class="btn small ghost" data-cand-prev="${esc(it.id)}">👁 预览</button>
       </div>
