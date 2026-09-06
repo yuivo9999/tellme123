@@ -9418,26 +9418,16 @@ const OUTLINE_CANDIDATE_ANGLES = [
   { tag:'世界观设定向', rise:'本候选＝设定红利优先：以「天象推演／星官占卜／钦天监」体系的新奇与自洽为核心卖点；必须把世界观规则、体系、组织作为主线推进引擎，让设定有层次地展开；禁止设定只当背景板、禁止情节与设定脱节。', temp:0.90 },
   { tag:'综合均衡向',   rise:'本候选＝取各最强融合：取稳健商业的市场骨架、高概念反差的记忆点、情感人物的动力各一档合成；必须结构既稳、又有记忆点、还不失人物温度；禁止把三者平均摊薄成平庸稿。', temp:0.80 }
 ];
-// v1.0.167：候选大纲改为「同一段 AI 一次列出 N 个」——六个角度同处一个上下文，AI 可直接对位错开，
-// 根治"6 次独立调用共享同一构想导致雷同"。输出顶层 JSON 数组；逐条解析+校验，坏条隔离降级、不拖垮整批。
-function outlineBatchArraySuffix(angles){
-  const spec = angles.map((a,i)=>`候选${i+1}「${a.tag}」${a.rise}`).join('\n');
-  return `【本次输出模式：一批候选】
-一次性输出整个 JSON 数组，数组长度严格等于 ${angles.length}。数组里每个元素是这个角度下的一本书，对象字段固定为：{ "angle","title","logline","anchor","thesis","genreTags","tone" }。
-六个角度必须在 书名、主角设定方式、剧作重心、类型口味 四个维度的组合上形成肉眼可辨的差异化，禁止写成只是换题为名的同一篇。每个角度按下述各自的演绎要求来做：
-${spec}
-共用保真：用户在【用户构想】中加引号/书名号的核心词（如「被贬马夫」「社稷倾覆」）必须逐字原样进入对应候选，一字不改。
-严格只输出数组本身（不要 markdown 代码块、不要解释）：
-[{ "angle":"稳健商业向","title":"…","logline":"…","anchor":"…","thesis":"…","genreTags":[…],"tone":"…" }, …]`;
-}
-function parseOutlineCandidatesArray(text){
-  const t = String(text||'');
-  const a = t.indexOf('['), b = t.lastIndexOf(']');
-  if(a < 0 || b <= a) throw new Error('未解析到候选数组');
-  let arr = null;
-  try{ arr = JSON.parse(t.slice(a, b+1)); }catch(e){ arr = null; }
-  if(!arr || !Array.isArray(arr)) throw new Error('候选数组 JSON 解析失败');
-  return arr.filter(o => o && typeof o === 'object' && !Array.isArray(o));
+// v1.0.169：作者拍板回退「同段一次列 N 个」→ 恢复 6 次独立差异化生成。
+// 回退原因：GLM 单段输出 6 候选对象数组经常整批 JSON 解析失败——单点耦合毁掉全部，重试仍败，用户一个候选都拿不到。
+// 独立多调用让单个候选失败只影响自己（自身重试一次后跳过），稳定优先；"角度互相可比"的诉求用温度+差异化需求部分补偿。
+// 差异化改由每个候选独立的强指令（下述 outlineAngleDirective 内的 per-angle 演绎要求）保证，避免退回"6 个雷同"老问题。
+function outlineAngleDirective(ang, idx, total){
+  return `【本候选创意角度：${idx+1}/${total} ·「${ang.tag}」】
+你是用「${ang.tag}」这个角度，把用户的构想重新设想成一本书。本批共 ${total} 个候选，各代表完全不同的创作角度：你必须让本候选在 书名、主角设定方式、剧作重心、类型口味 四个维度的组合上，与其他候选形成肉眼可辨的差异，禁止写成只是换了个题目的同一篇。
+· 硬核保真：用户在【用户构想】中加引号/书名号的核心词（如「被贬马夫」「社稷倾覆」）必须逐字原样出现、一字不改。
+· 除硬核外放开重塑：允许按本角度改动主角的身份细节/动机/处境、重写主线的冲突组织与叙事焦点，把故事真正"用这个角度重讲一遍"。
+${ang.rise}`;
 }
  
  // v230/3.2：多候选生成——串行逐个（沿用 _abortCtl 可中断），角度差异化 + 温度阶梯；
@@ -9461,43 +9451,38 @@ async function genOutlineMulti(btn){
   const items = [];
   try{
     const N = Math.max(1, OUTLINE_CANDIDATE_N|0);
-    const angles = OUTLINE_CANDIDATE_ANGLES.slice(0, N);
-    if(st){ st.className='status'; st.textContent = `正在让大纲 AI 一次生成 ${N} 个差异化候选大纲…`; }
-    // v1.0.167：单段调用——同一段 AI 在同一下文一次列出 N 个（六角度同上下文可互相错开，根治雷同）；
-    // 输出顶层 JSON 数组，逐条校验，坏条（无书名/简介）隔离丢弃、软字段/忠实度警告降级为可选用，不拖垮整批。
-    const attempt = async ()=>{
-      const txt = unwrapAIResult(await callDeepSeek(
-        buildOutlineSys() + outlineBatchArraySuffix(angles),
-        buildOutlineUser({ idea: state.idea || '' }),
-        {temperature: 0.85, maxTokens: 12000, taskKey: 'outline', signal: _abortCtl?.signal}
-      ));
-      return parseOutlineCandidatesArray(txt).map((o)=>{
-        const _g = gradeOutlineCandidate(o);
-        let warn = '';
-        try{ warn = validateOutlineFaithful(o, { idea: state.idea || '' }) || ''; }catch(e){}
-        return { o, ok: _g.ok && !warn, reason: _g.reason || warn || '', hard: _g.hard };
-      });
-    };
-    let parsed = null, lastErr = null;
-    for(let k=0; k<2 && !parsed; k++){
-      try{
-        parsed = await attempt();
-      }catch(e){
-        if(e.name === 'AbortError') throw e;
-        lastErr = e;
-        if(k===0 && st){ st.textContent = `首次输出未解析（${e.message}），自动整体重试一次…`; }
+    for(let i=0;i<N;i++){
+      const ang = OUTLINE_CANDIDATE_ANGLES[i % OUTLINE_CANDIDATE_ANGLES.length];
+      const tag = '候选' + String.fromCharCode(65 + (i % OUTLINE_CANDIDATE_ANGLES.length));
+      if(st){ st.className='status'; st.textContent = `${tag}（${ang.tag}）生成中…（${i+1}/${N}）`; }
+      // v1.0.169：恢复 6 次独立差异化调用（见上方注释）。每个候选独立走结构+忠实度双闸；
+      // 单候选失败仅自身重试一次（覆盖偶发截断/解析），仍失败才 toast 跳过、不拖累其余；≥1 成功即进入候选选择态，全失败才走修复队列。
+      const attempt = async ()=>{
+        const txt = await callAIGuarded('outline', { angleNote: outlineAngleDirective(ang, i, N) },
+          {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal, tolerateFaithOutline: true});
+        const o = extractJsonObject(txt);
+        if(!o || !String(o.title||'').trim() || !String(o.logline||'').trim()) throw new Error('未解析到书名/简介');
+        const warn = (txt && txt._validateWarn) || '';
+        if(warn){ try{ o._faithWarn = warn; }catch(e){} }
+        return o;
+      };
+      let cand = null, lastErr = null;
+      for(let k=0; k<2 && !cand; k++){
+        try{
+          cand = await attempt();
+        }catch(e){
+          if(e.name === 'AbortError') throw e;
+          lastErr = e;
+          if(k===0 && st){ st.textContent = `${tag}（${ang.tag}）首次未通过（${e.message}），自动重试一次…`; }
+        }
       }
-    }
-    if(parsed && parsed.length){
-      parsed.forEach((p, idx)=>{
-        const ang = (angles[idx] || angles[0]);
-        const tag = '候选' + String.fromCharCode(65 + (idx % angles.length));
-        // 仅跳过无书名/简介的硬伤条；软缺字段/忠实度警示 → 保留为「可选用+警示」
-        if(!p.o || p.hard) return;
-        items.push({ id: 'c'+(idx+1), label: `${tag}·${ang.tag}`, outline: p.o, ok: p.ok, reason: p.reason });
-      });
-    } else {
-      if(!items.length && lastErr) throw lastErr;
+      if(!cand){ toast(`${tag}（${ang.tag}）重试后仍未通过校验，已跳过：${(lastErr && lastErr.message) || '未知错误'}`); }
+      if(cand){
+        const _g = gradeOutlineCandidate(cand);
+        const _warn = cand._faithWarn || '';
+        // 忠实度/结构警示候选不当硬伤丢弃——标记"仍可选用"、黄标提示，端上自行把关
+        items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand, ok: _g.ok && !_warn, reason: _g.reason || _warn || '' });
+      }
     }
     if(!items.length) throw new Error('全部候选均未通过校验');
     state._outlineCandidates = { batchTs: Date.now(), items, chosenId: null };
