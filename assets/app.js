@@ -1203,7 +1203,7 @@ L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词�
 5. 人物言行须符合其性格设定；对话须有辨识度；时间线须与上一章衔接。
 6. 若 L0 叙事铁律有禁用词/禁写内容，请在输出前自检：是否已遵守硬铁律的全部禁止项。
 7. 结尾须指向下一章标题，埋下线索或悬念，但不得提前揭示下一章具体情节（若上下文未给出下一章标题，则按本章剧情自然收束即可，不强求指向标题）。
-8. 正文长度以【篇幅体量】块为准（v243/910-⑷：原硬性字数区间已废除，口径统一交由体量块裁决；情节充实优先于字数）。
+8. 正文长度严格以【篇幅体量】块为准，必须在第一次生成时即写足该块硬下限（v1.0.165：取消"不设上限"宽松口径，禁止写成未达下限的梗概式短场景）。
 9. 场景与节拍的自然衔接铁律：全章必须是一条连续流动的叙事线——每个节拍事件的结尾自然引出下一个节拍的开头；时间/地点/视点的切换必须给出过渡（时间词、空间移动、镜头焦点转移或因果钩子），禁止节拍间硬跳切、禁止把每个节拍写成孤立片段。节拍之外的衔接与过渡文字（非情节推进的铺垫/转场内容）同样是正文的组成部分，不是多余的填充。
 
 【内部一致性自检（不写入输出）】
@@ -4505,29 +4505,26 @@ function openSubplotBoard(){
   ov.querySelectorAll('[data-sb-close]').forEach(b=> b.onclick = ()=>{ const p=$('#subBoard'); if(p) p.remove(); });
   ov.addEventListener('click', e=>{ if(e.target===ov){ const p=$('#subBoard'); if(p) p.remove(); } });
 }
-// 体量提示（拼入章节正文提示词）：交代全书章节数与当前章位
-// v243/910-⑷：字数滑条上桌——wordRange 有值时注入目标区间（提示词引导、字数服从剧情；后验仍不硬拦，v225/P1 拆除的闸不复活）；无滑条值维持不设限口径
+// 体量提示（拼入章节正文提示词）：强制为每章给出确定性字数目标，保证首写即写足、不依赖后验。
+// v1.0.165：界面已无字数滑条，wordRange 为空时按默认「约 3000 字」锚定；删除"不设上限"宽松口径，
+// 并删除后验续写补齐（首轮硬性目标达标，不再额外多生成一次）。
 function chapterLenBounds(){
-  const wr = (state.wordRange && +state.wordRange.min > 0 && +state.wordRange.max > 0) ? state.wordRange : null;
-  if(!wr) return null;
+  const wr = (state.wordRange && +state.wordRange.min > 0 && +state.wordRange.max > 0)
+    ? state.wordRange : { min: 3000, max: 3600 };   // 默认每章目标约 3000 字
   const lo = Math.min(+wr.min, +wr.max), hi = Math.max(+wr.min, +wr.max);
-  // v1.0.160：硬下限取设定最小值的 90%（至少 200 字），供【篇幅体量】提示词与后验续写（C）共用
   return { lo, hi, floor: Math.max(200, Math.round(lo * 0.9)) };
 }
 function sizeChapterInjection(){
   const n = realChapterCount();   // v1.0.119 用真实章节数（对齐 users 看到的章数），无章节时不注入
-  const total = n ? `全书共 ${n} 章；` : '';
   const b = chapterLenBounds();
-  if(b){
-    return `${total}本章正文目标 ${b.lo.toLocaleString()}—${b.hi.toLocaleString()} 字，其中硬下限 ${b.floor.toLocaleString()} 字。
-【字数铁律】
-· 必须写到 ≥ ${b.floor.toLocaleString()} 字才视为本章完成；字数不足即未完成，禁止草草收尾、禁止写成梗概式短场景。
-· 必须用五感（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围把每个节拍写实写足，禁止一笔带过。
-· 必须按【微拍配比】的字数权重把各节拍分别展开，禁止把多个节拍挤进一句话带过。
-· 剧情完整的前提下优先增厚：铺垫、交锋、余波都要写到饱满，宁可铺垫充分也禁止提前收场。
+  const total = n ? `全书共 ${n} 章；` : '';
+  return `${total}本章正文目标 ${b.lo.toLocaleString()}—${b.hi.toLocaleString()} 字，硬下限 ${b.floor.toLocaleString()} 字（首写一次到位）。
+【字数铁律 · 本章落地即达标】
+· 本章必须一次写足到 ≥ ${b.floor.toLocaleString()} 字才算完成；这是硬性交付标准，禁止写成梗概式短场景、禁止一笔带过、禁止提前收尾。
+· 开写前先把本章目标约 ${b.lo.toLocaleString()} 字按【微拍配比】预铺到各节拍上，再逐拍用五感细节（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围写实写足。
+· 剧情完整的前提下优先增厚铺垫、交锋与余波，禁止把多个节拍挤进一句话带过。
+· 一边写一边对照：已写篇幅是否足以支撑每拍应得的分量；不足必须继续扩写到位，而不是就此了事。
 · 输出完全文后，必须另起一行单独输出：<!-- LEN: 本章实际字数 -->（精确数字）。`;
-  }
-  return `${total}本章正文不设字数上限，按剧情需要自然成稿，章与章之间衔接顺畅、节奏自然。`;
 }
 // 更新体量派生提示（页面内）
 function bindSizeHint(){
@@ -10611,48 +10608,11 @@ async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride,
     }
   }
   const sp = splitChapterOutput(txt);
-  let content = String(sp.content).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
-  // v1.0.160（C）：后验字数硬下限 + 自动续写补齐（最多追加 2 段，共 3 次机会；失败静默保留已得文本）
-  const _lb = chapterLenBounds();
-  if(_lb && countChineseChars(content) < _lb.floor){
-    const _t0 = countChineseChars(content);
-    const _res = await lengthenChapterToTarget(i, content, _lb.floor, onStream, styleOverride, signal);
-    if(String(_res||'').trim().length > content.length) content = String(_res).trim();
-    if(countChineseChars(content) < _lb.floor) console.warn('[正文] 自动续写补齐后仍未达下限：', countChineseChars(content), '/', _lb.floor, '（首轮', _t0, '）');
-  }
+  // v1.0.165：去除后验字数续写补齐（避免额外多生成一次）——长度改由【篇幅体量】在首写阶段用硬性目标约束，首轮即写足
+  const content = String(sp.content).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
   return content;
 }
-// v1.0.160（C）：按字数硬下限自动续写补齐单章正文；与首轮同场连贯续写，最多追加 MAX_PASS 段
-async function lengthenChapterToTarget(i, content, floor, onStream, styleOverride, signal){
-  let out = content, cur = countChineseChars(out);
-  const MAX_PASS = 2, _signal = signal || _abortCtl?.signal;
-  for(let pass = 1; pass <= MAX_PASS && cur < floor; pass++){
-    const rest = floor - cur;
-    const tail = (out||'').replace(/\s+$/,'').slice(-600);
-    const user = `【本章已有正文（尾部）】\n${tail}\n\n【续写/扩写要求】
-当前本章汉字数 ${cur.toLocaleString()}，尚未达到下限 ${floor.toLocaleString()} 字，还差约 ${rest.toLocaleString()} 字。
-· 必须从上文末尾无缝继续推进同一场戏：补充动作细节、人物对话、心理活动与环境描写，把场面写实写足。
-· 必须新增约 ${rest.toLocaleString()} 字，禁止重复任何已有内容，禁止重新开头，禁止总结前文。
-· 严格只输出新的续写内容本身，禁止输出「以下是续写」等前后缀，也禁止输出 <!-- LEN: --> 注释。`;
-    let add = '';
-    try{
-      const _res = await callDeepSeek(longChapterSys(styleOverride), user, {maxTokens: clampMaxTokens('continue'), taskKey:'chapter', onStream: (typeof onStream==='function') ? (d)=>{ add += d; try{ onStream(d); }catch(e){} } : undefined, temperature: dynamicChapterParams(i).temperature, topP: dynamicChapterParams(i).topP, signal: _signal});
-      add = String((_res && 'text' in _res) ? _res.text : (_res||add));
-    }catch(e){
-      if(e && e.name === 'AbortError') break;
-      add = add || '';
-    }
-    add = String(add).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
-    if(!add) break;
-    const lcp = longestCommonPrefix((tail||'').trim(), add);
-    if(lcp.length > 20) add = add.slice(lcp.length).trim();
-    if(!add) break;
-    out = out + '\n' + add;
-    cur = countChineseChars(out);
-  }
-  return out;
-}
-function countChineseChars(s){ return (String(s||'').match(/[\u4e00-\u9fa5]/g)||[]).length; }
+// v1.0.165：后验续写补齐 lengthenChapterToTarget 已整体移除——字数由首写阶段的硬性约束保证，不再额外多生成一次
 // 组装单章生成的 user 提示词。恒定前缀块（标题/梗概/全部章节标题/一致性词典）保持在前、全章不变，
 // 以最大化 DeepSeek 上下文缓存命中；可变信息（上一章全文/结构注入）尽量放后。
 // opt.regenerating=true 时（单章重生成）额外注入下章概要，保证前后连贯（建议5/决策5）。
