@@ -3191,13 +3191,15 @@ function isClimaxType(key){ return /燃点/.test(BEAT_LABEL_ALL[key] || key); }
 // 动态节拍系统提示词：按所选拍数生成 N 段节拍表
 function buildBeatsSys(){
   const cfg = currentBeatCfg(), defs = cfg.types, cnt = defs.length;
-  const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}${t.wc?`；建议字数占比：${t.wc}`:''}`).join('\n');
+  const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}${t.wc?`；该拍字数：${t.wc}`:''}`).join('\n');
   const selectRule = cfg.id===3 ? '读者每约 500 字就要一个爽点（新媒体/极爽文）' : (cfg.id===5 ? '读者每约 1500 字要一次小情绪起伏（传统男女频标准）' : (cfg.id===2 ? '读者要前 2500 字屏息、最后约 500 字头皮发麻的瞬间爆裂（悬疑惊悚）' : '读者追求细腻情感递进、燃点小而暖（慢热治愈）'));
   return `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于【章节标题】【已定稿的前文骨架】【全书导航/大纲节拍结构/设定词典】生成${cnt}段节拍表（当前选定「${cfg.label}」微拍体系——${selectRule}）。
 【微拍铁律】
 1. 燃点规模须克制：每章燃点为一枚「小爽点/小高潮」，强度约全书终极燃点的千分之一，禁止提前打光主角底牌。
 2. 聚焦章节小目标：每章只解决一个具体小麻烦/小进展即可，不要贪多；章事件须为长线主线输出至少一个信息/线索/关系推进。
-3. ${cfg.wc||''}（标称字数配比，正文撰写时参考，节拍表事件仍一句话概述）。
+3. ${cfg.wc||''}（标称字数配比，正文撰写时按此把每拍写足）。
+4. 每拍 event 必须写得足够具体：写明该拍的人物动作、直接冲突、即时目标与情绪走向（40—80 字），正文才能按对应字数把这一拍展开到位；禁止用笼统的一句话概括事件。
+5. 每段节拍必须承接前一段续写态势，禁止各自孤立成片；本章各拍合一构成连续一场（或一条连续剧情线），情绪逐拍推进。
 【输入】会给出：本批次章节标题、核心定位/深层主题、大纲节拍的结构、设定词典、已定稿前文骨架。
 【节拍结构与顺序（严格按此 ${cnt} 段）】
 ${specLines}
@@ -3206,9 +3208,9 @@ ${specLines}
   "chapterPlans": [
     {
       "beats": [
-        {"type":"${defs[0].key}", "event":"切入本章的关键事件，10—40字", "emotional":"情绪，1—8字", "requiredEntities":["必须出现的人名/地名/专名"], "foreshadowing":["本章埋下的伏笔（有才填）"]},
-        {"type":"${defs[Math.min(1,cnt-1)].key}", "event":"推进/转折事件", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
-        ${cnt>3 ? `{"type":"${defs[cnt-2].key}", "event":"章末前的承转或余波事件", "emotional":"情绪落点", "requiredEntities":[], "foreshadowing":[]},\n` : ''}        {"type":"${defs[cnt-1].key}", "event":"章末钩子/悬念/承接下一章的线索", "emotional":"章末情绪落点", "requiredEntities":[], "foreshadowing":[]}
+        {"type":"${defs[0].key}", "event":"本节拍关键事件：写清人物动作、直接冲突与即时目标（40—80字）", "emotional":"情绪，1—8字", "requiredEntities":["必须出现的人名/地名/专名"], "foreshadowing":["本章埋下的伏笔（有才填）"]},
+        {"type":"${defs[Math.min(1,cnt-1)].key}", "event":"推进/转折事件：人物做了什么、冲突如何升级（40—80字）", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
+        ${cnt>3 ? `{"type":"${defs[cnt-2].key}", "event":"章末前的承转或余波事件：人物心理/动作/对话如何收束（40—80字）", "emotional":"情绪落点", "requiredEntities":[], "foreshadowing":[]},\n` : ''}        {"type":"${defs[cnt-1].key}", "event":"章末钩子/悬念：承接下一章的线索或关系突变（40—80字）", "emotional":"章末情绪落点", "requiredEntities":[], "foreshadowing":[]}
       ],
       "emotionalArc": "本章情绪弧：从X到Y，用一句话概括",
       "requiredEntities": ["本章必须使用的核心实体汇总"]
@@ -4451,13 +4453,25 @@ function openSubplotBoard(){
 }
 // 体量提示（拼入章节正文提示词）：交代全书章节数与当前章位
 // v243/910-⑷：字数滑条上桌——wordRange 有值时注入目标区间（提示词引导、字数服从剧情；后验仍不硬拦，v225/P1 拆除的闸不复活）；无滑条值维持不设限口径
+function chapterLenBounds(){
+  const wr = (state.wordRange && +state.wordRange.min > 0 && +state.wordRange.max > 0) ? state.wordRange : null;
+  if(!wr) return null;
+  const lo = Math.min(+wr.min, +wr.max), hi = Math.max(+wr.min, +wr.max);
+  // v1.0.160：硬下限取设定最小值的 90%（至少 200 字），供【篇幅体量】提示词与后验续写（C）共用
+  return { lo, hi, floor: Math.max(200, Math.round(lo * 0.9)) };
+}
 function sizeChapterInjection(){
   const n = realChapterCount();   // v1.0.119 用真实章节数（对齐 users 看到的章数），无章节时不注入
   const total = n ? `全书共 ${n} 章；` : '';
-  const wr = (state.wordRange && +state.wordRange.min > 0 && +state.wordRange.max > 0) ? state.wordRange : null;
-  if(wr){
-    const lo = Math.min(+wr.min, +wr.max), hi = Math.max(+wr.min, +wr.max);
-    return `${total}本章正文目标 ${lo.toLocaleString()}—${hi.toLocaleString()} 字（允许 ±10% 浮动）；字数服从剧情：先保证剧情完整与节奏自然，再在此前提下向目标区间靠拢。`;
+  const b = chapterLenBounds();
+  if(b){
+    return `${total}本章正文目标 ${b.lo.toLocaleString()}—${b.hi.toLocaleString()} 字，其中硬下限 ${b.floor.toLocaleString()} 字。
+【字数铁律】
+· 必须写到 ≥ ${b.floor.toLocaleString()} 字才视为本章完成；字数不足即未完成，禁止草草收尾、禁止写成梗概式短场景。
+· 必须用五感（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围把每个节拍写实写足，禁止一笔带过。
+· 必须按【微拍配比】的字数权重把各节拍分别展开，禁止把多个节拍挤进一句话带过。
+· 剧情完整的前提下优先增厚：铺垫、交锋、余波都要写到饱满，宁可铺垫充分也禁止提前收场。
+· 输出完全文后，必须另起一行单独输出：<!-- LEN: 本章实际字数 -->（精确数字）。`;
   }
   return `${total}本章正文不设字数上限，按剧情需要自然成稿，章与章之间衔接顺畅、节奏自然。`;
 }
@@ -5380,11 +5394,11 @@ function viewStory(){
         ${ isLong() ? chapterPlanBlock() : '' }
         ${ isLong() ? glossaryCardHtml() : '' }
         ${ isLong() ? factCardHtml() : '' }
+        ${ isLong() ? rollingSummaryCardHtml() : '' }
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
           <label class="long-jump"><span>跳到章节：</span>
           <select id="longJump"><option value="">— 选择章节阅读 —</option>${state.chapters.map((c,i)=>`<option value="${i}">第${i+1}章 ${esc(cleanChapterTitle(c.title))}</option>`).join('')}</select></label>
         </div>` : '' }
-        ${ isLong() ? rollingSummaryCardHtml() : '' }
         ${ isLong() ? qualityReportCardHtml() : '' }
         <div class="ch-toolbar">
           <span class="ch-toolbar-t">📚 章节列表（共 ${state.chapters.length} 章，已生成 ${state.chapters.filter(c=>c.content && String(c.content).trim()).length} 章）</span>
@@ -5436,11 +5450,17 @@ function viewStory(){
 //   而是根据当前所选全书拍子体系 + 现有章节列表，将各章归入对应阶段展示）。
 function beatStructureCardHtml(){
   const o = state.outline || {};
-  const chs = Array.isArray(o.chapters) ? o.chapters : [];
+  let chs = Array.isArray(o.chapters) ? o.chapters : [];
   const bb = currentBookBeatCfg();
   // 当前拍子的阶段名（取该拍子体系下的阶段序列；若无则按标签名兜底）
   const stageNames = beatStageNames();
-  const totalCh = chs.length;
+  let totalCh = chs.length;
+  // v1.0.157 修复：大纲已生成但章节数组尚未由规划师生成占位（o.chapters 仍为空）时，
+  // 只要用户已填「全书章节数」就用占位章数渲染结构骨架，避免本卡空白与下方「章节标题」卡占位行互相矛盾。
+  if(!totalCh){
+    const _cc = Math.floor(Number(chapterCountVal())||0);
+    if(_cc >= 1 && _cc <= 200){ chs = Array.from({length:_cc}, ()=>({title:''})); totalCh = _cc; }
+  }
   if(!totalCh || !stageNames.length){
     return `<div class="card bs-card">
       <div class="bs-head" role="presentation">
@@ -5448,7 +5468,8 @@ function beatStructureCardHtml(){
         <span class="bs-head-stat">${esc(bb.label)} · ${stageNames.length} 段</span>
       </div>
       <div class="bs-body">
-        <p class="muted" style="margin:0;font-size:12px">当前大纲暂无章节列表。生成大纲（含章节标题）后，这里会按「${esc(bb.label)}」把各章归入对应阶段展示。</p>
+        <p class="muted" style="margin:0 0 4px;font-size:12px">当前大纲暂无章节列表，这里暂时留空。</p>
+        <p class="muted" style="margin:0;font-size:12px">长篇模式下章节由「全书章节数 + 全书规划师②章节标题」生成：请在下方「全书章节数」填入 1-200 的整数，进入规划师产出标题后，这里会按「${esc(bb.label)}」把各章归入对应阶段展示。</p>
       </div>
     </div>`;
   }
@@ -10495,8 +10516,48 @@ async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride,
     }
   }
   const sp = splitChapterOutput(txt);
-  return String(sp.content).trim();
+  let content = String(sp.content).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
+  // v1.0.160（C）：后验字数硬下限 + 自动续写补齐（最多追加 2 段，共 3 次机会；失败静默保留已得文本）
+  const _lb = chapterLenBounds();
+  if(_lb && countChineseChars(content) < _lb.floor){
+    const _t0 = countChineseChars(content);
+    const _res = await lengthenChapterToTarget(i, content, _lb.floor, onStream, styleOverride, signal);
+    if(String(_res||'').trim().length > content.length) content = String(_res).trim();
+    if(countChineseChars(content) < _lb.floor) console.warn('[正文] 自动续写补齐后仍未达下限：', countChineseChars(content), '/', _lb.floor, '（首轮', _t0, '）');
+  }
+  return content;
 }
+// v1.0.160（C）：按字数硬下限自动续写补齐单章正文；与首轮同场连贯续写，最多追加 MAX_PASS 段
+async function lengthenChapterToTarget(i, content, floor, onStream, styleOverride, signal){
+  let out = content, cur = countChineseChars(out);
+  const MAX_PASS = 2, _signal = signal || _abortCtl?.signal;
+  for(let pass = 1; pass <= MAX_PASS && cur < floor; pass++){
+    const rest = floor - cur;
+    const tail = (out||'').replace(/\s+$/,'').slice(-600);
+    const user = `【本章已有正文（尾部）】\n${tail}\n\n【续写/扩写要求】
+当前本章汉字数 ${cur.toLocaleString()}，尚未达到下限 ${floor.toLocaleString()} 字，还差约 ${rest.toLocaleString()} 字。
+· 必须从上文末尾无缝继续推进同一场戏：补充动作细节、人物对话、心理活动与环境描写，把场面写实写足。
+· 必须新增约 ${rest.toLocaleString()} 字，禁止重复任何已有内容，禁止重新开头，禁止总结前文。
+· 严格只输出新的续写内容本身，禁止输出「以下是续写」等前后缀，也禁止输出 <!-- LEN: --> 注释。`;
+    let add = '';
+    try{
+      const _res = await callDeepSeek(longChapterSys(styleOverride), user, {maxTokens: clampMaxTokens('continue'), taskKey:'chapter', onStream: (typeof onStream==='function') ? (d)=>{ add += d; try{ onStream(d); }catch(e){} } : undefined, temperature: dynamicChapterParams(i).temperature, topP: dynamicChapterParams(i).topP, signal: _signal});
+      add = String((_res && 'text' in _res) ? _res.text : (_res||add));
+    }catch(e){
+      if(e && e.name === 'AbortError') break;
+      add = add || '';
+    }
+    add = String(add).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
+    if(!add) break;
+    const lcp = longestCommonPrefix((tail||'').trim(), add);
+    if(lcp.length > 20) add = add.slice(lcp.length).trim();
+    if(!add) break;
+    out = out + '\n' + add;
+    cur = countChineseChars(out);
+  }
+  return out;
+}
+function countChineseChars(s){ return (String(s||'').match(/[\u4e00-\u9fa5]/g)||[]).length; }
 // 组装单章生成的 user 提示词。恒定前缀块（标题/梗概/全部章节标题/一致性词典）保持在前、全章不变，
 // 以最大化 DeepSeek 上下文缓存命中；可变信息（上一章全文/结构注入）尽量放后。
 // opt.regenerating=true 时（单章重生成）额外注入下章概要，保证前后连贯（建议5/决策5）。
