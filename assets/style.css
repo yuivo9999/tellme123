@@ -1639,6 +1639,15 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .bs-tb-warn{ color:#e5534b; font-weight:600; }
 .cp-time-toggle{ white-space:nowrap; }
 
+/* ===== v1.0.178「默认大纲」开关：跳过 6 选、直接单发默认大纲 ===== */
+.qt-brief{ flex:1; }
+.qt-outline-toggle{ display:inline-flex; align-items:center; gap:7px; cursor:pointer; font-size:12px; user-select:none; color:var(--sub,var(--muted,inherit)); }
+.qt-outline-toggle input{ position:absolute; opacity:0; width:0; height:0; }
+.qt-outline-toggle .qt-sw{ display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border-radius:50%; background:color-mix(in srgb,var(--accent) 12%,transparent); border:1px solid var(--line); color:var(--accent); font-size:13px; transition:all .18s ease; }
+.qt-outline-toggle input:checked + .qt-sw{ background:var(--accent); color:#fff; border-color:var(--accent); box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 28%,transparent); }
+.qt-outline-toggle .qt-tx{ color:var(--txt,currentColor); transition:color .15s; }
+.qt-outline-toggle:hover .qt-tx{ color:var(--accent); }
+
 .tl-group{ margin:0 0 10px; }
 .tl-branch{ font-weight:600; font-size:13px; margin-bottom:6px; }
 .tl-count{ font-weight:400; font-size:11px; opacity:.6; margin-left:4px; }

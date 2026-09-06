@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.177';   // v1.0.145 重生成弹窗：双按钮置顶一行（左=直接重生成/右=带建议），删除顶部描述；v1.0.144 structure 彻底清除
+const APP_VERSION = '1.0.181';   // v1.0.145 重生成弹窗：双按钮置顶一行（左=直接重生成/右=带建议），删除顶部描述；v1.0.144 structure 彻底清除
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -73,6 +73,7 @@ const state = {
   subRecallRatio: 0.4,  // v1.0.113 副线消失超全书比例阈值（超过则回归须 ≤20 字轻提前情）
   timeAnchor: true,       // v1.0.175 时间锚开关（默认开）：规划师为每拍给定「支线·时点」，正文据此承接章节/支线时间
   timeAnchorsAuto: true,  // v1.0.175 承接真相源（默认开）：正文落库后轻量模型回写本章末尾支线/时点，作下一章承接硬真相
+  quickOutline: false,      // v1.0.178「默认大纲」开关（默认关）：打开后点「生成大纲」跳过 6 个候选角度选择，直接生成 1 个默认大纲
   titleWriteBack: false, // v225/P5-C 章节标题回填已取消：标题只由「全书规划师」生成/定稿；字段保留仅为兼容旧存档读取（UI 开关已移除）
   langLayer: true,   // v1.0.129 语言分层自动调节（仅长篇生效，默认开）：书面语造氛围、口语推剧情；按题材自动定语言底色。关则不注入任何语言分层约束
   _narrIron: true,   // v1.0.133 叙事铁律总开关（默认开）：统一注入三大写作要求（硬铁律+软约束）到正文与规划师
@@ -498,6 +499,7 @@ function projectSnapshot(){
     _lastPolishIdeaText: state._lastPolishIdeaText || '',   // v230/1-C：纯文本优化稿存档（新 PRO 无 JSON brief 时构想→大纲的上下文通道）
     _outlineCandidates: state._outlineCandidates || null,   // v230/3.1：多大纲候选 {batchTs, items:[{id,label,outline}], chosenId}
     _outlineCandsFolded: !!state._outlineCandsFolded,   // v239/905-2：候选大纲区折叠状态（选择完成后可手动折叠，随项目持久化）
+    quickOutline: !!state.quickOutline,   // v1.0.178「默认大纲」开关状态随项目持久化
     _chapterPartial: state._chapterPartial || {},   // 4.8 旗舰版（板块一-3）：流式中断续写缓存（刷新不丢）
     scenes: state.scenes,
     storyboard: state.storyboard,
@@ -582,6 +584,7 @@ function applyProject(p){
   state._lastPolishIdeaText = (typeof p._lastPolishIdeaText === 'string') ? p._lastPolishIdeaText : '';   // v230/1-C 纯文本优化稿恢复
   state._outlineCandidates = (p._outlineCandidates && typeof p._outlineCandidates === 'object' && Array.isArray(p._outlineCandidates.items)) ? p._outlineCandidates : null;   // v230/3.1 多大纲候选恢复
   state._outlineCandsFolded = !!p._outlineCandsFolded;   // v239/905-2 候选大纲区折叠状态恢复
+  state.quickOutline = !!p.quickOutline;   // v1.0.178「默认大纲」开关状态恢复
   state._chapterPartial = (p._chapterPartial && typeof p._chapterPartial === 'object') ? p._chapterPartial : {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存恢复
   // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 状态已随「叙事》人设/张力/沙盘」清理整体移除（不再持久化）
   normalizeOutline(state.outline);
@@ -608,6 +611,7 @@ function clearState(){
   state._lastPolishIdeaText = '';   // v230/1-C 纯文本优化稿重置
   state._outlineCandidates = null;   // v230/3.1 多大纲候选重置
   state._outlineCandsFolded = false;   // v239/905-2 候选大纲区折叠状态重置
+  state.quickOutline = false;   // v1.0.178「默认大纲」开关重置为默认关闭
   state._chapterPartial = {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存重置
   state.aiNetwork = { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络重置
   // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 已随菜单清理整体移除（不再初始化）
@@ -1253,6 +1257,9 @@ L2 · 本章任务：本章标题、本章节拍表（硬性执行清单，setup
 L3 · 前后衔接：上一章全文（或摘要）、上一章结尾状态、下一章标题（仅作承接参照）。
 L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词典条目（人物/地点/专名）、未收束伏笔。
 
+【最高优先 · 鲜活性总纲（v1.0.181，优先级高于后续所有编号规则）】
+0. 你是在"讲故事"，不是在"交答卷"。下面所有编号硬规则（节拍承接 / 时间锚 / 视角 / 长度 / 输出）约束的是"什么时候不能出错"，是正确性的底线，绝不是"必须照做的写作套路"——不要为了"看起来每一条都做到了"而机械套用、凑模板。正文必须像一位有才华的作者所写：用具体、有画面感的动名词推进；句式长短交错、段落疏密有致；每段写的是本章真实的情绪与进展，而不是"达标工件"。反模板：禁止多个段落/节拍以同类词起头（如连续用时间词、场景词、动作词开段），禁止干巴巴的单句凑数，禁止把时间锚、节拍标签、视角规则等以任何形式原样写进正文。节拍是"剧情推进的参照"，不是"各写各的填空格"——允许按内容需要自然融合节拍、节拍长度不均、节奏快慢不一（紧张处一句顶一句，舒缓处从容铺陈）。当硬规则之间存在张力或某条规则会逼你写出生硬/模板化的句子时，优先保证文字的鲜活、具体与可读。
+
 【输出要求】
 1. 仅输出本章正文，不得包含标题、章节序号、元评论、分析、json、markdown 代码块。
 2. 正文直接以小说段落呈现，段落之间用空行分隔。
@@ -1264,6 +1271,7 @@ L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词�
 8. 正文长度严格以【篇幅体量】块为准，必须在第一次生成时即写足该块硬下限（v1.0.165：取消"不设上限"宽松口径，禁止写成未达下限的梗概式短场景）。
 9. 场景与节拍的自然衔接铁律：全章必须是一条连续流动的叙事线——每个节拍事件的结尾自然引出下一个节拍的开头；时间/地点/视点的切换必须给出过渡（时间词、空间移动、镜头焦点转移或因果钩子），禁止节拍间硬跳切、禁止把每个节拍写成孤立片段。节拍之外的衔接与过渡文字（非情节推进的铺垫/转场内容）同样是正文的组成部分，不是多余的填充。
 10. 时间锚铁律（若 L1 节拍表标注了时间）：每段节拍标注的【时间】（如 现实·第2天·清晨）是本章时间承接的硬基准——正文各段落在哪个时点、就写那一时段的场景（光线/天色/动静/人物状态），上一章末尾落到哪个时点，本章开头就从那个时点或其自然延续接入，禁止时间跳跃开场、禁止把本章剧情安排到上一章主线的更早时点（同主线时点禁止倒退）。但时间一律靠场景细节自然体现，严禁出现在段首报时（"现在是/此刻是/此时是/当下是"）、严禁把时间锚或"第X天"字样原样照抄进正文；仅当时间确实跳跃时才用"翌日""三日后的黄昏"等自然过渡语融入叙述。跨支线（回忆/梦境/穿越）须按节拍表的支线标签处理，并在文中显式体现进入与回归，不扰乱主线时间顺序。
+11. 视角与上帝视角铁律（v1.0.180）：默认采用"受限视角"叙述——把"摄影机"约 90% 的时间锁在主角身上，只以主角能看到/听到/摸到/感知到的信息推进叙述；想表现他人内心，一律改从主角的观察与推断出发，禁止直接钻进路人/配角/反派的内心"读心"。仅在下列"合法时机"才允许切到"上帝/他人视角"：(a) 章/节/空行分隔之后（有明确视角分界可用）；(b) 与主角核心目标同场产生重大利益冲突的关键时刻（全章最多一两处，用完立即回到主角）；(c) 只"展示而不解释"的客观信息（写他人"做了什么/什么神态/什么动作"，而不是"心里想什么"）；(d) 背景/世界观/前史等设定信息必须"寄生"在角色的即时感官里（经耳朵听到、鼻子闻到、手触及）传达，禁止作者跳出来大段广播；(e) 悬念揭晓的时刻（对前期已埋设的不确定性的兑现）。禁止项：同一场景内多个角色的内心随意跳切（禁止"跳切"）；禁止用上帝视角提前揭示主角与读者尚不该知道的答案（禁止剥夺"侦探权"）；禁止借上帝视角长篇灌输背景设定（禁止"死神"式信息倾泻）；禁止让配角甚至路人获得与主角同等的心理戏、使情感焦点涣散（禁止稀释"主角感"）。【例外】若本章叙事技法采用了「多视角群像」，可放宽为受控视角切换，但仍须每个视角边界清晰、各视角有辨识度、切换有明确分界（章节/空行），且整体仍以主角视角为主轴。
 
 【内部一致性自检（不写入输出）】
 - 时间线不矛盾
@@ -1272,6 +1280,7 @@ L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词�
 - 上一章结尾未完成的动作/对话已承接
 - 伏笔 foreshadowing 已按节拍表埋设
 - 叙事铁律未偏离（无禁用词直述内心情绪、无模板词）
+- 视角未在同场景内随意跳切、未替配角/反派/路人直接读心；背景信息已寄生于角色感官而非作者广播；主角情感焦点未被配角稀释（v1.0.180 上帝视角治理）
 
 【失败处理】
 若自检发现严重冲突无法调和，请只输出正文，并在正文末尾以单行隐藏注释形式输出：<!-- AI_NOTE: 冲突点 -->, 程序将捕获并转人工复核。`;
@@ -3286,11 +3295,12 @@ function buildBeatsSys(){
   const _timeEx = _timeOn ? `, "time":"现实·第2天·清晨"` : '';
   const _timeLaw = _timeOn ? `7. 每段 beat 必须填写 time（支线·时点），缺失视为失败；时点须贴合该拍剧情真实耗时与全书叙事节奏（严禁"第 N 章=第 N 天"的机械化等差排期，有的章跨数天、有的章数拍在同一刻）；体积精简：time 只写支线名与一个时点（≤12 字），例如 现实·第2天·清晨。\n` : ``;
   return `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于【章节标题】【已定稿的前文骨架】【全书导航/大纲节拍结构/设定词典】生成${cnt}段节拍表（当前选定「${cfg.label}」微拍体系——${selectRule}）${_timeOpen}。
+【反机械化总览（v1.0.181）】你不是在"填空格"：节拍表是创作蓝图、不是打卡清单。每段 beat 的 event 必须写清该拍真实发生的具体人物动作、直接冲突与即时目标，且不同章节、不同拍之间要有事件与节奏的差异起伏——禁止全书各章套同一模板句、闹出雷同事件或流水账。时间排布遵循下方时间锚规则、贴合情节真实节奏（紧迫戏密集紧凑、舒缓戏从容铺陈），严禁按章节序号机械逐天排成"第 N 章=第 N 天"的等差。
 【微拍铁律】
 1. 本章节点规模须克制：每章设一个明确的事件节点，强度与本章篇幅匹配，禁止把后续才应出现的转折或资源提前用尽。
 2. 聚焦章节小目标：每章只推进一件具体的小事/小进展即可，不要贪多；章事件须为长线主线输出至少一个信息/线索/关系推进。
 3. ${cfg.wc||''}（标称字数配比，正文撰写时按此把每拍写足）。
-4. 每拍 event 必须写得足够具体：写明该拍的人物动作、直接冲突、即时目标与情绪走向（40—80 字），正文才能按对应字数把这一拍展开到位；禁止用笼统的一句话概括事件。
+4. 每拍 event 必须写得足够具体：用一句话写清该拍的人物动作、直接冲突、即时目标与情绪走向（约40字上下，具体不空泛；禁止笼统概括、禁止模板句），正文才能按对应字数把这一拍展开到位。
 5. 每段节拍必须承接前一段续写态势，禁止各自孤立成片；本章各拍合一构成连续一场（或一条连续剧情线），情绪逐拍推进。
 【输入】会给出：本批次章节标题、核心定位/深层主题、大纲节拍的结构、设定词典、已定稿前文骨架。
 【节拍结构与顺序（严格按此 ${cnt} 段）】
@@ -3300,9 +3310,9 @@ ${specLines}
   "chapterPlans": [
     {
       "beats": [
-        {"type":"${defs[0].key}", "event":"本节拍关键事件：写清人物动作、直接冲突与即时目标（40—80字）", "emotional":"情绪，1—8字", "requiredEntities":["必须出现的人名/地名/专名"], "foreshadowing":["本章埋下的伏笔（有才填）"]${_timeEx}},
-        {"type":"${defs[Math.min(1,cnt-1)].key}", "event":"推进/转折事件：人物做了什么、冲突如何升级（40—80字）", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
-        ${cnt>3 ? `{"type":"${defs[cnt-2].key}", "event":"章末前的承转或余波事件：人物心理/动作/对话如何收束（40—80字）", "emotional":"情绪落点", "requiredEntities":[], "foreshadowing":[]},\n` : ''}        {"type":"${defs[cnt-1].key}", "event":"章末钩子/悬念：承接下一章的线索或关系突变（40—80字）", "emotional":"章末情绪落点", "requiredEntities":[], "foreshadowing":[]}
+        {"type":"${defs[0].key}", "event":"本节拍关键事件：写清人物动作、直接冲突与即时目标（一句话约40字，具体不空泛）", "emotional":"情绪，1—8字", "requiredEntities":["必须出现的人名/地名/专名"], "foreshadowing":["本章埋下的伏笔（有才填）"]${_timeEx}},
+        {"type":"${defs[Math.min(1,cnt-1)].key}", "event":"推进/转折事件：人物做了什么、冲突如何升级（一句话约40字）", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
+        ${cnt>3 ? `{"type":"${defs[cnt-2].key}", "event":"章末前的承转或余波事件：人物心理/动作/对话如何收束（一句话约40字）", "emotional":"情绪落点", "requiredEntities":[], "foreshadowing":[]},\n` : ''}        {"type":"${defs[cnt-1].key}", "event":"章末钩子/悬念：承接下一章的线索或关系突变（一句话约40字）", "emotional":"章末情绪落点", "requiredEntities":[], "foreshadowing":[]}
       ],
       "emotionalArc": "本章情绪弧：从X到Y，用一句话概括",
       "requiredEntities": ["本章必须使用的核心实体汇总"]
@@ -3314,7 +3324,7 @@ ${specLines}
 2. 每章 beats 必须恰好 ${cnt} 段，type 依序使用 ${beatTypeKeys().join(' / ')}，顺序不可变。
 3. 节拍事件必须从章节标题与「大纲节拍的结构」阶段推导，不得偏离当前阶段、不得自创剧情；每段节拍必须贴合其【功能说明】的叙事职责。
 4. requiredEntities 与 foreshadowing 只能使用设定词典中已有人名/地名/专名，禁止自造新名。
-5. 精简输出（提速）：每段 beat 的 event 只写一句话（≤40 字），不得展开描写；每段 requiredEntities 至多 2 个；emotional ≤6 字。
+5. 精简输出（提速）：event 紧扣「人物动作+直接冲突+即时目标」，一句话说清（约 40 字上下），严禁精简成空泛模板句或事件雷同；每段 requiredEntities 至多 2 个；emotional ≤6 字。
 6. 只输出上述 JSON，不要 markdown 代码块、不要解释。
 ${_timeLaw}`;}
 
@@ -3834,16 +3844,23 @@ const IDEA_POLISH_SYS_LEGACY =  `你是一位深谙网文与影视叙事的构�
 
 // 4.7 Pro（3.1）优化构想 AI 新系统提示词：资深长篇策划编辑 + 故事诊断师，输出结构化故事简报（含缺陷清单）
 const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想编辑。
-【核心任务】把用户输入的粗糙故事构想，优化成一段结构化的高质量构想——保留用户全部原始意图，补全可推导的具体细节，让后续大纲 AI 有明确的创作依据。
+【核心任务】把用户输入的粗糙故事构想，优化成一份"字段化简报"——按下面固定的 7 个字段逐项列出，保留用户全部原始意图、补全可推导的具体细节，让后续大纲 AI 能逐字段直接引用、零翻译损耗。
 【硬性约束】
-0. 输入极短（少于 15 字，仅题材/方向词，如"穿越文""重生复仇""校园"）时：切换到「骨架展开模式」——按该题材的经典类型惯例，展开成一份通用骨架构想（该题材常见的主角设定、典型主线阶段、常见风格落点），必须在文首标注"（基于题材惯例的通用展开，非用户原话）"，并在末尾附一行"💡 建议补充：主角身份？核心设定/金手指？结构阶段？风格基调？——补充后再优化效果更好"；不得把骨架设定表述成用户提供的，也不得声称这是唯一写法。
+0. 输入极短（少于 15 字，仅题材/方向词，如"穿越文""重生复仇""校园"）时：切换到「骨架展开模式」——按该题材经典类型惯例，仍按下述 7 字段框架生成一份通用化报，必须在该报最上方标注"（基于题材惯例的通用展开，非用户原话）"，末尾附一行"💡 建议补充：主角身份？核心设定/金手指？结构阶段？风格基调？——补充后再优化效果更好"；不得把骨架表述成用户提供的、不得声称唯一写法。
 1. 绝不删减、篡改用户明确表达的内容（题材/元素/风格都须保留），只能在原意上细化；
 2. 不替用户新增故事设定（不凭空加角色/势力/冲突/金手指），只补全"可推导的通用细节"；
-3. 输出结构 = 通用核心要素（题材 / 主角 / 结构（含阶段比例） / 风格（含落地方式） / 目标（读者体验））+ 自适应分类要素（分两层）：a. 预设类别：出现"系统/金手指/异能/穿越"→补「金手指（机制与限制）」；"爱情/CP"→补「感情线（关系与阻碍）」；"悬疑/推理/谜案"→补「谜题（核心悬念与线索布局）」；"权谋/宫斗/战争"→补「势力格局（阵营与博弈）」；"群像/家族/多主角"→补「人物关系网」；b. 开放补充：若构想含预设之外的核心题材词（如无限流/种田/娱乐圈/末世/星际/恐怖等），自行命名一个贴合该题材的分类要素（如「世界规则（副本形式/生存规则）」「资源系统（经济来源/发展目标）」「舞台体系（平台/流量/作品）」「生存法则」「科技体系」「恐惧来源」等）并给出关键内容，补充类别必须与该题材词直接对应；c. 用户构想中没有的类别一律不得输出（如无金手指的故事绝不写"金手指"要素）；自适应分类合计不超过 3 项，避免输出膨胀；
-4. 若用户构想含风格基调（轻松/诙谐/深沉/热血等），必须明确写出"风格"要素并给出 2-3 个落地方式；
-5. 篇幅 150-300 字，用简洁条目式，不要解释、不要 markdown 代码块、不要输出 JSON。
-【自由发挥区】核心要素的措辞、自适应分类的选择与颗粒度、补充方向由你把握，让优化稿读起来具体、可执行、贴合用户原意。
-文末用 1~3 行给用户下一步建议：可以补什么、可以砍什么、哪类读者会最喜欢——像编辑给作者的建议，不像检查清单。`;
+3. 严格按下述【输出格式】的 7 个字段分点输出：固定标签、固定顺序，每字段占一行"标签：内容"，不要新增其它大标题；每字段须给出具体、可执行的实质内容，禁止留空、禁止笼统一句话；"核心词"字段必须收列用户在构想里用引号标出的专名与固定短语（无则写"无"）；
+4. 若用户构想含风格基调（轻松/诙谐/深沉/热血等），"风格"字段必须写清基调并给出 2-3 个落地方式；
+5. 全报告 180-320 字：除下述 7 个字段外，不要解释、不要引子、不要 markdown 代码块、不要输出 JSON；末尾可附一行以"💡"开头的编辑建议（可选，不计入字段）。
+【输出格式】
+题材（时代/类型基调）：…
+主角（身份/目标/核心缺陷/钩点）：…
+核心冲突（全书的引擎：谁与什么冲突、为何难解）：…
+结构（全书阶段与大致比例，如 前20%铺垫→中60%升级→后20%收束）：…
+风格（基调 + 2-3 个落地方式）：…
+目标（想带给读者的体验）：…
+核心词（必须原样保留入书名/简介/锚点的专名与固定短语，用引号括起）：…
+【自由发挥区】各字段措辞与补充方向由你把握：若构想含预设外的核心题材（金手指/感情线/谜题/势力格局/无限流/种田等），可在末尾补一个"情节/设定补充：…"字段（≤2 项）承载同类信息，保持 7 字段在前、补充在后，让化报读起来具体、可执行、贴合原意。`;
 
 // 4.7 Pro（第7章指令2）：新常量用旧名——所有既有引用点（polishIdea 等）自动升级为 PRO 提示词
 const IDEA_POLISH_SYS = IDEA_POLISH_SYS_PRO;
@@ -5627,6 +5644,13 @@ function viewStory(){
         <div id="polishCards" class="pol-cards"></div>
       </div>
       ${ polishKeepBar() }
+      <div class="quick-brief" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:12px 0 2px">
+        <label class="qt-outline-toggle" id="quickOutlineToggle" title="默认关闭。打开后点「生成大纲」将跳过 6 个候选角度选择，直接生成并落地 1 个默认大纲；关闭则保持一次给 6 个候选供比选。">
+          <input type="checkbox" id="chkQuickOutline" ${state.quickOutline?'checked':''} />
+          <span class="qt-sw">⚡</span>
+          <span class="qt-tx">只生成一个默认大纲（跳过 6 选）</span>
+        </label>
+      </div>
       <div class="btn-row">
         <button id="btnGenOutline" class="btn primary block">${isLong()?'📚 生成长篇大纲':'✨ 生成故事大纲'}</button>
       </div>
@@ -9176,7 +9200,11 @@ function bindView(){
   const idea = $('#ideaInput'); if(idea){
     idea.oninput = ()=> state.idea = idea.value;
     bindPolishIdea();   // v10.13 优化构想按钮 + 优化区绑定
-    $('#btnGenOutline').onclick = ()=> genOutlineMulti($('#btnGenOutline'));   // v232 修复：onclick 直挂会把 PointerEvent 当 btn 传入，busy() 内 classList 访问炸断且在 try 外无 catch——表现为点击无反应
+    // v1.0.178「默认大纲」开关：打开→单发 1 个默认大纲（跳过 6 选，走 genOutline），关闭→6 候选比选（genOutlineMulti）
+    $('#btnGenOutline').onclick = ()=> (state.quickOutline ? genOutline() : genOutlineMulti($('#btnGenOutline')));
+    const qtTg = $('#chkQuickOutline'); if(qtTg){
+      qtTg.onchange = ()=>{ state.quickOutline = qtTg.checked; persist(); render(); toast(state.quickOutline?'已开启「默认大纲」：生成时将跳过 6 个候选选择，直接生成 1 个默认大纲':'已关闭「默认大纲」：生成时将一次给 6 个候选供比选'); };
+    }
   }
   // v11 简介字数范围（生成大纲前、仅长篇）：双数字输入，min>max 自动对调、max 上限 5000
   const llMin = $('#llMin'), llMax = $('#llMax');
@@ -9888,6 +9916,8 @@ async function genOutline(){
     const _softWarn = (o && o._softWarn) || '';
     fillOutlineSoftFields(o);   // v1.0.161：anchor/thesis 软缺不再否决，落地时自动占位补齐
     applyOutlineObject(o, { replacedLabel: '被替换的上一版' });
+    state._outlineCandidates = null;   // v1.0.178「默认大纲」单发路径：落地后清空旧候选卡，避免遗留可比的 6 选
+    state._outlineCandsFolded = false;
     markAIDone('outline');   // 4.8（6.4）：成功后标记完成
     persist(); render();
     toast(_softWarn ? `大纲已生成（${_softWarn}，已自动补齐占位）` : '大纲已生成');
@@ -9908,12 +9938,23 @@ async function genOutline(){
 // v230/1-C：新 PRO 输出纯文本、无 JSON brief——无 brief 时回退用 _lastPolishIdeaText（最近一次纯文本优化稿，截 800 字）注入，
 // 保住构想→大纲的上下文传递；大纲忠实度闸比对源仍是 state.idea 用户原文，不受影响。
 function formatNavBeaconForOutline(){
+  // v1.0.178：不论简报还是纯文本，都从用户原文提炼加引号的核心词作为【用户核心设定词】显式注入，
+  // 与大纲 Sys 的忠实度硬约束（保留核心词）直接对接，让优化稿更"对口"大纲 AI。
+  const core = outlineCoreTerms();
+  const coreStr = core.length ? `\n【用户核心设定词（必须原样保留入书名/简介/锚点）】${core.join('、')}` : '';
   // 若 4.7 Pro 优化构想生成了 brief，可将其注入大纲 AI
   const b = state._lastPolishBrief;
-  if(b) return `题材：${b.genre || ''}\n主角：${b.protagonist || ''}\n核心冲突：${b.coreConflict || ''}\n风格：${b.style || ''}`;
+  if(b && (b.genre || b.protagonist || b.coreConflict || b.style)) return `题材：${b.genre || ''}\n主角：${b.protagonist || ''}\n核心冲突：${b.coreConflict || ''}\n风格：${b.style || ''}` + coreStr;
   const t = String(state._lastPolishIdeaText||'').trim();
-  if(t) return t.slice(0, 800) + (t.length > 800 ? '\n（已截断）' : '');
+  if(t) return t.slice(0, 800) + (t.length > 800 ? '\n（已截断）' : '') + coreStr;
   return '';
+}
+// v1.0.178：从用户构想原文提取带引号的专名/固定短语（忠实度关键词），供大纲 AI 原样保留。
+function outlineCoreTerms(){
+  const m = String(state.idea || '').match(/[「“『【][^」”』】]{1,14}?[」”』】]/g) || [];
+  const out = [];
+  m.forEach(s => { const w = s.replace(/[「“『【」”』】]/g,'').trim(); if(w && !out.includes(w)) out.push(w); });
+  return out.slice(0, 12);
 }
 
 // 4.5：大纲输出 schema 校验（v1.0.144 起 title/logline/anchor/thesis 完整性；structure 契约已彻底移除）
