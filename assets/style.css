@@ -876,13 +876,27 @@ body.reader-lock{overflow:hidden}
 
 /* 改动透明化：词典导出/导入工具条 + 影响范围选择卡（建议本版） */
 .gs-card-title{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
-.gs-tools{display:flex;flex-wrap:wrap;gap:6px;align-items:center;width:100%;margin-top:6px}
-.gs-tools .gs-tool{margin:0;padding:4px 10px;font-size:12px;font-weight:500;border-radius:8px}
-.gs-tools .gs-tool:active{transform:scale(.97)}
-.gs-tools .gs-tool-on{color:var(--accent);border-color:var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent)}
-/* v8c 词典自动补全开关 */
-.gs-autofill{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--sub);padding:4px 8px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);cursor:pointer}
-.gs-autofill input{width:auto;accent-color:var(--accent2)}
+.gs-tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%;margin-top:8px}
+/* v1.0.163 词典工具栏：统一为紧凑「chip」型按钮，七主题通用
+   （显式用主题变量覆盖 .btn/.ghost 默认外观，避免各主题下白底/绿底按钮的大小与配色不齐） */
+.gs-tools .gs-tool,
+.gs-tools .gs-autofill{
+  margin:0;padding:3px 12px;min-height:28px;box-sizing:border-box;line-height:1.2;
+  display:inline-flex;align-items:center;justify-content:center;gap:5px;
+  font-size:12px;font-weight:500;color:var(--text);
+  background:var(--panel2);border:1px solid var(--line);border-radius:20px;
+  cursor:pointer;user-select:none;white-space:nowrap;
+  transition:border-color .15s,color .15s,background .15s,transform .1s;
+}
+.gs-tools .gs-tool:hover,.gs-tools .gs-autofill:hover{color:var(--accent);border-color:var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--panel2))}
+.gs-tools .gs-tool:active,.gs-tools .gs-autofill:active{transform:scale(.96)}
+.gs-tools .gs-tool-on{color:var(--accent);border-color:var(--accent);background:color-mix(in srgb, var(--accent) 14%, var(--panel2))}
+.gs-tools .gs-tool:disabled,.gs-tools .gs-tool[disabled]{opacity:.45;cursor:not-allowed}
+.gs-tools .gs-check-badge{min-width:15px;height:15px;line-height:15px;padding:0 4px;margin-left:1px;font-size:9px}
+/* 词典自动补全开关：对齐 chip 外观，勾选态用主题强调色 */
+.gs-autofill{border-radius:20px;padding:3px 12px}
+.gs-autofill input{width:auto;margin:0;accent-color:var(--accent2)}
+.gs-tools .gs-autofill:has(input:checked){color:var(--accent);border-color:var(--accent);background:color-mix(in srgb, var(--accent) 14%, var(--panel2))}
 /* v8c 清理弹窗：条目来源标记 */
 .gs-auto-tag{font-style:normal;font-size:11px;color:var(--accent2);margin-left:6px}
 .gs-orig-tag{font-style:normal;font-size:11px;color:var(--muted);margin-left:6px}

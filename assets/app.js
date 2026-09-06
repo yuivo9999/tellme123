@@ -93,8 +93,8 @@ const state = {
 let currentStep = 1;
 
 /* ---------- 4.6 Plus：状态字段默认值（第 1/4 章） ---------- */
-state.fcCollapsed = state.fcCollapsed || false;
-state.rsCollapsed = state.rsCollapsed || false;
+state.fcCollapsed = (typeof state.fcCollapsed === 'boolean') ? state.fcCollapsed : true;   // v1.0.163「事实与一致性看板」默认折叠
+state.rsCollapsed = (typeof state.rsCollapsed === 'boolean') ? state.rsCollapsed : true;   // v1.0.163「滚动摘要」默认折叠
 state._fixQueue = state._fixQueue || [];
 state._chapterPartial = state._chapterPartial || {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存
 // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 已随「叙事》人设/张力/沙盘」清理的整体移除
@@ -569,7 +569,7 @@ function clearState(){
   state.outlineHistory = []; state.expSel = [];
   state.hist = { characters:[], scenes:[], cover:[], storyboard:[] };
   state.chapterStyle = { tags: [], intensity: 2, collapsed: false, elemOpen: false };
-  state.fcCollapsed = false; state.rsCollapsed = false;   // 4.6 Plus 折叠态重置
+  state.fcCollapsed = true; state.rsCollapsed = true;   // v1.0.163 折叠态重置（默认收合）
   state._fixQueue = [];   // 4.6 Plus 修复队列重置
   state._lastPolishBrief = null;   // 4.7 Pro 优化构想简报重置
   state._lastPolishIdeaText = '';   // v230/1-C 纯文本优化稿重置
@@ -865,6 +865,7 @@ function openAiLogPanel(){
 }
 function closeAiLogPanel(){ const p=$('#ailogPanel'); if(p) p.remove(); }
 
+function _f2(x){ const n = Number(x); if(!isFinite(n)) return x; return Math.round(n * 100) / 100; }   // v1.0.162 采样参数收敛到 2 位小数
 async function callDeepSeek(system, user, {temperature=null, topP=null, signal=null, maxTokens=null, onStream=null, retry=2, taskKey=null}={}){
   const _t0 = Date.now();
   // P2-1 记录基础信息（task 用 system 前 24 字近似任务名；具体字段在成功/失败收尾时补全）
@@ -891,8 +892,9 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
       const body = {
         model: s.model,
         messages: [{role:'system', content: system}, {role:'user', content: user}],
-        temperature: (temperature==null ? s.temperature : temperature),
-        top_p: (topP==null ? 0.95 : topP),   // 4.8 旗舰版（板块一-5）：默认开放采样，高潮段可收紧
+        // v1.0.162 兜底：temperature/top_p 统一收敛到 2 位小数，杜绝浮点尾差（如 0.95-0.05=0.9000000001）被模型 API 拒绝
+        temperature: _f2(temperature==null ? s.temperature : temperature),
+        top_p: _f2(topP==null ? 0.95 : topP),   // 4.8 旗舰版（板块一-5）：默认开放采样，高潮段可收紧
         stream: streaming
         // v1.0.122 锁防截断：user 一律整段原样入体（内层供构想/配方等全文发送），绝不在此或上游做长度切片；
         // 实际发送的完整长度可在【请求日志 User·前500字/共N字】观测，N 即全量字符数（前500字仅为展示预览，非发送截断）。
@@ -2767,7 +2769,7 @@ function dynamicChapterParams(idx){
   const t = base + (p.temperature - 0.75);
   return {
     temperature: Math.max(0.1, Math.min(1.2, t)),
-    topP: climaxDense ? Math.max(0.5, p.topP - 0.05) : p.topP,
+    topP: climaxDense ? Math.max(0.5, Math.round((p.topP - 0.05) * 100) / 100) : p.topP,   // v1.0.162 修复浮点尾差（0.95-0.05=0.9000000001 超 2 位小数被 API 拒）
     phase
   };
 }
@@ -3128,36 +3130,36 @@ function bookBeatHtml(){
  * 微拍类型：微五拍（标准网文）/ 微三拍（极爽新媒体文）/ 微七拍（慢热治愈）/ 双拍结构（悬疑惊悚）。
  * 每拍带标称字数配比，用于 buildBeatsSys 注入 prompt 与 UI 展示；节拍表仍以每章一段落为最小输出单位。 */
 const BEAT_OPTIONS = [
-  { id:5,  label:'微五拍', emoji:'⚖️', desc:'标准网文节奏：铺垫→推进→转折→燃点→余波+悬念', wc:'500/800/500/700/500（共约3000字/章）', types:[
-      { key:'setup',  label:'开篇铺垫', note:'三句话立境：在哪、和谁、要干嘛；拒绝信息倾倒', wc:'~500字' },
-      { key:'rise',   label:'冲突推进', note:'制造一个具体可感的小麻烦，即时注入张力；可依赖主线或长线资源', wc:'~800字' },
-      { key:'turn',   label:'意外转折', note:'先立预期再打破，暗示世界复杂性（如嘲讽者有靠山=社会层级）', wc:'~500字' },
-      { key:'climax', label:'对抗燃点', note:'小爽点：情感报复/资源获取/信息推进三类回报之一', wc:'~700字' },
-      { key:'hook',   label:'余波+悬念', note:'收尾并用最后一句埋钩子（新威胁/新目标/关系突变），驱动翻页', wc:'~500字' }
+  { id:5,  label:'微五拍', emoji:'⚖️', desc:'标准叙事节奏：铺垫→推进→转折→汇合→收束+悬念', wc:'500/800/500/700/500（共约3000字/章）', types:[
+      { key:'setup',  label:'开篇铺垫', note:'交代本章的时间、地点与在场人物，说明当前要做的事（~500字）', wc:'~500字' },
+      { key:'rise',   label:'冲突推进', note:'引入一个具体的阻力或新信息，推动本章目标向前进展（~800字）', wc:'~800字' },
+      { key:'turn',   label:'意外转折', note:'先建立预期，再呈现计划之外的变化，使发展超出读者预判（~500字）', wc:'~500字' },
+      { key:'climax', label:'进展燃点', note:'收拢本章积累，达成一次明确的成果或回报（~700字）', wc:'~700字' },
+      { key:'hook',   label:'余波+悬念', note:'收束本章，并以一处伏笔或新信息为下一章留下接口（~500字）', wc:'~500字' }
   ]},
-  { id:3,  label:'微三拍', emoji:'🚀', desc:'极爽新媒体文：压→打脸→踩敌+悬念，砍掉心理与环境铺垫，一章一爽点', wc:'300/1500/1200（共约3000字/章）', types:[
-      { key:'setup',  label:'羞辱铺垫', note:'主角被压/被踩，快速立情绪标靶（约300字，干脆利落）', wc:'~300字' },
-      { key:'climax', label:'打脸燃点', note:'强势反击打脸，爽点最大释放，直达读者预期（约1500字）', wc:'~1500字' },
-      { key:'hook',   label:'踩敌+悬念', note:'顺势踩敌抬高收获，并在主角亮底牌前收章留最大悬念', wc:'~1200字' }
+  { id:3,  label:'微三拍', emoji:'🚀', desc:'快速推进型新媒体文：铺垫→进展→收束+悬念，一章一个明确节点', wc:'300/1500/1200（共约3000字/章）', types:[
+      { key:'setup',  label:'开局铺垫', note:'交代主角当前处境与本章要处理的问题（~300字）', wc:'~300字' },
+      { key:'climax', label:'核心进展', note:'给出本章的关键进展或成果，回应开头建立的期待（~1500字）', wc:'~1500字' },
+      { key:'hook',   label:'收束+悬念', note:'收束本章成果，在衔接处留下新的信息点以引出下一章（~1200字）', wc:'~1200字' }
   ]},
-  { id:7,  label:'微七拍', emoji:'🍵', desc:'慢热治愈/日常/种田：细腻推进、以情动人，燃点小至一把伞', wc:'七段细分（共约3000字/章）', types:[
-      { key:'daily',     label:'日常铺垫', note:'展开温和的生活流，建立宁静氛围' },
-      { key:'interact',  label:'小互动', note:'一次细微的日常往来，拉近关系' },
-      { key:'misunder',  label:'小误会', note:'轻微的理解偏差，制造波澜但不激烈' },
-      { key:'heart',     label:'推心置腹', note:'一次走心交流，情感向前递进' },
-      { key:'warm',      label:'温情燃点', note:'小而暖的情绪峰值（如男主递一把伞）', wc:'不可过度' },
-      { key:'glow',      label:'温润余波', note:'余韵沉浸，情绪慢慢落回' },
-      { key:'promise',   label:'明日之约', note:'以一句约定/期许收章，勾住细水长流的期待' }
+  { id:7,  label:'微七拍', emoji:'🍵', desc:'慢热细腻型：逐步推进、以情感联结动人，结尾留一份温暖期许', wc:'七段细分（共约3000字/章）', types:[
+      { key:'daily',     label:'日常铺垫', note:'呈现一段平和的日常场景，奠定本章氛围' },
+      { key:'interact',  label:'小互动', note:'一次细微的往来，令人物之间的关系更近' },
+      { key:'misunder',  label:'小误会', note:'一次轻微的理解偏差，带来一点波澜' },
+      { key:'heart',     label:'推心置腹', note:'一次深入的交流，令人物情感进一步接近' },
+      { key:'warm',      label:'温情高点', note:'小而温暖的时刻（如一次贴心的举动）', wc:'注意分寸' },
+      { key:'glow',      label:'温润余波', note:'情绪缓缓回落，余味悠长' },
+      { key:'promise',   label:'明日之约', note:'以一句约定或期许收章，为后续留下期待' }
   ]},
-  { id:2,  label:'双拍结构', emoji:'🔍', desc:'悬疑/惊悚/推理：极长压制铺垫+极短瞬间反转燃点', wc:'2500/500（共约3000字/章）', types:[
-      { key:'hold',   label:'压制铺垫', note:'前 2500 字持续压抑+埋下毛骨悚然的细节线索，延迟读者满足，制造屏息感', wc:'~2500字' },
-      { key:'burst',  label:'反转燃点', note:'最后约 500 字瞬间引爆：凶手现身/规则崩塌/真相大白，落点炸裂', wc:'~500字' }
+  { id:2,  label:'双拍结构', emoji:'🔍', desc:'悬疑/惊悚/推理：长铺垫+短揭示，前段积累后段收束', wc:'2500/500（共约3000字/章）', types:[
+      { key:'hold',   label:'长段铺垫', note:'用较长篇幅铺设线索、逐步积累信息，营造渐进的氛围（~2500字）', wc:'~2500字' },
+      { key:'burst',  label:'反转收束', note:'在较短篇幅给出关键揭示与剧情反转，收束前面积累的线索（~500字）', wc:'~500字' }
   ]}
 ];
 /* 微拍选型铁律（用户主导、随拍数注入规划师 prompt）：
- * · 读者每 ~500 字就要一个（新媒体）→ 选微三拍
- * · 读者每 ~1500 字要一次小情绪起伏（传统男女频）→ 选微五拍（默认）
- * · 读者要前 2500 字屏息、最后 100 字头皮发麻的爆裂（悬疑）→ 选双拍结构 */
+ * · 读者偏好短促密集的节奏 → 选微三拍
+ * · 读者偏好约 1500 字一次小幅情绪起伏 → 选微五拍（默认）
+ * · 读者偏好前段积累、后段集中揭示 → 选双拍结构 */
 const BEAT_DEFAULT_ID = 5;
 // 全部拍数节拍的「中文名」全局映射（渲染旧数据 / 切拍后旧 type 都能正确显示）
 const BEAT_LABEL_ALL = (()=>{ const m={}; BEAT_OPTIONS.forEach(c=>c.types.forEach(t=>{ m[t.key]=t.label; })); return m; })();
@@ -3192,11 +3194,11 @@ function isClimaxType(key){ return /燃点/.test(BEAT_LABEL_ALL[key] || key); }
 function buildBeatsSys(){
   const cfg = currentBeatCfg(), defs = cfg.types, cnt = defs.length;
   const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}${t.wc?`；该拍字数：${t.wc}`:''}`).join('\n');
-  const selectRule = cfg.id===3 ? '读者每约 500 字就要一个爽点（新媒体/极爽文）' : (cfg.id===5 ? '读者每约 1500 字要一次小情绪起伏（传统男女频标准）' : (cfg.id===2 ? '读者要前 2500 字屏息、最后约 500 字头皮发麻的瞬间爆裂（悬疑惊悚）' : '读者追求细腻情感递进、燃点小而暖（慢热治愈）'));
+  const selectRule = cfg.id===3 ? '读者偏好短促密集的节奏（新媒体型）' : (cfg.id===5 ? '读者偏好约 1500 字一次小幅情绪起伏（传统男女频标准）' : (cfg.id===2 ? '读者偏好前段积累、后段集中揭示的结构（悬疑惊悚）' : '读者偏好细腻温和的情感递进（慢热细腻型）'));
   return `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于【章节标题】【已定稿的前文骨架】【全书导航/大纲节拍结构/设定词典】生成${cnt}段节拍表（当前选定「${cfg.label}」微拍体系——${selectRule}）。
 【微拍铁律】
-1. 燃点规模须克制：每章燃点为一枚「小爽点/小高潮」，强度约全书终极燃点的千分之一，禁止提前打光主角底牌。
-2. 聚焦章节小目标：每章只解决一个具体小麻烦/小进展即可，不要贪多；章事件须为长线主线输出至少一个信息/线索/关系推进。
+1. 本章节点规模须克制：每章设一个明确的事件节点，强度与本章篇幅匹配，禁止把后续才应出现的转折或资源提前用尽。
+2. 聚焦章节小目标：每章只推进一件具体的小事/小进展即可，不要贪多；章事件须为长线主线输出至少一个信息/线索/关系推进。
 3. ${cfg.wc||''}（标称字数配比，正文撰写时按此把每拍写足）。
 4. 每拍 event 必须写得足够具体：写明该拍的人物动作、直接冲突、即时目标与情绪走向（40—80 字），正文才能按对应字数把这一拍展开到位；禁止用笼统的一句话概括事件。
 5. 每段节拍必须承接前一段续写态势，禁止各自孤立成片；本章各拍合一构成连续一场（或一条连续剧情线），情绪逐拍推进。
@@ -7247,8 +7249,8 @@ function glossaryCardHtml(){
     <button type="button" class="btn ghost gs-tool" data-gs-new ${newCount?'':'hidden'} title="查看最近自动入典的新实体（来源章节 + 实际入库时间）">🆕 新增${newCount?`<b class="gs-check-badge">${newCount}</b>`:''}</button>
     <button type="button" class="btn ghost gs-tool" data-gs-extract ${hasBody?'':'hidden'} title="从已生成正文提取词典未收录的新人物/地名/专名并入库">📥 提取新增</button>
     <button type="button" class="btn ghost gs-tool" data-gs-clean ${hasBody?'':'hidden'} title="清理在全部已生成正文中均未出现的条目（如重生成覆盖后失效的旧人物）">🧹 清理未使用</button>
-    <button type="button" class="btn ghost gs-tool" data-gs-export>导出 JSON</button>
-    <button type="button" class="btn ghost gs-tool" data-gs-import>导入 JSON</button>
+    <button type="button" class="btn ghost gs-tool" data-gs-export>📤 导出 JSON</button>
+    <button type="button" class="btn ghost gs-tool" data-gs-import>📥 导入 JSON</button>
     <label class="gs-autofill" title="批量生成章节后自动提取新实体入词典"><input type="checkbox" data-gs-autofill ${state.glossAutoFill?'checked':''} /> 自动补全</label>
     <label class="gs-autofill" title="每章生成后自动吸收副线进度；只有章节正文 AI 会新增/推进副线"><input type="checkbox" data-gs-subfill ${state.subAutoFill?'checked':''} /> 副线追踪</label>
     <button type="button" class="btn ghost gs-tool" data-gs-subboard ${(g.subplots&&g.subplots.length)?'':'hidden'} title="列出未收束且消失过久的副线，提示是否安排回归">🧵 副线看板</button>
@@ -9421,14 +9423,15 @@ async function genOutlineMulti(btn){
         }
       }
       if(!cand){ toast(`${tag}（${ang.tag}）重试后仍未通过校验，已跳过：${(lastErr && lastErr.message) || '未知错误'}`); }
-      if(cand) items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand });
+      if(cand) items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand, ok: gradeOutlineCandidate(cand).ok, reason: gradeOutlineCandidate(cand).reason });
     }
     if(!items.length) throw new Error('全部候选均未通过校验');
     state._outlineCandidates = { batchTs: Date.now(), items, chosenId: null };
     markAIDone('outline');   // v234 修复：v230 多候选路径漏标 completed——规划师/标题/正文等下游全部被"请先完成上游步骤：生成大纲"误拦（旧单发版 9422 有标，重写时丢失）
     persist(); render();
-    if(st){ st.className='status'; st.textContent = `已生成 ${items.length} 个候选大纲，请在候选卡中比选采用`; }
-    toast(`已生成 ${items.length} 个候选大纲，请比选采用`);
+    const _badN = items.filter(it=>!it.ok).length;
+    if(st){ st.className='status'; st.textContent = _badN ? `已生成 ${items.length} 个候选（其中 ${_badN} 个未通过结构校验，仍可选用并会自动补齐），请在候选卡中比选采用` : `已生成 ${items.length} 个候选大纲，请在候选卡中比选采用`; }
+    toast(_badN ? `已生成 ${items.length} 个候选（${_badN} 个未过校验可选）` : `已生成 ${items.length} 个候选大纲，请比选采用`);
   }catch(e){
     if(e.name==='AbortError'){ if(st){ st.className='status'; st.textContent='已停止生成'; } else { toast('已停止生成'); } }
     else {
@@ -9457,10 +9460,19 @@ function outlineCandidatesHtml(){
   const cards = cands.items.map(it=>{
     const od = (it && it.outline) || {};
     const adopted = cands.chosenId === it.id;
+    let adoptHtml;
+    if(adopted){ adoptHtml = '<b style="color:var(--ok, #2e9e5b);white-space:nowrap">✅ 当前采用</b>'; }
+    else {
+      let warnSpan = '';
+      if(!it.ok){
+        warnSpan = '<span style="color:#b8860b;font-size:11px;white-space:nowrap" title="未通过结构校验：'+esc(it.reason||'')+'。采用时会自动补齐缺失字段，仍可正常使用。">⚠️ 未过校验'+(it.reason?('（'+esc(it.reason)+'）'):'')+'</span>';
+      }
+      adoptHtml = warnSpan + '<button type="button" class="btn small '+(it.ok?'primary':'ghost')+'" data-cand-adopt="'+esc(it.id)+'" style="white-space:nowrap">'+(it.ok?'▶ 选用此版':'⚠️ 仍要选用')+'</button>';
+    }
     return `<div class="card" style="margin-top:10px">
       <div class="card-head-row">
         <b style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(od.title||'未命名')} <span class="muted">［${esc(it.label||'候选')}］</span></b>
-        ${adopted?'<b style="color:var(--ok, #2e9e5b);white-space:nowrap">✅ 当前采用</b>':`<button type="button" class="btn small primary" data-cand-adopt="${esc(it.id)}" style="white-space:nowrap">▶ 选用此版</button>`}
+        ${adoptHtml}
       </div>
       <p class="sub" style="margin:6px 0 0">${esc(String(od.logline||'').slice(0,120))}${String(od.logline||'').length>120?'…':''}</p>
       <div class="btn-row" style="margin-top:8px">
@@ -9492,7 +9504,9 @@ function adoptOutlineCandidate(id){
     }
     if(!window.confirm(msg)) return;
   }
-  applyOutlineObject(JSON.parse(JSON.stringify(it.outline)), { replacedLabel: '被替换的上一版' });
+  // v1.0.161：采用"未通过校验"候选时，先按软字段自动补齐，避免缺字段进下游（书名/简介缺失的硬伤候选已被生成层跳过，不会出现在这里）
+  const _cl = it.ok ? JSON.parse(JSON.stringify(it.outline)) : fillOutlineSoftFields(JSON.parse(JSON.stringify(it.outline)));
+  applyOutlineObject(_cl, { replacedLabel: '被替换的上一版' });
   // 未选用的其他候选逐个入历史（label 标注；上一批的当前采用者即当前大纲，已在上面入历史，不重复）
   cands.items.forEach(x=>{
     if(!x || x.id===id || x.id===cands.chosenId) return;
@@ -9501,7 +9515,7 @@ function adoptOutlineCandidate(id){
   cands.chosenId = id;
   markAIDone('outline');   // v234 修复：多候选采用路径补标 completed（幂等；未采用前 genOutlineMulti 已标过）
   persist(); render();
-  toast(`已采用「${it.label||'候选'}」`);
+  toast(it.ok ? `已采用「${it.label||'候选'}」` : `已采用「${it.label||'候选'}」（原未过校验，缺失字段已自动补齐）`);
 }
 
 // v230/3.3：候选大纲预览（gs-overlay 弹窗；无章节列表时仅展示书名/简介）
@@ -9561,10 +9575,12 @@ async function genOutline(){
     // v230/T3+3.3：章数硬校验已拆除（chapterPlan 与章数解耦），落盘段抽取为 applyOutlineObject 共用——
     // genOutline 与多候选「选用此版」两条路走同一函数（含：章数软检查/旧标题保留/旧词典沿用/当前大纲入历史/
     // 简介字数 toast/pendingV45 应用/navBeacon 回填/userIdea/chapterPlans 初始化/state.chapters 同步）
+    const _softWarn = (o && o._softWarn) || '';
+    fillOutlineSoftFields(o);   // v1.0.161：anchor/thesis 软缺不再否决，落地时自动占位补齐
     applyOutlineObject(o, { replacedLabel: '被替换的上一版' });
     markAIDone('outline');   // 4.8（6.4）：成功后标记完成
     persist(); render();
-    toast('大纲已生成');
+    toast(_softWarn ? `大纲已生成（${_softWarn}，已自动补齐占位）` : '大纲已生成');
   }catch(e){
     if(e.name==='AbortError'){ if(st){ st.className='status'; st.textContent='已停止生成'; } }
     else {
@@ -9595,10 +9611,34 @@ function validateOutlineOutput(o){
   if(!o || typeof o !== 'object') return '返回不是对象';
   if(!String(o.title||'').trim()) return '缺少 title';
   if(!String(o.logline||'').trim()) return '缺少 logline';
-  if(!String(o.anchor||'').trim()) return '缺少 anchor';
-  if(!String(o.thesis||'').trim()) return '缺少 thesis';
-  // v242/911-Q2：人名硬约束已移除——词典人名不再令大纲整体重试（零阻挡）；条目入库时不合规范仅打 _nameFlag 标记
+  // v1.0.161：分级校验——anchor/thesis 缺失不再否决整章（软缺：候选仍可选用、单发仍可落地，落地时由 fillOutlineSoftFields 自动占位补齐）；
+  // 仅缺 title/logline 视为硬伤。软缺原因落到 o._softWarn 供界面标注，不阻断。
+  const soft = [];
+  if(!String(o.anchor||'').trim()) soft.push('缺叙事锚点(anchor)');
+  if(!String(o.thesis||'').trim()) soft.push('缺深层主题(thesis)');
+  if(soft.length){ try{ o._softWarn = soft.join('、'); }catch(e){} }
   return '';
+}
+// v1.0.161：候选分级。hard=true　缺书名/简介（硬伤，不可选用）；canAdopt=false。否则即便缺软字段也允许选用。
+function gradeOutlineCandidate(o){
+  o = o || {};
+  const miss = [];
+  if(!String(o.title||'').trim()) miss.push('书名');
+  if(!String(o.logline||'').trim()) miss.push('简介');
+  if(!String(o.anchor||'').trim()) miss.push('叙事锚点');
+  if(!String(o.thesis||'').trim()) miss.push('深层主题');
+  const hard = miss.includes('书名') || miss.includes('简介');
+  return { ok: !miss.length, hard, miss, reason: miss.length?('缺：'+miss.join('、')):'', canAdopt: !hard };
+}
+// v1.0.161：补齐大纲软字段（anchor/thesis 缺失时自动占位），保证采用"未通过校验"候选也不带缺字段进下游。
+function fillOutlineSoftFields(o){
+  if(!o || typeof o !== 'object') return o||{};
+  if(!String(o.anchor||'').trim()){
+    const l = String(o.logline||'').trim();
+    o.anchor = l ? l.slice(0, 80) : '（未设定，请在大纲页补充叙事锚点）';
+  }
+  if(!String(o.thesis||'').trim()) o.thesis = '（由简介引申的主题，请在大纲页细化补充）';
+  return o;
 }
 
 // v228/P3：大纲忠实度闸——先过结构校验，再校验是否保留用户构想核心词（复用 v225/P6 的 validateIdeaFaithful；
@@ -10670,7 +10710,7 @@ function buildChapterUser(i, opt={}){
     beatText += `必须使用实体汇总：${(plan.requiredEntities||[]).join('、')||'无'}\n`;
     // v1.0.153：节拍表是本章「一条连续叙事线」上的关键节点，须用过渡衔接成一个整体，禁止各拍割裂成独立断篇
     beatText += `串联要求：下面 ${(currentBeatCfg().types||[]).length} 个节拍是本章同一段连续剧情上的关键节点——写作时必须用因果、情绪递进、动作延续或时间/空间过渡把它们紧密衔接成一篇流畅的正文；节拍之间禁止生硬跳切、禁止各写各的断章；只要叙事连续，相邻节拍可融合在同一场景内推进，节拍之间的衔接过渡文字同样是正文的一部分。\n`;
-    beatText += `【微拍配比】当前「${currentBeatCfg().label}」：${currentBeatCfg().wc||''}；本章燃点须克制为一枚小高潮（强度约全书终极燃点的千分之一），勿提前打光主角底牌；只解决一个具体小麻烦。\n`;
+    beatText += `【微拍配比】当前「${currentBeatCfg().label}」：${currentBeatCfg().wc||''}；本章设一个明确的事件节点，强度与篇幅匹配，勿把后续才应出现的转折或资源提前用尽；只推进一件具体的小事。\n`;
     plan.beats.forEach((b, idx)=>{
       beatText += `${idx+1}. [${beatLabelFor(b.type)}] ${b.event}（情绪：${b.emotional||'按上下文'}）——必须出现：${(b.requiredEntities||[]).join('、')||'无'}${(b.foreshadowing||[]).length ? '；埋伏笔：'+b.foreshadowing.join('、') : ''}\n`;
     });
