@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.188';   // v1.0.188 叙事主体升级为五种（主角线/双主角/铁三角/四方/五人团），双主角全链路独立注入；solo 严格隔离不污染；v1.0.187 章首铁律；v1.0.186 叙事主体·团队
+const APP_VERSION = '1.0.189';   // v1.0.189 全局时间线改 diff 输出：只重排需改时间的拍，输出量从"全书"降到"少数改动项"，提速明显；v1.0.188 叙事主体升级为五种（主角线/双主角/铁三角/四方/五人团），双主角全链路独立注入；solo 严格隔离不污染；v1.0.187 章首铁律；v1.0.186 叙事主体·团队
 const KEY_CFG = 'fyp_cfg';
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -10343,29 +10343,31 @@ async function genPlannerBeats(btn, opts){
 // ==================== v1.0.183：④ 全局时间线（规划师新阶段，接在节拍表后） ====================
 // 以全局视角统一重排全书各章/各拍的时间锚：消除逐批机械排期、让时间跨度为情节服务，回写节拍表
 // 并写入 o._globalTimeline（供时间线看板与承接真相源读取），正文据此承接、不再章首生硬报时。
-const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」。你拥有整本书的全局视野：能看到全书所有章节标题、每章每拍的剧情事件与它们目前各自的时间锚。你的唯一职责：把这些时间锚重新排成一整条**连贯、可信、有节奏**的全球时间线，让每章正文不再机械、不在章首生硬报时。
-【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{"chapters":[{"index":1,"beats":[{"type":"<该章原拍type，原样照抄>","time":"支线·时点，如 现实·第3天·上午"}, ...]}, ...], "global_notes":"用一句话说明全书时间跨度与节奏安排"}
+const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」。你拥有整本书的全局视野：能看到全书所有章节标题、每章每拍的剧情事件与它们目前各自的时间锚。你的唯一职责：找出其中**真正需要改时间**的节拍并给出新的时点，把它们串成一整条**连贯、可信、有节奏**的全球时间线，让每章正文不再机械、不在章首生硬报时。
+【输出格式】这是"改动用 diff"，严格只输出如下 JSON（不要解释、不要 markdown 代码块）；**只列需要改时间的节拍，未改动的拍一律不要写出来**：
+{"updates":[{"index":1,"beats":[{"beatIdx":3,"time":"支线·时点，如 现实·第3天·上午"}]}, ...], "global_notes":"用一句话说明全书时间跨度与节奏安排"}
+说明：index 为要改动的章号（从 1 起，对应输入里第几章，某章无需改动就整章省略）；beats 里只放该章被改动的拍，beatIdx 是拍序号（从 1 起，对应该章第几拍）；time 是该拍新的"支线·时点"。仅当某拍当前时点确实会造成问题才改；整本都没问题就输出 "updates":[]。
 【硬性规则】
-1. chapters 的 index 从 1 起，数量必须与给定章节数完全一致；每章 beats 的数量与 type 必须照抄该章原拍顺序（只许改动 time 字段）。
+1. 逐章逐拍复核现有时间锚，仅对"现实主线单调倒退、跨章不承接、支线进入/回收混乱、机械等差常数"等确实需要修正的拍给出新 time；其余一律不动、不出现在 updates 里——禁止为了"看着整齐"去重打所有时点。
 2. 现实（主线）支线必须在全书串成一条单调不倒退的连续时钟：第 N 章的时点必须晚于或衔接第 N-1 章末尾，严禁整体倒退；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰，切换必须由剧情出入点解释。
 3. 时间跨度由剧情事件决定、绝不由章节序号决定：严禁"第N章=第N天"的等差排期。同一事件内的多拍落同一时刻/同一日；赶路/养伤/修炼/等待/多日布局可整段跳到数日/数旬/数月之后；紧迫戏压缩到同一日内甚至数小时内。时点贴合并可被事件解释，前后衔接自然、全书时间成立。
 4. 时间节奏要有起伏：有的章时间基本不流动（同一日/同一刻内展开多拍），有的章跨数天，全书绝不是均匀的钟表。
-5. 每个 time 只写"支线名 + 一个时点"（≤12 字），用顿号或·分隔，不要多余解释。`;
+5. 每个 time 只写"支线名 + 一个时点"（≤12 字），用顿号或·分隔，不要多余解释。
+6. 只有当某拍的 time 确实需要改动时才写进 updates；如果前置/后续的承接问题是因为别的拍导致的，改那个拍而不是叠改一大片。`;
 
-// 全局时间线输出校验：整体结构 + 每章 beat 数/type 顺序/必填 time
-function validateTimelineOutput(j){
+// 全局时间线"diff"输出校验：只验证 updates 结构的合法性（index/beatIdx 为正整数、time 非空）；空 updates 也合法（表示无需改动）
+function validateTimelineDiffOutput(j){
   if(!j || typeof j !== 'object') return '返回不是对象';
-  if(!Array.isArray(j.chapters) || !j.chapters.length) return '缺少 chapters 数组';
-  const keys = beatTypeKeys();
-  for(const [ci, cp] of j.chapters.entries()){
-    if(!cp || typeof cp !== 'object') return `第 ${ci+1} 个 chapter 不是对象`;
-    if(!Number.isInteger(+cp.index) || +cp.index < 1) return `第 ${ci+1} 个 chapter 缺失有效 index`;
-    if(!Array.isArray(cp.beats) || cp.beats.length !== beatCnt()) return `第 ${ci+1} 章 beats 应为 ${beatCnt()} 段，实得 ${Array.isArray(cp.beats)?cp.beats.length:'非数组'}`;
+  if(!Array.isArray(j.updates)) return '缺少 updates 数组（可为空数组 []）';
+  for(const [ci, cp] of j.updates.entries()){
+    if(!cp || typeof cp !== 'object') return `第 ${ci+1} 个 update 不是对象`;
+    if(!Number.isInteger(+cp.index) || +cp.index < 1) return `第 ${ci+1} 个 update 缺失有效 index`;
+    if(!Array.isArray(cp.beats) || !cp.beats.length) return `update 章${+cp.index} 缺少非空 beats 数组`;
     for(let i=0;i<cp.beats.length;i++){
       const b = cp.beats[i];
-      if(!b || !String(b.time||'').trim()) return `第 ${ci+1} 章第 ${i+1} 拍缺失 time`;
-      if(keys[i] && b.type !== keys[i]) return `第 ${ci+1} 章第 ${i+1} 拍 type 应为 ${keys[i]}，实得 ${b.type}`;
+      if(!b || typeof b !== 'object') return `update 章${+cp.index} 第 ${i+1} 拍不是对象`;
+      if(!Number.isInteger(+b.beatIdx) || +b.beatIdx < 1) return `update 章${+cp.index} 第 ${i+1} 拍缺失有效 beatIdx`;
+      if(!String(b.time||'').trim()) return `update 章${+cp.index} 第 ${i+1} 拍缺失 time`;
     }
   }
   return '';
@@ -10445,26 +10447,40 @@ async function genPlannerTimeline(btn, opts){
     const user = buildTimelineUser();
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
     const cands = await Promise.all([
-      callAIWithContract(callDeepSeek(PLANNER_TIMELINE_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}), {needJson:true, expectedCount:totalN, countPath:'chapters', schemaValidator:validateTimelineOutput, taskName:'全局时间线-A'}),
+      callAIWithContract(callDeepSeek(PLANNER_TIMELINE_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}), {needJson:true, schemaValidator:validateTimelineDiffOutput, taskName:'全局时间线-A'}),   // v1.0.189：diff 输出——只回传需改时间的拍，输出量从"全书"降到"少数改动项"
     ]);
     const best = cands.filter(c=>c && c.ok).sort((a,b)=>(b.score||0)-(a.score||0))[0];
     if(!best) throw new Error((cands[0] && cands[0].error) || '所有时间线候选均无效');
     let changed = 0;
     const anchors = [];
-    best.data.chapters.forEach(cp => {
+    const _upd = Array.isArray(best.data.updates) ? best.data.updates : [];
+    _upd.forEach(cp => {
       const idx = +cp.index - 1;
       if(idx < 0 || idx >= totalN) return;
       const plan = o.chapterPlans[idx]; if(!plan || !Array.isArray(plan.beats)) return;
-      cp.beats.forEach((nb, j) => {
-        const bb = plan.beats[j]; if(!bb) return;
+      const beats = Array.isArray(cp.beats) ? cp.beats : [];
+      beats.forEach(nb => {
+        const bi = +nb.beatIdx - 1;
+        if(bi < 0 || bi >= plan.beats.length) return;
         const nt = String(nb && nb.time || '').trim();
-        if(nt && String(bb.time || '').trim() !== nt){ bb.time = nt; changed++; }
+        if(nt && String(plan.beats[bi].time || '').trim() !== nt){ plan.beats[bi].time = nt; changed++; }
       });
-      const t0 = cp.beats.length ? String(cp.beats[0].time || '').trim() : '';
-      const t1 = cp.beats.length ? String(cp.beats[cp.beats.length-1].time || '').trim() : '';
+      const bt = plan.beats;
+      const t0 = bt.length ? String(bt[0].time || '').trim() : '';
+      const t1 = bt.length ? String(bt[bt.length-1].time || '').trim() : '';
       anchors.push({ index: idx, title: String((o.chapters[idx] && o.chapters[idx].title) || (''+idx+1)), from: t0, to: t1 });
     });
-    o._globalTimeline = { chapters: anchors, notes: String(best.data.global_notes || '').trim(), ts: Date.now() };
+    // 未出现在 updates 里的章，其 from/to 沿用节拍表现有首尾时点，保证看板仍显示全书
+    for(let i=0;i<totalN;i++){
+      if(anchors.some(a=>a.index===i)) continue;
+      const plan = o.chapterPlans[i];
+      const bt = (plan && Array.isArray(plan.beats)) ? plan.beats : [];
+      const t0 = bt.length ? String(bt[0].time || '').trim() : '';
+      const t1 = bt.length ? String(bt[bt.length-1].time || '').trim() : '';
+      if(t0 || t1) anchors.push({ index: i, title: String((o.chapters[i] && o.chapters[i].title) || (''+i+1)), from: t0, to: t1 });
+    }
+    anchors.sort((a,b)=>a.index-b.index);
+    o._globalTimeline = { chapters: anchors, notes: String((best.data && best.data.global_notes) || '').trim(), ts: Date.now() };
     persist();
     render();
     markAIDone('chapterPlan');
