@@ -1977,7 +1977,9 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 #app .sc-pipe-m{font-size:11.5px;color:var(--muted);font-weight:600}
 #app .sc-pipe-bar{height:8px;border-radius:99px;background:color-mix(in srgb, var(--line) 55%, transparent);overflow:hidden}
 #app .sc-pipe-in{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#a855f7,#6366f1 55%,#22c55e);transition:width .3s}
-#app .sc-pipe-steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+#app .sc-pipe-steps{display:flex;flex-wrap:wrap;gap:7px;margin-top:9px}
+#app .sc-pipe-steps .sc-step{flex:1 1 auto;justify-content:center;min-width:108px;padding:7px 12px;border-radius:10px;font-size:12.5px;gap:5px}
+/* v1.0.316：学校「备料→开学」四步从状态标签升级为可单独点击的按钮，视觉上更清晰、可续跑 */
 #app .sc-ps{font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
 #app .sc-ps.s-ok{border-color:color-mix(in srgb,#22c55e 45%, var(--line));color:#22c55e;background:color-mix(in srgb,#22c55e 10%, transparent)}
 #app .sc-ps.s-no{opacity:.7}
@@ -1996,6 +1998,11 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 #app .sc-tc-b .sc-teacher{flex:1}
 /* 一键开学 主按钮放大 */
 #app .sc-step.sc-runall{font-size:13px;padding:8px 18px;border-radius:11px}
-#app .school-steps{gap:8px;align-items:stretch}
+#app .school-steps{gap:8px;align-items:center}
+/* v1.0.316：学校操作行——「一键开学」居左、「读校长产出」顶到最右，弹性占位撑开 */
+#app .school-spacer{flex:1 1 auto}
+/* v1.0.316：读校长产出 放大 2 倍（原 10.5px/小内边距 → 13px、更大内边距、更醒目） */
+#app .sc-plan-btn.sc-plan-pr{padding:9px 18px;border-radius:11px;font-size:13px;font-weight:750;line-height:1.4;gap:6px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+#app .sc-plan-btn.sc-plan-pr:hover{transform:translateY(-1px)}
 /* v1.0.307：未填章节数时老师区的可见占位（避免用户误以为没有老师卡） */
 #app .sc-teachers-ph{grid-column:1 / -1;display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px dashed color-mix(in srgb, var(--accent) 38%, var(--line));border-radius:10px;background:color-mix(in srgb, var(--accent) 6%, transparent);color:var(--muted);font-size:12.5px;line-height:1.6}

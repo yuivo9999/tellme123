@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.315';   // v1.0.315 章节微拍直喂老师+骨架随拍调密
+const APP_VERSION = '1.0.316';   // v1.0.316 学校断点续跑：四步可单独点击＋一键字典充实自锁修复＋读校长产出放大靠右
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -3557,7 +3557,8 @@ async function genSchoolAll(btn){
   const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能一键开学'); return; }
   const steps = [
     { key:'dictMaster', label:'词典达人', run:()=> genDictMaster(null) },
-    { key:'dictEnrich', label:'词典充实', run:()=> genDictEnrich(null,{}) },
+    // v1.0.316 修「一键在词典充实处中断」：总控串行直跑必须带 force=true——否则 dictEnrichGate 里的 genBusy() 会把本链路自己 showStopBtn 置起的 _abortCtl 误判为"有任务进行中"，下一拍直接被拦下、中断
+    { key:'dictEnrich', label:'词典充实', run:()=> genDictEnrich(null,{force:true}) },
     { key:'principal', label:'校长统筹', run:()=> genPrincipal(null) },
     ...groups.map((g,i)=>({ key:'t'+i, label:'老师'+(i+1)+'备课', run:()=> genTeacher(null,i) }))
   ];
@@ -3573,6 +3574,8 @@ async function genSchoolAll(btn){
       if(zone){ showStopBtn(zone); zone.classList.add('cp-stopping'); if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true}); }
       const ok = await st.run();
       hideStopBtn(); if(zone) zone.classList.remove('cp-stopping');
+      // v1.0.316 每步成功即写入 scDone，让「备料→开学」进度条与各步按钮的 ✓ 实时对上（否则一键只跑不标记，界面仍显示 0/4）
+      if(ok && scMark){ scMark(st.key, true); }
       if(!ok){ toast(stopped ? `已停止学校一键（停在「${st.label}」）` : `学校一键中断于「${st.label}」，可单独点该步骤重试`); return; }
     }
     toast('学校一键全部完成：达人→充实→校长→全部老师备课就绪');
@@ -3591,6 +3594,20 @@ function bindSchoolSteps(){
       if(step === 'dictEnrich'){ const ok = await nailRetry('dictEnrich','词典充实', ()=> genDictEnrich(btn,{}), btn); if(ok) playDoneSound('single'); return; }
       if(step === 'principal'){ const ok = await genPrincipal(btn); return; }
       if(step === 'teacher'){ const gi = Number(btn.dataset.scpTeacher); const ok = await genTeacher(btn, gi); return; }
+      // v1.0.316 「全部老师」单步：逐位备课，中断后可从第 1 位补到末位（已完成的组自动跳过：genTeacher 内 scDone 前置由调用侧判定）
+      if(step === 'teacherAll'){
+        const groups = schoolStageGroups();
+        if(!groups.length){ toast('请先填写章节数，才能备课'); return; }
+        if(!scDone('principal')){ toast('请先生成校长（分组/守则/组级框架）'); return; }
+        let allOk = true;
+        for(let i=0;i<groups.length;i++){
+          if(scDone('t'+i)) continue;   // 该老师已备好，跳过
+          const ok = await genTeacher(null, i);
+          if(!ok){ allOk=false; break; }
+        }
+        if(allOk) playDoneSound('single');
+        return;
+      }
     };
   });
   // v1.0.30x：教案阅读器入口（老师「📖 教案」 / 校长「📋 成果」）
@@ -7719,22 +7736,22 @@ function microBeatBlock(){
 
 // v1.0.30y：学校卡（规划师撤换）——校内只承载「校长下达命令管理老师 → 各位老师教正文 AI 怎么写本章」；
 // 词典达人/词典充实 已在上方前置区（flow 4/5），这里不再内嵌；一键开学仍串起整条链。
-// v1.0.307 跨板块「备料 → 开学」链式进度条：达人→充实→校长→全部老师，按 scDone 逐段亮起
+// v1.0.316 学校「备料 → 开学」链路：四步改可单独点击（中断后可点某一步单独重跑，不必从头再来）
 function schoolPipelineProgress(){
   const groups = schoolStageGroups();
   const total = 3 + groups.length;
   const keys = ['dictMaster','dictEnrich','principal', ...groups.map((g,i)=>'t'+i)];
   const done = keys.filter(scDone).length;
   const pct = total ? Math.round(done/total*100) : 0;
-  const allTeach = groups.length ? groups.every((g,i)=>scDone('t'+i)) : false;
+  const teacherAllDone = groups.length>0 && groups.every((g,i)=>scDone('t'+i));
   return `<div class="sc-pipeline">
     <div class="sc-pipe-top"><span class="sc-pipe-t">⏳ 备料 → 开学</span><span class="sc-pipe-m">${done}/${total} 步就绪 · ${pct}%</span></div>
     <div class="sc-pipe-bar"><span class="sc-pipe-in" style="width:${pct}%"></span></div>
     <div class="sc-pipe-steps">
-      <span class="sc-ps s-${scDone('dictMaster')?'ok':'no'}">📖 词典达人</span>
-      <span class="sc-ps s-${scDone('dictEnrich')?'ok':'no'}">🗂 词典充实</span>
-      <span class="sc-ps s-${scDone('principal')?'ok':'no'}">👑 校长</span>
-      <span class="sc-ps s-${allTeach?'ok':'no'}">🎓 全部老师</span>
+      <button type="button" class="sc-step ${scDone('dictMaster')?'done':''}" data-scp-step="dictMaster" title="词典达人：先给全员备料。中断后点此单独重跑（自动重试，无需从头再来）">📖 词典达人${scBadge('dictMaster')}</button>
+      <button type="button" class="sc-step ${scDone('dictEnrich')?'done':''}" data-scp-step="dictEnrich" title="词典充实：与达人平级、补全词典。中断后点此单独重跑">🗂 词典充实${scBadge('dictEnrich')}</button>
+      <button type="button" class="sc-step ${scDone('principal')?'done':''}" data-scp-step="principal" title="校长：在既有《全书节拍》上分组 + 组级框架 + 标题总表，派生老师。中断后点此单独重跑">👑 校长${scBadge('principal')}</button>
+      <button type="button" class="sc-step ${teacherAllDone?'done':''}" data-scp-step="teacherAll" title="全部老师（${groups.length} 位）：逐位一次备完全组教案。中断后点此从第 1 位补到末位">🎓 全部老师</button>
     </div>
   </div>`;
 }
@@ -7760,8 +7777,9 @@ function schoolZoneBlock(){
         </div>
         ${schoolPipelineProgress()}
         <div class="school-steps">
-          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成">⚡ 一键开学</button>
-          <span class="sc-teacher-cell">${schoolStepBtn('principal','👑','校长','校长：给各组下达命令，在既有《全书节拍》上分组 + 组级框架 + 标题总表，派生老师）')}<button type="button" class="sc-plan-btn" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表（未生成前为空，先生成校长即可阅读）">📋 读校长产出</button></span>
+          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成；中断后可点上方各步单独续跑">⚡ 一键开学</button>
+          <span class="school-spacer"></span>
+          <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表">📋 读校长产出</button>
         </div>
         <div class="school-teachers">
           ${tBody}
@@ -7841,11 +7859,11 @@ function chapterPlanBlock(){
           <span>🏫 学校 · 校长分组</span>
           <em class="school-zone-tip">${(()=>{ const s=schoolStageGroups(); return s.length? (`按《全书节拍》分组 → ${s.length} 位老师`):'先填章节数'; })()}</em>
         </div>
+        ${schoolPipelineProgress()}
         <div class="school-steps">
-          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成">⚡ 一键开学</button>
-          ${schoolStepBtn('dictMaster','📖','词典达人','词典达人：先给全员备料（16 次自动重试）')}
-          ${schoolStepBtn('dictEnrich','🗂','词典充实','词典充实：与达人平级、补全词典（16 次自动重试）')}
-          <span class="sc-teacher-cell">${schoolStepBtn('principal','👑','校长','校长：分组 + 组级框架 + 标题总表（在既有《全书节拍》上派生老师）')}<button type="button" class="sc-plan-btn" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表（未生成前为空，先生成校长即可阅读）">📋 读校长产出</button></span>
+          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成；中断后可点上方各步单独续跑">⚡ 一键开学</button>
+          <span class="school-spacer"></span>
+          <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表">📋 读校长产出</button>
         </div>
         <div class="school-teachers">
           ${schoolStageGroups().map((g,i)=> schoolTeacherBtn(g,i)).join('')}
