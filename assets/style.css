@@ -1003,6 +1003,10 @@ body.reader-lock{overflow:hidden}
 .ch-card .ch-body.folded{display:none}
 /* v238/A：空正文章节卡矮空框——恒展开后无正文显示占位提示，视觉更轻不占屏 */
 .ch-card textarea.ch-ta-empty{min-height:56px}
+/* v1.0.317：长篇小说未生成正文时，仍显示一个可见「正文书写区」空框，避免用户误以为没有正文功能 */
+#app .ch-bodyframe{margin:6px 0 14px;border:1.5px dashed color-mix(in srgb, var(--accent) 42%, var(--line));border-radius:12px;background:color-mix(in srgb, var(--accent) 5%, transparent);padding:16px 14px;min-height:120px;display:flex;flex-direction:column;gap:8px}
+#app .ch-bodyframe-head{font-size:14px;font-weight:800;color:var(--txt)}
+#app .ch-bodyframe-hint{font-size:12.5px;color:var(--muted);line-height:1.7}
 .ch-pager{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:10px 0}
 /* v240/906-1：分页恢复（v238 蓝本）——页码按钮样式回归；.ch-pager 兼作提示条容器 */
 .ch-pager .ch-page{padding:4px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);color:var(--sub);font-size:12px;cursor:pointer}

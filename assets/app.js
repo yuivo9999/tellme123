@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.316';   // v1.0.316 学校断点续跑：四步可单独点击＋一键字典充实自锁修复＋读校长产出放大靠右
+const APP_VERSION = '1.0.317';   // v1.0.317 残页修复五件：步骤完成不跳页＋词典类别默认折叠＋达人改显关系表＋正文框显占位＋一键断点续跑
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -3568,7 +3568,10 @@ async function genSchoolAll(btn){
   if(btn){ btn.classList.add('running'); setTxt(`学校一键（0/${steps.length}）…`); }
   try{
     for(let i=0;i<steps.length;i++){
-      const st = steps[i]; setTxt(`学校一键（${i+1}/${steps.length}·${st.label}）…`);
+      const st = steps[i];
+      // v1.0.317 断点续跑：已完成的步跳过，重按「一键开学」只续未完成（不再每次重跑词典达人后停下）
+      if(scDone && scDone(st.key)) continue;
+      setTxt(`学校一键（${i+1}/${steps.length}·${st.label}）…`);
       const zone = document.querySelector('.school-zone');
       let stopped = false;
       if(zone){ showStopBtn(zone); zone.classList.add('cp-stopping'); if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true}); }
@@ -5296,6 +5299,8 @@ function updateMechaNav(){
 }
 
 function render(){
+  // v1.0.317 保留滚动位置：步骤生成完成（词典/校长/老师等触发 render）时不再把用户顶回页面顶部/跳页
+  const _restY = (window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0);
   normalizeOutline(state.outline);   // 4.6 Plus：outline 防御归一化（第 1 章调用点：render 开始时）
   destroyCharTS(); // 先销毁旧 Tom Select，避免 DOM 残留/重复实例
   restartCascade();
@@ -5317,6 +5322,8 @@ function render(){
   bindView();
   if(currentStep===1) bindFlowSideNav();   // v1.0.201 5格页码侧边条绑定
   updateWcTotal();
+  // v1.0.317 同步恢复滚动位置：同一视图内步骤生成完成（词典/校长/老师触发 render）不再跳页；切视图场景调用侧会后置 scrollTo(0,0) 覆盖本处
+  if(_restY >= 0){ try{ window.scrollTo(0, _restY); }catch(e){} }
 }
 
 /* ---------- P1 故事 ---------- */
@@ -9095,7 +9102,11 @@ function renderChapters(){
       // v241/908-3：撤除第一章空框占位（v240 曾保留）——空态只给一行提示
       const wantN = chapterCountVal();
       wrap.innerHTML = wantN > 0
-        ? `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：大纲生成后这里会出现章节卡。</span></div>`
+        ? `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：大纲生成后这里会出现章节卡。</span></div>
+           <div class="ch-bodyframe">
+             <div class="ch-bodyframe-head">✍️ 正文书写区</div>
+             <div class="ch-bodyframe-hint">这里是每章「正文」的显示与编辑框。先生成章节正文后，正文会逐章铺在这里（按老师教案写足全文）。正文卡上另有「📖 阅读 / ⚡ 区间生成 / 🧺 从正文收编」等入口。</div>
+           </div>`
         : `<div class="ch-pager"><span class="muted">共 0 章：先在第②步生成大纲。</span></div>`;
       return;
     }
@@ -10636,7 +10647,8 @@ function dictMasterBlockHtml(){
   const propRow  = p=>`<details class="dmt-entry"><summary>${chip(p.name)}<span class="muted dmt-brief">${esc(String(p.note||'').trim()||'')}</span></summary><div class="dmt-body">${detailLines(p,['note'])||''}</div></details>`;
   const charMain = (g.characters||[]).filter(c=>c && c.tier!=='support');
   const charSup  = (g.characters||[]).filter(c=>c && c.tier==='support');
-  const dmtGroup = (lab, rows)=> rows.length ? `<details class="dmt-group" open><summary>${lab}（${rows.length}）</summary><div class="dmt-list">${rows}</div></details>` : '';
+  // v1.0.317 词典达人/词典充实 人物类别默认折叠，避免占满页面
+  const dmtGroup = (lab, rows)=> rows.length ? `<details class="dmt-group"><summary>${lab}（${rows.length}）</summary><div class="dmt-list">${rows}</div></details>` : '';
   const allRows = dmtGroup('👤 主要人物', charMain.map(charRow))
     + dmtGroup('🤝 次要配角', charSup.map(charRow))
     + dmtGroup('🗺️ 地名', (g.places||[]).map(placeRow))
@@ -10650,19 +10662,15 @@ function dictMasterBlockHtml(){
         <span class="muted dm-strip">关系表 ${relArr.length} · 地名关联 ${pcArr.length} · 专名关联 ${prcArr.length} · 世界观规则 ${wrArr.length}</span>
       </div>
       <div class="dmt-tabs">
-        <button type="button" class="dmt-tab on" data-dmt-tab="all">🔍 全貌</button>
+        <button type="button" class="dmt-tab on" data-dmt-tab="rel">👥 人物关系表（${relArr.length}）</button>
         <button type="button" class="dmt-tab" data-dmt-tab="wr">⚙️ 世界观规则（${wrArr.length}）</button>
-        <button type="button" class="dmt-tab" data-dmt-tab="rel">👥 人物关系表（${relArr.length}）</button>
         <button type="button" class="dmt-tab" data-dmt-tab="pc">🗺️ 地名关联表（${pcArr.length}）</button>
         <button type="button" class="dmt-tab" data-dmt-tab="prc">📌 专名关联表（${prcArr.length}）</button>
       </div>
       <div class="dmt-panels">
-        <div class="dmt-panel on" data-dmt-panel="all">
-          <input type="search" class="dmt-search" data-dmt-search placeholder="🔍 搜索 人物/地名/专名（按名字或简介过滤）…" />
-          <div class="dmt-groups" data-dmt-scope>${allRows||'<span class="muted">（暂无实体）</span>'}</div>
-        </div>
+        <!-- v1.0.317 词典达人不再展示「人物类别」全貌（与词典充实雷同）：默认开在人物关系表 -->
+        <div class="dmt-panel on" data-dmt-panel="rel"><div class="dm-rel-table">${relRows||'<span class="muted">（无）</span>'}</div></div>
         <div class="dmt-panel" data-dmt-panel="wr"><div class="dm-rel-table">${wrRows||'<span class="muted">（无）</span>'}</div></div>
-        <div class="dmt-panel" data-dmt-panel="rel"><div class="dm-rel-table">${relRows||'<span class="muted">（无）</span>'}</div></div>
         <div class="dmt-panel" data-dmt-panel="pc"><div class="dm-rel-table">${pcRows||'<span class="muted">（无）</span>'}</div></div>
         <div class="dmt-panel" data-dmt-panel="prc"><div class="dm-rel-table">${prcRows||'<span class="muted">（无）</span>'}</div></div>
       </div>
@@ -11139,7 +11147,7 @@ function dictEnrichBlockHtml(){
       return `<div class="de-item${isNew?' new':''}"><b class="de-chip" style="--h:${hue(nm)}">${isNew?'✦ ':''}${esc(nm)}</b><span class="muted dm-rel-txt">${esc(brief||'（无简介）')}</span></div>`;
     }).join('') : '<span class="muted">（暂无）</span>';
     const tag = nNew>0 ? `<b class="de-newb" title="本板块从 词典充实/正文收编 新增并入的条目">+${nNew} 新</b>` : '';
-    return `<details class="dm-fold"${n?' open':''}><summary>${lab}（${n}）${tag}</summary><div class="${cls}">${body}</div></details>`;
+    return `<details class="dm-fold"><summary>${lab}（${n}）${tag}</summary><div class="${cls}">${body}</div></details>`;
   };
   return `<div class="card dm-card de-card">
     <div class="dm-head de-head" role="button" tabindex="0" data-de-toggle title="展开/收起">
