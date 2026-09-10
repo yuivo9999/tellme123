@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.318';   // v1.0.318 未生成章也渲染「待生成」正文卡（重生成/阅读/梗概可见），不再只剩静态占位
+const APP_VERSION = '1.0.321';   // v1.0.321 教案预览修解析（字段无bullet也能识别）＋阅读「概」优先显示本章老师教案
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -3452,7 +3452,10 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 
 【任务】对组内每一章产出一份教案，逐章齐全直到本组最后一章。每份教案固定字段（一个不少）：
 - 功能与位置：本章在本组 / 全书中的角色
-- 剧情时间落点：落在哪日 / 哪几天的哪些时段（防正文乱标时间）
+- 剧情时间落点：用绝对日序＋具体时段书写，格式"从 第X日·时段 到 第X日·时段"（例如"灾荒第2日·清晨 → 第3日·傍晚"），中文写作习惯下日序用"第二日""第三日"亦可。三条硬性规矩（防多章时间倒退/重叠/换算错位，正文 AI 只认本字段来标时间，故你必须排绝对）：
+  (1) 禁用相对时间词作落点——不得用"次日/翌日/次晨/当晚/当日傍晚"这类词来定义本章时间范围（"次日"会因相对哪一天不同而错位，多章联排极易重叠或倒退，必须换算成绝对"第X日"再写）；散文正文里可有相对表述，但教案落点一律给绝对日序。
+  (2) 跨章不倒退——本章落点的起点不得早于上一章教案「剧情时间落点」的终点（可同时刻紧接，不可回退）。你逐章产出时，把已写的几章时间在心里排成一根只增不减的数轴再落笔，确保全局时间单调递增。
+  (3) 值域写全——从起点日到终点日的每一天、每个关键时段都要被覆盖到；跨多天时逐日写明哪天哪些时段，不做"第X到第X天"的模糊区间。
 - 本章推进骨架（从哪写到哪）：把本章从开篇承接点到收尾的整条推进路线，拆成一连串更细的环节（建议 5-8 个推进环节，覆盖 承接点→铺垫→第一次小冲突/变化→推进→转折/升温→高潮→余波→收束/钩子），按顺序逐个写出每个环节"这一环节要发生/要写到什么"（一两句话说明该环节的落点即可，点到即止）。环节之间要有先后与因果，让整体既密集成串、又给学生留了在每个环节内自由铺陈的余地；不要把每环节再套字数，也不要写成逐句剧本。
   - 【随微拍调密·骨架环节数不等同微拍拍数】本章口径是【章节微拍】注入的节奏类型。微拍拍数只决定"整章节奏怎么走"，与骨架拆几个环节无关——无论哪种微拍，骨架始终拆满 5-8 个环节。
   - 若是【双拍结构】（前段长铺垫 2500 字 + 后段揭示收束 500 字）：骨架仍保 5-8 环节，但按"铺垫多环节 + 揭示少环节"重新排布——把 4-7 个细环节放进前段长铺垫内部（承接点→设疑/立局→逐层铺线索、一根明/暗线索一个环节→丢一个歧途/假象/误判→气氛或矛盾加温→推向临界点），每根线索单独占一个环节点明"这一环节埋下什么/让人误以为是什么"，这正是双拍的密处；后段揭示只留 1-2 个环节（一次性串合前面全部线索、点明每根线怎么接上→以一句交代事件后果/余味并留钩收束）。严禁因只有 2 拍就把骨架压成 2 个环节。
@@ -3467,7 +3470,7 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 - 严格按章编号逐章输出直到本组最后一章，第几章就写第几章，不可缺章/跳章/漏一本没写：
 第X章 《标题》
 - 功能与位置：…
-- 剧情时间落点：…
+- 剧情时间落点：从第X日·时段 到 第X日·时段（绝对日序，禁"次日"类相对词；起点不早于上一章终点）
 - 本章推进骨架：①… → ②… → ③… → ④… → ⑤… → ⑥… → ⑦… → ⑧…（每环节一句落点，密而留白，不套字数）
 - 情绪走向与突出点：…（示例锚点一句话即可，点到为止，禁代写成品段）
 - 连续性：…（写明承接自第几章什么状态）
@@ -3620,15 +3623,21 @@ function bindSchoolSteps(){
 }
 
 // —— 教案阅读器：预览（卡片）/ 原始稿（纯文本）切换 ——
+// 教案固定六栏目（TEACHER_SYS 输出契约）；预览字段解析以限定集合精确识别，容忍有/无 bullet 前缀
+const PLAN_FIELD_KEYS = ['功能与位置','剧情时间落点','本章推进骨架','情绪走向与突出点','连续性','本章出场名单'];
 function splitTeacherPlanChapters(raw){
   const res = [];
   let cur = null;
   String(raw||'').split('\n').forEach(ln=>{
-    const m = String(ln).match(/^\s*第\s*(\d+)\s*章\b(.*)$/);
-    if(m){ cur = { ch:+m[1], title:String(m[2]||'').replace(/《|》/g,'').trim(), fields:[] }; res.push(cur); return; }
+    const m = String(ln).match(/^\s*第\s*(\d+)\s*章[^(《（]*\s*(.*)$/);
+    if(m){ cur = { ch:+m[1], title:String(m[2]||'').replace(/[《》（）()【】]/g,'').trim(), fields:[] }; res.push(cur); return; }
     if(cur){
-      const f = String(ln).match(/^\s*[-•*]\s*([^：:]+)[：:]\s*(.*)$/);
-      if(f && String(f[2]||'').trim()) cur.fields.push({ k:String(f[1]||'').trim(), v:String(f[2]).trim() });
+      // v1.0.321：字段行不强制要求「- / • / *」bullet 前缀——老师输出的原文常是「功能与位置：…」直接开头；
+      // 用固定栏目名精确匹配，行首允许任意数量 bullet/序号/空白，避免误抓正文里无关的「x：」。
+      const f = String(ln).match(/^\s*(?:[-•*>\d().]+\s*)*([^：:]{1,10})[：:]\s*(.*)$/);
+      if(f && PLAN_FIELD_KEYS.indexOf(f[1].trim()) >= 0 && String(f[2]||'').trim()){
+        cur.fields.push({ k:f[1].trim(), v:String(f[2]).trim() });
+      }
     }
   });
   return res;
@@ -9327,7 +9336,12 @@ function bindReader(){
         return null;
       };
       let title, body;
-      if(btTxt){
+      // v1.0.321：点「概」优先展示本章老师教案（学生由教案动笔，概览先给教案）；无教案再回落节拍概览/梗概
+      const _lesson = teacherChapterPlan ? teacherChapterPlan(readerCur) : null;
+      if(_lesson && String(_lesson).trim()){
+        title = `第${toCnNum(readerCur+1)}章 · 本章教案`;
+        body = `<div class="syn-body"><div style="font-size:12px;color:var(--muted);margin-bottom:6px">🎓 老师教案（本章正文的唯一权威内容体）· 原始稿：</div><pre class="sc-plan-raw">${esc(_lesson)}</pre></div>`;
+      } else if(btTxt){
         const cj = secOf('承接点','承接'); const ss = secOf('收束设计','收束');
         // v1.0.289：时间线精华（tlEssence）——节拍表同源附带，供全书时间线判时；阅读处顺带展示，可预览时间线将注入的内容
         const _te = _timelineEssenceOf((Array.isArray(o.chapterPlans)?o.chapterPlans[readerCur]:null));
@@ -12343,6 +12357,28 @@ function budgetChapterContext(parts, maxChars){
   return parts;
 }
 
+// v1.0.319：截取上一章正文末尾几百字（自然断点截取，不硬切句中），供本章开头「衔接偷看」用
+// 规则：上一章较短则整尾给出；否则按段落自尾部回收到接近上限；首个段落因自身过长超限时，再在其内部
+// 按中文句号/叹号/问号＋闭合引号 的完整句边界回退，保证切点落在句子/段落边界而非句子中间。
+function chapterTailExcerpt(i, maxChars=420){
+  const prev = i > 0 && state.chapters[i-1] ? String(state.chapters[i-1].content||'') : '';
+  const t = (prev||'').trim();
+  if(!t) return '';
+  if(t.length <= maxChars) return t;
+  const paras = t.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  const out = []; let acc = 0;
+  for(let k=paras.length-1; k>=0 && acc < maxChars; k--){ out.unshift(paras[k]); acc += paras[k].length + 2; }
+  let s = out.join('\n\n');
+  if(s.length > maxChars){
+    const head = out[0];
+    const seq = head.match(/[^。！？…]*[。！？…][”"」』]?/g) || [];
+    const kept = []; let a2 = 0;
+    for(let j=seq.length-1; j>=0 && a2 < maxChars; j--){ kept.unshift(seq[j]); a2 += seq[j].length; }
+    if(kept.length){ out[0] = kept.join(''); s = out.join('\n\n'); }
+    else s = head.slice(0, maxChars);
+  }
+  return s;
+}
 function buildChapterUser(i, opt={}){
   const o = state.outline;
   const chap = state.chapters[i];
@@ -12398,6 +12434,19 @@ function buildChapterUser(i, opt={}){
   // 学生不得用它们另起炉灶、不得依据附录自行越权发挥剧情或提前剧透。
   if(_lesson) parts.push(`【本节上课正文（唯一权威内容体·闭卷作答）：本章正文以本节教案为唯一依据，严格按教案六栏（功能与位置 / 剧情时间落点 / 本章推进骨架 / 情绪走向与突出点 / 连续性 / 本章出场名单）动笔，不得另起炉灶；下方各附录仅供"老师教案未写明的已知人物/设定"补白用，不得依靠附录自行编排剧情、不得提前章内未到之处、不得剧透后续。进行正文落笔时，章节走向、时间、承接一律以本教案为准。】
 ${_lesson}`);
+  // v1.0.319：上一章末尾·衔接偷看（最高优先来源，优先于老师教案的「连续性」）——正文为让本章开头与上一章末尾无缝衔接，
+  // "偷看"上一章正文最末若干字（自然断点截取，非硬切）；首章前面没有上一章，故跳过。
+  if(_closed && i > 0){
+    const _tail = chapterTailExcerpt(i);
+    if(_tail) parts.push(`【上一章末尾·衔接偷看（本章开头的最高优先衔接依据：先于老师教案的「连续性」采纳）】
+这是上一章正文最末若干字，经自然断点截取（非硬切，含完多种收尾）。请你让本章开头与它"伤口对缝"：
+① 本章第一段直接从这一段收尾处的景象 / 动作 / 未说完的对话 / 人物处境 / 情绪 起笔，自然续写，仿佛这一章是上一章在纸面上"接着写下去的下一页"；
+② 段中人物的当前处所、时刻、悬而未决的对话与悬念、最后的动作定格，一律以此段为准，禁止另起炉灶、禁止切换新场景强行开局、禁止复述这段已写内容；
+③ 老师教案的「连续性」只作剧情走向参考，本章开头的字面接续一律以本段为准；两者冲突时优先承接本段。
+——— 上一章末尾开始 ———
+${_tail}
+——— 上一章末尾结束 ———`);
+  }
   // v1.0.273：纯文本时间线——摘出本章时点供正文承接（全局时间线未排定则静默为空）；闭卷时以教案「时间落点」为准、不直读
   const tlCh = timelineChapterBlock(i);
   if(!_closed && tlCh) parts.push(tlCh);
