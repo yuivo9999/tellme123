@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.323';   // v1.0.322 「剧情时间落点」三硬规改三松规：授放时间跨度、不机械排"清晨→傍晚"
+const APP_VERSION = '1.0.323';   // v1.0.323 「剧情时间落点」三硬规改三松规：授放时间跨度、不机械排"清晨→傍晚"
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
