@@ -7,8 +7,8 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.198';   // v1.0.198 修复大纲多候选恒现"待确认校验：缺：叙事锚点、深层主题"：候选角度指令要求必给 anchor/thesis＋候选生成即 fillOutlineSoftFields 补齐软字段（缺则由简介推导/占位），卡片不再每次报软缺、比选不阻塞。v1.0.197 词典人物新增 mannerism（习惯小动作/口头禅）字段且古风主题 .btn.ghost 去掉继承的深色虚化阴影。v1.0.196 全书末章结局拍（BEAT_ENDING）。v1.0.195 大纲防失败兜底（salvageOutlineFromText）。v1.0.194 大纲候选收敛 6→3（商业/反差/情感）且章首轻量版选项A开场六式菜单。
-const KEY_CFG = 'fyp_cfg';
+const APP_VERSION = '1.0.315';   // v1.0.315 章节微拍直喂老师+骨架随拍调密
+const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
 // 防止用户刷新页面中断任务不知情；beforeunload 在 _bgTaskCount > 0 时给出警告
@@ -35,27 +35,60 @@ window.addEventListener('beforeunload', e => {
     e.returnValue = '后台任务尚未完成，确定要离开吗？';
   }
 });
-const KEY_STATE = 'fyp_state';   // 旧版单项目 key（仅用于首次迁移）
-const KEY_INDEX = 'fyp_index';   // v12 多项目历史库索引：轻量 {curId, ids, st}，驱动历史列表与恢复
-const KEY_PROJ_PREFIX = 'fyp_proj_'; // v12 每个项目单独一条 localStorage 记录的前缀（fyp_proj_<id>）
-const KEY_GLIB = 'fyp_glib';     // v8 词典库（跨作品的多套可复用词典，独立于项目轨道）
+const KEY_STATE = nsKey('state');   // 旧版单项目 key（仅用于首次迁移，nk 化）
+const KEY_INDEX = nsKey('index');   // v12 多项目历史库索引：轻量 {curId, ids, st}，驱动历史列表与恢复
+const KEY_PROJ_PREFIX = nsKey('proj_'); // v12 每个项目单独一条 localStorage 记录的前缀（<ns>_proj_<id>）
+const KEY_GLIB = nsKey('glib');     // v8 词典库（跨作品的多套可复用词典，独立于项目轨道）
 // v12 存储层：单条 localStorage 安全上限（浏览器约 5MB=5242880 字符，留出 key/索引余量）。
 // 单部小说快照超过此阈值（约 150-200 万汉字）才自动降级 IndexedDB 单条存储。
 const LS_SINGLE_SAFE = 4.5 * 1024 * 1024;
 function lsKeyFor(id){ return KEY_PROJ_PREFIX + id; }
+// ===== 冷升级一次性迁移（v1.0.221 方案B） =====
+// 旧版本使用「共享裸 key（fyp_*）」，多站会互相读写同一份数据。升级后改为「<ns>_*」命名空间 key。
+// 首次载入时把旧裸 key 的数据复制进当前命名空间，作为本站在新通道的起点；
+// 只读旧 key、不属于本命名空间的数据不再被引用，从而与其它站彻底隔离。
+// 复制采用「新 key 不存在才写」，避免覆盖本站已产生的数据；标记位防止重复迁移。
+;(function migrateSharedOnce(){
+  try{
+    const mark = nsKey('_nsmig_v1');
+    if(localStorage.getItem(mark)) return;   // 本命名空间已迁移过
+    // 1) 固定单条键：直接把旧裸 key 复制到 ns 键（新 ns 键不存在才写，防止覆盖本站数据）
+    const pairs = [
+      ['cfg','fyp_cfg'], ['state','fyp_state'], ['index','fyp_index'], ['glib','fyp_glib'],
+      ['lib','fyp_lib'], ['toastLog_v1','fyp_toastLog_v1'],
+      ['ailog','fyp_ailog'], ['aiRecipeHist_v1','fyp_aiRecipeHist_v1']
+    ];
+    for(const [nk, oldk] of pairs){
+      const np = nsKey(nk);
+      const raw = localStorage.getItem(oldk);
+      if(raw != null){ try{ if(localStorage.getItem(np) == null) localStorage.setItem(np, raw); }catch(e){} }
+    }
+    // 2) 前缀动态键：proj_/rp_ 带各自 id 后缀，需枚举旧库中所有命中前缀的记录逐条复制
+    const keysSnapshot = [];
+    for(let i=0; i<localStorage.length; i++){ const k = localStorage.key(i); if(k) keysSnapshot.push(k); }
+    const prefPairs = [['proj_','fyp_proj_'], ['rp_','fyp_rp_']];
+    for(const [np, op] of prefPairs){
+      const opl = op.length;
+      for(const k of keysSnapshot){
+        if(k.indexOf(op) !== 0) continue;
+        const nk = nsKey(np) + k.slice(opl);
+        const v = localStorage.getItem(k);
+        if(v != null){ try{ if(localStorage.getItem(nk) == null) localStorage.setItem(nk, v); }catch(e){} }
+      }
+    }
+    try{ localStorage.setItem(mark, '1'); }catch(e){}
+  }catch(e){}
+})();
 const MAX_PROJECTS = 500;         // 历史项目上限
 let lib = { curId: null, items: [] }; // {curId, items:[{id, idea, outline, ..., step, title, logline, updatedAt}]}
 let gglib = [];                  // v8 词典库：[{id, name, note, savedAt, g:{characters,places,propernouns}}]
 
 const state = {
   mode: 'shortfilm',    // 'shortfilm' 短片 / 'longnovel' 经典长篇小说
-  recipe: 'mesh',       // (兼容旧字段) 旧式单一范式 id；新项目用 recipeSet
-  recipeSet: {},   // 内含 recFold 等界面状态；节奏/标题风格范式已整体移除
   wordRange: null,      // (兼容遗留) 不再作为长篇必填；保留字段避免旧快照破坏
   chapterRange: null,   // (兼容遗留) 同上
   totalWords: null,     // (兼容遗留) 同上
   chapterCount: null,   // 全书章节数量（整数 1-200，生成大纲前唯一必填数字；null=未设）
-  loglineRange: {min:100, max:300},   // v11 小说简介字数范围（生成大纲前用户可调）：{min,max}，max 上限 5000，min>max 自动对调；v230/T4 默认 100–300
   idea: '',
   coverPrompt: '',      // 整部小说封面提示词（场景页生成 / 长篇模式用）
   coverWithTitle: false,// 封面提示词是否包含「汉字书名」（false=纯画面无文字）
@@ -63,18 +96,21 @@ const state = {
   outlineConfirmed: false,
   glossAdherence: 80,   // v11 遵从度滑条已移除：固定基准 80（尽量沿用既有命名，允许小幅调整）；留有字段兼容旧快照
   glossAllowFill: false, // v8 「允许 AI 补充」开关：低遵从时是否放行 AI 新增实体
-  glossAutoFill: true,   // v8c 词典自动补全（默认开）：批量生成章节后自动提取正文中的新人物/地名/专名并入词典；关则只保留手动「📥 提取新增」
-  gsCollapsed: true,    // v8b：万物词典卡片是否整卡收缩（默认收缩，点圆形展开全部）
-  cpCollapsed: true,    // v10.14：逐章方向梗概卡是否收缩（默认折叠，点击标题展开）
-  ctCollapsed: true,    // v10.53：章节标题管理块是否收缩（默认折叠，点击标题展开）
+  gsCollapsed: false,    // v8b：万物词典卡片是否整卡收缩（默认展开，让用户一眼看到此设定表，避免误以为缺失）
+  cpCollapsed: false,   // 学校模式：规划师卡默认展开，初始态即铺开其内容（含🏫学校区）
+  ctCollapsed: false,    // v10.53：章节标题管理块是否收缩（默认展开，让用户看到全部章节标题）
   soCollapsed: false,   // v1.0.107：故事大纲卡「小说简介」是否折叠（默认展开，点标题收起）
-  gsCatFold: { char:true, place:true, proper:true, sub:true },   // v10.53：词典小类别（人物/地点/专名）默认折叠，点击标题展开（v1.0.113 增副线）
+  gsCatFold: { main:false, support:false, walkon:false, place:false, proper:false, sub:false },   // v1.0.307 词典小类别默认展开，让内容直接可见
+  deCollapsed: false,   // v1.0.28x：阶段5「词典充实器」卡片是否折叠（默认展开，点标题收起）
   subAutoFill: true,    // v1.0.113 副线追踪开关（默认开）：每章生成后自动吸收章节正文推进到副线进度；独立于 glossAutoFill
   subRecallRatio: 0.4,  // v1.0.113 副线消失超全书比例阈值（超过则回归须 ≤20 字轻提前情）
   timeAnchor: true,       // v1.0.175 时间锚开关（默认开）：规划师为每拍给定「支线·时点」，正文据此承接章节/支线时间
   timeAnchorsAuto: true,  // v1.0.175 承接真相源（默认开）：正文落库后轻量模型回写本章末尾支线/时点，作下一章承接硬真相
-  quickOutline: false,      // v1.0.178「默认大纲」开关（默认关）：打开后点「生成大纲」跳过 3 个候选角度选择，直接生成 1 个默认大纲
   teamShape: 'solo',       // v1.0.186 叙事主体·团队：solo=主角线 / trio=铁三角(+2) / quad=四方(+3) / quint=五人团(+4)
+  dictmasterHistory: [],   // 阶段3/3.3：词典达人历史（6 次，FIFO，独立体系）
+  dictmasterLatest: null,  // 阶段3/3.3：词典达人最近一次产物（含人物/关系表/地名专名关联表/世界观规则）
+  dictmasterRan: false,    // 阶段3/3.0：词典达人已触发并产出（②换方案锁定依据）
+  originalIdeaSnapshot: '', // 阶段3/3.7：触发词典达人时锁存的用户原始构想快照（录入框从未被优化稿覆盖）
   titleWriteBack: false, // v225/P5-C 章节标题回填已取消：标题只由「全书规划师」生成/定稿；字段保留仅为兼容旧存档读取（UI 开关已移除）
   langLayer: true,   // v1.0.129 语言分层自动调节（仅长篇生效，默认开）：书面语造氛围、口语推剧情；按题材自动定语言底色。关则不注入任何语言分层约束
   _narrIron: true,   // v1.0.133 叙事铁律总开关（默认开）：统一注入三大写作要求（硬铁律+软约束）到正文与规划师
@@ -83,11 +119,10 @@ const state = {
   plannerFinalized: false,  // v11：全书规划师是否已定稿全书章节标题（未定稿时正文任务行轻提示「沿用参考稿」）
   chapters: [],         // [{title, content, confirmed, editHistory:[]}]
   characters: [],       // [{name, role, profile:{...}, prompts:{...}}]
-  outlineHistory: [],   // 大纲版本历史（上限10）：[{outline, ts}] 覆盖前快照，支持预览/恢复
   expSel: [],           // 长篇导出勾选的章节索引（随项目快照持久化，P3-4）
   expOpenGroups: [],    // 长篇导出章节选择：手动展开的分组序号（配合限高内滚+分组折叠，缓解超长章节列表，P5）
   hist: { characters:[], scenes:[], cover:[], storyboard:[] },  // P1-3 角色/场景/封面/分镜覆盖前快照（各上限10）
-  chapterStyle: { tags: [], intensity: 2, collapsed: false, elemOpen: false },   // 写作风格（v2.0）：tags=风格id数组（多选，分 标题/梗概/章节 三组）；elemOpen=卡片内「章节风格」组是否展开（默认收拢）
+  chapterStyle: { tags: [], collapsed: false },   // 写作风格（v2.0）：tags=风格id数组（多选，归入章节风格组）
   scenes: [],           // [{name, 作用, description, prompt}]
   storyboard: [],       // [{镜号,章节,时长,景别,角度,运镜,主体,构图,光线,画面描述,对白,转场,出图提示词,连续性,剪辑动机}]
   boardConcepts: [],    // 每章一条 {视觉概念, 母题}（分镜生成时随章节返回）
@@ -97,15 +132,17 @@ const state = {
 let currentStep = 1;
 
 /* ---------- 4.6 Plus：状态字段默认值（第 1/4 章） ---------- */
-state.fcCollapsed = (typeof state.fcCollapsed === 'boolean') ? state.fcCollapsed : true;   // v1.0.163「事实与一致性看板」默认折叠
-state.rsCollapsed = (typeof state.rsCollapsed === 'boolean') ? state.rsCollapsed : true;   // v1.0.163「滚动摘要」默认折叠
+state.fcCollapsed = (typeof state.fcCollapsed === 'boolean') ? state.fcCollapsed : false;   // v1.0.307「事实与一致性看板」默认展开，让用户看到此面板
+state.rsCollapsed = (typeof state.rsCollapsed === 'boolean') ? state.rsCollapsed : false;   // v1.0.307「滚动摘要」默认展开
 state._fixQueue = state._fixQueue || [];
 state._chapterPartial = state._chapterPartial || {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存
-// v1.0.175：时间锚 / 承接真相源 字段兜底与默认值（旧存档无此字段时默认启用）
-state.timeAnchor = (typeof state.timeAnchor === 'boolean') ? state.timeAnchor : true;
+// v1.0.232（方案 B）：时间职能重构——节拍表已不再自产时间（v1.0.224），全书时间统一由 ③ 全局时间线唯一权威排定。
+// 「时间锚」不再是独立开关，而是等于「全局时间线是否已排定」：跑了时间线=有时间、正文自动注入；没跑=无时间、正文不注入。
+// 原「⏱ 时间锚」开关已从规划师工具栏移除。只保留「承接真相源」一个开关（timeAnchorsAuto）。
 state.timeAnchorsAuto = (typeof state.timeAnchorsAuto === 'boolean') ? state.timeAnchorsAuto : true;
-function _timeAnchorOn(){ return isLong() && state.timeAnchor !== false; }
-function _timeAnchorsAutoOn(){ return _timeAnchorOn() && state.timeAnchorsAuto !== false; }
+state.timeAnchor = true; // 遗留兼容：已弃用，时间是否生效改为以 outline._globalTimeline 是否存在为准
+function _timeAnchorOn(){ const _gt = state.outline && state.outline._globalTimeline; return !!_gt && ( (String(_gt.text||'').trim()) || (Array.isArray(_gt.chapters) && _gt.chapters.length) ); }   // v1.0.273：时间线可为纯文本（_gt.text）或旧 JSON（_gt.chapters），两者都视为生效
+function _timeAnchorsAutoOn(){ return isLong() && state.timeAnchorsAuto !== false; }
 // v1.0.175：时间锚解析与倒流检测（启发式，仅供 UI 警示，不作硬校验）
 function _timeBranch(s){ s = String(s||'').trim(); if(!s) return ''; const i = s.search(/[·|｜.．:：－\-]/); return i>0 ? s.slice(0,i).trim() : s; }
 function _cnDayNum(n){ const t={'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10,'十一':11,'十二':12,'十三':13,'十四':14,'十五':15,'十六':16,'十七':17,'十八':18,'十九':19,'二十':20}; return t[n]!=null ? t[n] : null; }
@@ -120,7 +157,8 @@ function _timeOrdinal(s){
   let hr=-1; for(const [w,h] of hrWords){ if(s.includes(w)){ hr=h; break; } }
   if(hr===-1){ const hf=s.match(/第\s*(\d+)\s*个?小时|(\d+)\s*(?:点|时)/); if(hf&&(hf[1]||hf[2])) hr = +(hf[1]||hf[2]); }
   if(day==null && hr===-1) return null;
-  return ((day==null?0:day-1)*24) + (hr===-1?12:hr);
+  // v1.0.233：无时段的整日默认取「当日起点」而非正午——避免『第N天』整日 被误判为比『第N天·上午』更晚（修复时间线看板/承接条的倒流误报）
+  return ((day==null?0:day-1)*24) + (hr===-1?0:hr);
 }
 // 相邻两段时间锚是否「疑似倒流」：同支线且都能解析出序号，且 prev > cur
 function _timeRewind(a, b){
@@ -147,54 +185,20 @@ function normalizeOutline(o){
   // v1.0.143：structure 整对象已彻底移除（subLines/hiddenLine/chapterPlan 均清），不再初始化
   if(o.structure) delete o.structure;
   o._rollingSummaries = o._rollingSummaries || [];
-  o._factCard = o._factCard || { characters:{}, timeline:[], unresolvedHooks:[], lastScene:'' };
-  // 4.8 旗舰版（板块三-1）：伏笔生命周期账本
-  o._foreshadowLedger = o._foreshadowLedger || { planted:[], resolved:[], overdue:[] };
+  o._factCard = o._factCard || { characters:{}, timeline:[], lastScene:'' };   // v1.0.280：unresolvedHooks 已随伏笔网移除
   if(Array.isArray(o.chapterPlans)){
     o.chapterPlans = o.chapterPlans.map(p => {
-      if(typeof p === 'string') return { beats:[], emotionalArc:'', requiredEntities:[] };   // 旧字符串形态（原主线简述）视为旧数据，直接丢弃
+      if(typeof p === 'string') return { beatsText:'', emotionalArc:'', requiredEntities:[] };   // 旧字符串形态（原主线简述）视为旧数据，直接丢弃
       p = p || {};
-      delete p.summary; delete p.advance;   // 主线简述/主线推进字段已彻底移除，仅保留 beats/emotionalArc/requiredEntities
-      p.beats = Array.isArray(p.beats) ? p.beats : [];
-      p.beats = p.beats.map(b => (b && typeof b==='object') ? b : { type:'', event:'', emotional:'', requiredEntities:[], foreshadowing:[], time:'' });   // v1.0.175：节拍恒为对象兜底
-      p.beats.forEach(b => { if(b.time==null) b.time=''; });   // v1.0.175：时间锚字段兜底（旧数据补空）
+      delete p.summary; delete p.advance;   // 主线简述/主线推进字段已彻底移除
+      // v1.0.285：旧 JSON beats 数组彻底退役——不再兜底补齐/修复，直接清除残留（beatsText 自 v1.0.273 起为节拍表唯一形态，原样保留）
+      delete p.beats;
       p.requiredEntities = Array.isArray(p.requiredEntities) ? p.requiredEntities : [];
       return p;
     });
   }
   if(o._mainlineLedger) delete o._mainlineLedger;   // 主线进度账随主线简述一并移除（旧存档静默清理）
-  // v1.0.140：伏笔章号载入自愈——统一为 0 基，expectedCh 钳制到 [chPlanted+1, total-1]，
-  // 修复历史数据中「6 章书出现第 7/8/11 章回收」的越界问题，并重算逾期。
-  clampForeshadowLedger(o);
-}
-
-// v1.0.140：伏笔章号统一钳制（0 基索引）。expectedCh 永远落在 (chPlanted, total-1] 区间，
-// 即回收章严格在植入章之后、且不越过全书最后一章。任何写入口都应经过此函数或遵循同一约定。
-function clampForeshadowLedger(o){
-  const ledger = o && o._foreshadowLedger; if(!ledger) return;
-  const total = (o.chapters && o.chapters.length) || 1;
-  const maxCh = total - 1;
-  ledger.planted = (Array.isArray(ledger.planted)?ledger.planted:[]).map(p=>{
-    if(!p || typeof p!=='object') return p;
-    let cp = Number.isFinite(+p.chPlanted) ? Math.round(+p.chPlanted) : 0;
-    cp = Math.max(0, Math.min(maxCh, cp));
-    let ec = Number.isFinite(+p.expectedCh) ? Math.round(+p.expectedCh) : (cp+1);
-    // 回收章必须晚于植入章，且不越过全书末尾
-    ec = Math.max(cp+1, Math.min(maxCh, ec));
-    // 若植入章已是最后一章，无法再晚，则与植入章同章（显示时由 UI 标注"本章内回收"）
-    if(ec <= cp) ec = cp;
-    p.chPlanted = cp; p.expectedCh = ec;
-    return p;
-  });
-  ledger.resolved = (Array.isArray(ledger.resolved)?ledger.resolved:[]).map(r=>{
-    if(!r || typeof r!=='object') return r;
-    if(Number.isFinite(+r.chPlanted)) r.chPlanted = Math.max(0, Math.min(maxCh, Math.round(+r.chPlanted)));
-    if(Number.isFinite(+r.chResolved)) r.chResolved = Math.max(0, Math.min(maxCh, Math.round(+r.chResolved)));
-    return r;
-  });
-  // 逾期重算：以最后一章为参照（0 基），expectedCh 已过仍未回收即逾期
-  const curCh = maxCh;
-  ledger.overdue = ledger.planted.filter(p => p.expectedCh <= curCh && !ledger.resolved.some(r => r.id && r.id === p.id));
+  if(o._beatsHist) delete o._beatsHist;   // v1.0.291：节拍编排历史随阅读器历史功能退役——旧存档残留静默清理
 }
 
 /* 角色筛选状态 + Tom Select 实例池（render 重建前需销毁） */
@@ -212,7 +216,7 @@ const $ = (s, r=document) => r.querySelector(s);
 const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 
 // v237/904-4：提示时长 1800→4200ms；全部提示写入看板日志（localStorage 上限 200 条），toast 内嵌 📋 按钮随时回看
-const TOAST_LOG_KEY = 'fyp_toastLog_v1';
+const TOAST_LOG_KEY = nsKey('toastLog_v1');
 function toastLogPush(msg){
   try{
     const a = JSON.parse(localStorage.getItem(TOAST_LOG_KEY)||'[]');
@@ -231,6 +235,144 @@ function toast(msg){
   t.classList.remove('hidden');
   clearTimeout(t._t); t._t = setTimeout(()=>t.classList.add('hidden'), 4200);
 }
+/* ---------- 完成声音提示（v1.0.299） ----------
+ * Web Audio 本地合成提醒音，零素材、无需联网。
+ *   · 单个完成 —— 某一步（达人/充实/校长/老师/规划等）完成时，响「一声（叮咚）」
+ *   · 全部完成 —— 学校一键全跑完时，响「快速两声（上行）」
+ * 遵循浏览器自动播放策略：任意用户手势(pointerdown)全局解锁共享 AudioContext（幂等）；
+ * 开关存 localStorage（默认开），设置弹窗「🔔 完成声音提示」复选同步。 */
+const SND_KEY = (typeof nsKey==='function') ? nsKey('snd') : 'tz_snd_done';
+const SND_VOL_KEY = (typeof nsKey==='function') ? nsKey('snd_vol') : 'tz_snd_vol';
+const _snd = { ctx:null, enabled:_sndEnabled(), vol:_sndVol() };
+function _sndEnabled(){ try{ return localStorage.getItem(SND_KEY) !== '0'; }catch(e){ return true; } }
+function _sndVol(){ // 0..1
+  try{ const v = parseFloat(localStorage.getItem(SND_VOL_KEY)); return isFinite(v) ? Math.max(0, Math.min(1, v)) : 0.8; }catch(e){ return 0.8; }
+}
+function unlockAudio(){
+  if(!_snd.enabled) return;
+  try{
+    if(!_snd.ctx){ const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return; _snd.ctx = new AC(); }
+    if(_snd.ctx.state === 'suspended') _snd.ctx.resume().catch(()=>{});
+  }catch(e){}
+}
+function _sndBeep(freq, start, dur, gain){ // 单音（正弦包络：快起快落，避免刺耳）
+  if(!_snd.ctx) return;
+  try{
+    const base = (gain||0.22) * (_snd.vol||0);
+    if(base < 0.001) return;   // 音量调至 0 时静音
+    const o = _snd.ctx.createOscillator(), g = _snd.ctx.createGain();
+    o.type = 'sine'; o.frequency.value = freq; o.connect(g); g.connect(_snd.ctx.destination);
+    const t = _snd.ctx.currentTime + (start||0);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(base, t+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+(dur||0.18));
+    o.start(t); o.stop(t+(dur||0.18)+0.05);
+  }catch(e){}
+}
+// v1.0.305：完成声音拆成「两套独立音色库」——单个完成 / 全部完成 各 6 种、互不相同，各记各的，在顶部 🎨 主题面板挑选并试听。
+// —— 单个完成音库（轻巧收尾型）——
+const SND_SINGLE_PRESETS = [
+  { id:'be_dingdong', name:'经典叮咚',     seq:[[659.3,0,0.1],[880.0,0.12,0.2]] },
+  { id:'be_single',   name:'清亮单音',     seq:[[880.0,0,0.25]] },
+  { id:'be_duo',      name:'清脆双音',     seq:[[783.99,0,0.12],[1046.5,0.14,0.2]] },
+  { id:'be_tri',      name:'柔和三音',     seq:[[659.3,0,0.1],[784.0,0.12,0.12],[1046.5,0.24,0.2]] },
+  { id:'be_drop',     name:'水滴落音',     seq:[[1174.7,0,0.12],[880.0,0.16,0.22]] },
+  { id:'be_wind',     name:'风铃',         seq:[[1318.5,0,0.1],[987.8,0.13,0.12],[784.0,0.26,0.28]] }
+];
+// —— 全部完成音库（圆满喜庆型）——
+const SND_ALL_PRESETS = [
+  { id:'al_up2',      name:'快速两声上行', seq:[[1046.5,0,0.12],[1318.5,0.15,0.18]] },
+  { id:'al_triple',   name:'三连上行',     seq:[[1046.5,0,0.1],[1174.7,0.11,0.12],[1318.5,0.22,0.2]] },
+  { id:'al_joy',      name:'欢快双音',     seq:[[784.0,0,0.12],[1318.5,0.14,0.2]] },
+  { id:'al_arpeggio', name:'琶音上行',     seq:[[523.3,0,0.1],[659.3,0.1,0.12],[784.0,0.2,0.12],[1046.5,0.3,0.22]] },
+  { id:'al_fanfare',  name:'胜利号角',     seq:[[784.0,0,0.12],[1046.5,0.12,0.14],[1318.5,0.26,0.25]] },
+  { id:'al_ladder',   name:'四音阶梯',     seq:[[1046.5,0,0.1],[1174.7,0.1,0.11],[1318.5,0.2,0.11],[1568.0,0.3,0.24]] }
+];
+const SND_TSINGLE_KEY = (typeof nsKey==='function') ? nsKey('snd_t_beats') : 'tz_snd_t_beats'; // 键名沿用旧值，保留用户已选音色
+const SND_TALL_KEY   = (typeof nsKey==='function') ? nsKey('snd_t_all')   : 'tz_snd_t_all';
+function _sndSingleType(){ try{ const v = localStorage.getItem(SND_TSINGLE_KEY); return SND_SINGLE_PRESETS.some(x=>x.id===v) ? v : 'be_dingdong'; }catch(e){ return 'be_dingdong'; } }
+function _sndAllType(){   try{ const v = localStorage.getItem(SND_TALL_KEY);   return SND_ALL_PRESETS.some(x=>x.id===v) ? v : 'al_up2';   }catch(e){ return 'al_up2';   } }
+function setSoundSingleType(id){ try{ if(SND_SINGLE_PRESETS.some(x=>x.id===id)) localStorage.setItem(SND_TSINGLE_KEY, id); }catch(e){} }
+function setSoundAllType(id){   try{ if(SND_ALL_PRESETS.some(x=>x.id===id))   localStorage.setItem(SND_TALL_KEY,   id); }catch(e){} }
+function playDoneSound(kind){ // kind:'single' 单个完成 | 'all' 全部完成 —— 各用各的音色库
+  if(!_snd.enabled) return;
+  unlockAudio();
+  if(!_snd.ctx || _snd.ctx.state !== 'running') return;
+  const lib = (kind==='all') ? SND_ALL_PRESETS : SND_SINGLE_PRESETS;
+  const id  = (kind==='all') ? _sndAllType()   : _sndSingleType();
+  const p = lib.find(x=>x.id===id) || lib[0];
+  (p.seq||[]).forEach(s=> _sndBeep(s[0], s[1], s[2]));
+}
+// v1.0.305：填充「主题面板」里单个完成 / 全部完成各自的 6 种音色下拉并绑定试听（幂等）
+function initThemeSoundPanel(){
+  const sb = document.getElementById('cfgSndSingle'), sa = document.getElementById('cfgSndAll');
+  const optsB = SND_SINGLE_PRESETS.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  const optsA = SND_ALL_PRESETS.map(p=>`<option value="${p.id}">${p.name}</option>`).join('');
+  if(sb){
+    if(!sb._tsf){ sb.innerHTML = optsB; sb._tsf = 1; }
+    sb.value = _sndSingleType();
+    if(!sb._tsb){ sb._tsb = 1; sb.addEventListener('change', ()=>{ setSoundSingleType(sb.value); }); }
+  }
+  if(sa){
+    if(!sa._tsf){ sa.innerHTML = optsA; sa._tsf = 1; }
+    sa.value = _sndAllType();
+    if(!sa._tsb){ sa._tsb = 1; sa.addEventListener('change', ()=>{ setSoundAllType(sa.value); }); }
+  }
+  $$('[data-snd-prev]').forEach(b=>{ if(b._tsb) return; b._tsb = 1;
+    b.addEventListener('click', (ev)=>{ ev.stopPropagation(); playDoneSound(b.dataset.sndPrev); }); });
+}
+// v1.0.300：设置弹窗 + 规划师卡两处声音控件共用的公共 setter——写 _snd / localStorage，并同步刷新两处 UI，双向实时一致
+function setSoundEnabled(on){
+  try{ localStorage.setItem(SND_KEY, on?'1':'0'); }catch(e){}
+  _snd.enabled = on;
+  const s = document.getElementById('cfgSoundDone'); if(s) s.checked = on;
+  const c = document.getElementById('cpsSoundDone'); if(c) c.checked = on;
+}
+function setSoundVol(pct){
+  pct = Math.min(100, Math.max(0, Math.round(pct||0)));
+  _snd.vol = pct/100;
+  try{ localStorage.setItem(SND_VOL_KEY, String(_snd.vol)); }catch(e){}
+  const sv = document.getElementById('cfgSoundVol'); if(sv) sv.value = pct;
+  const svl = document.getElementById('cfgSoundVolLabel'); if(svl) svl.textContent = pct + '%';
+  const cv = document.getElementById('cpsSoundVol'); if(cv) cv.value = pct;
+  const cvl = document.getElementById('cpsSoundVolLb'); if(cvl) cvl.textContent = pct + '%';
+}
+// v1.0.300：规划师卡「单个完成声音 + 音量」绑定（与设置弹窗同源同键，_cpsBound 防重复绑定）
+function bindPlannerSoundTool(){
+  const ok = document.getElementById('cpsSoundDone');
+  const vol = document.getElementById('cpsSoundVol');
+  const lb = document.getElementById('cpsSoundVolLb');
+  if(!ok && !vol) return;
+  if(ok) ok.checked = _sndEnabled();
+  if(vol){ vol.value = Math.round((_snd.vol||0)*100); if(lb) lb.textContent = vol.value + '%'; }
+  if(ok && !ok._cpsBound){
+    ok._cpsBound = true;
+    ok.addEventListener('change', ()=> setSoundEnabled(!!ok.checked));
+  }
+  if(vol && !vol._cpsBound){
+    vol._cpsBound = true;
+    vol.addEventListener('input', ()=>{ setSoundVol(+vol.value||0); if(lb) lb.textContent = Math.round((_snd.vol||0)*100) + '%'; });
+    vol.addEventListener('change', ()=>{ playDoneSound('single'); });   // 松开音量滑杆即试听一声
+  }
+}
+// 任意用户手势即解锁（幂等，resume 无副作用）——点击「⚡一键四步」/节拍表按钮本身即一次解锁
+window.addEventListener('pointerdown', unlockAudio, {capture:true});
+window.addEventListener('keydown', unlockAudio, {capture:true});
+window.addEventListener('touchend', unlockAudio, {capture:true});
+(function initSoundUI(){
+  const apply = ()=>{ const el = document.getElementById('cfgSoundDone'); if(el) el.checked = _sndEnabled();
+    const vl = document.getElementById('cfgSoundVol'), lb = document.getElementById('cfgSoundVolLabel');
+    if(vl){ vl.value = Math.round((_snd.vol||0)*100); if(lb) lb.textContent = vl.value + '%'; } };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+  else apply();
+  const bind = ()=>{ const el = document.getElementById('cfgSoundDone'); if(!el) return;
+    el.addEventListener('change', ()=> setSoundEnabled(!!el.checked));
+    const vl = document.getElementById('cfgSoundVol');
+    if(vl){
+      vl.addEventListener('input', ()=>{ setSoundVol(+vl.value||0); });
+    } };
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', bind); else bind();
+})();
 // v237/904-4：消息看板——底部悬浮提示消失太快，看板记录全部提示（最新在上）可随时回看
 function openToastBoard(){
   const old = $('#toastBoardPanel'); if(old) old.remove();
@@ -300,29 +442,42 @@ function remainingEmptyChapters(){ return (state.chapters||[]).filter(c=> !(c.co
 function uid(p){ return (p||'id')+(++uidSeq)+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }   // v1.0.137 fix：原仅自增序号，刷新页面后 uidSeq 重置回 1000，新增组会与历史组拿到相同 ID（如两个 g1001），导致组间串名/串 Key。现追加时间戳+随机段保证跨会话唯一；会话内自增段保留，同会话也绝不重复。旧数据中的短 ID 仅作比较用、不解析格式，完全兼容。
 // v227「使用不同AI」分任务模型：任务档键清单（UI 分组渲染与 resolveActiveSpec 覆盖解析共用）。
 // 档位语义与 UI 分组见《使用不同ai.md》§3.2；调用点标注映射见同文 §1.3；测试连接（恒用全局）不在清单内。
-const TM_KEYS = ['chapter','outline','planBeats','plannerTitles','plannerAux',
-  'idea','titleAdvice','contentAdvice',
-  'glossary','subplot','strip','rolling','audit',
-  'assets','recipe'];
+const TM_KEYS = ['idea',
+  'plannerTitles','planBeats','planTimeline','plannerAux',
+  'dictmaster','chapter',
+  'strip','subplot','glossary','rolling',
+  'contentAdvice','assets','recipe'];
 
-function defaultModels(){ return [
+function glmModels(){ return [
+  {name:'glm-4.5-air', label:'GLM-4.5-Air（智谱 · 高性价比，现用）', kind:'pro'},
+  {name:'glm-4.5',      label:'GLM-4.5（智谱 · 旗舰满血版）',      kind:'pro'}
+]; }
+function deepseekModels(){ return [
   {name:'deepseek-v4-pro', label:'deepseek-v4-pro（质量最高，推荐）', kind:'pro'},
   {name:'deepseek-v4-flash', label:'deepseek-v4-flash（最快/最便宜）', kind:'flash'},
   {name:'deepseek-v4-flash-vision-exp', label:'deepseek-v4-flash-vision-exp（带视觉）', kind:'flash'}
 ]; }
-function cfgDeepSeekGroup(){ return {id:'deepseek', kind:'openai', label:'DeepSeek 官方', baseUrl:'https://api.deepseek.com', keys:[], models:defaultModels()}; }
+// v1.0.205 默认候选模型全集（GLM + DeepSeek 并存）：仅作「无存档/旧档缺 models」的兜底，GLM 优先
+function defaultModels(){ return glmModels().concat(deepseekModels()); }
+function cfgZhipuGroup(){ return {id:'zhipu', kind:'openai', label:'智谱 GLM', baseUrl:'https://open.bigmodel.cn/api/paas/v4', keys:[], models:glmModels(), keyInBody:false}; }
+function cfgDeepSeekGroup(){ return {id:'deepseek', kind:'openai', label:'DeepSeek 官方', baseUrl:'https://api.deepseek.com', keys:[], models:deepseekModels()}; }
 
 // 归一化 cfg：保证 groups/active 存在，迁移旧平铺配置。
 function normalizeCfg(cfg){
   cfg = cfg || {};
   if(!Array.isArray(cfg.groups)){
-    const g = cfgDeepSeekGroup();
-    if(cfg.apiKey){            // 旧版单 Key 迁移
+    const gz = cfgZhipuGroup();
+    const gd = cfgDeepSeekGroup();
+    if(cfg.apiKey){            // 旧版单 Key 迁移：旧 key 归属 DeepSeek 组
       const id = uid('k');
-      g.keys.push({id, label:'默认账号', key:cfg.apiKey});
+      gd.keys.push({id, label:'默认账号', key:cfg.apiKey});
+      cfg.groups = [gz, gd];
       cfg.active = { groupId:'deepseek', keyId:id, model: cfg.model || 'deepseek-v4-pro' };
+    } else {
+      // v1.0.205 默认组并存：无存档时默认智谱 GLM（glm-4.5-air），DeepSeek 组备选
+      cfg.groups = [gz, gd];
+      cfg.active = { groupId:'zhipu', keyId: (gz.keys[0]||{}).id||null, model: (gz.models[0]||{}).name || 'glm-4.5-air' };
     }
-    cfg.groups = [g];
   }
   // v1.0.137 fix：存量数据自愈——旧版本已产生的重复组 ID（如两个 g1001）会让两组永远串在一起。
   // 保留每组第一个出现的 ID，其余重复组改发新 ID（active.groupId 在 find 语义下本就指向第一个匹配组，无需修正）。
@@ -344,8 +499,8 @@ function normalizeCfg(cfg){
   if(group){
     const key = group.keys.find(k=>k.id===act.keyId) || group.keys[0];
     const model = group.models.find(m=>m.name===act.model)
-      || group.models.find(m=>m.name==='deepseek-v4-pro') || group.models[0];
-    cfg.active = { groupId: group.id, keyId: key ? key.id : null, model: model ? model.name : 'deepseek-v4-pro' };
+      || group.models.find(m=>m.name==='glm-4.5-air') || group.models[0];
+    cfg.active = { groupId: group.id, keyId: key ? key.id : null, model: model ? model.name : (group.models[0] ? group.models[0].name : '') };
   } else {
     cfg.active = { groupId:null, keyId:null, model:'' };
   }
@@ -395,16 +550,20 @@ function resolveActiveSpec(taskKey){
     apiKey: key.key || '',
     keyInBody: !!group.keyInBody,   // v1.0.136 传递方式：请求体 api_key（规避 Bearer 头）
     model: model.name || 'deepseek-v4-pro',
-    temperature: (cfg.temperature==null ? 0.7 : cfg.temperature),
-    outlineTemp: (cfg.outlineTemp==null ? 0.7 : cfg.outlineTemp),   // v10.8 分任务温度：大纲
+    temperature: (cfg.temperature==null ? 0.6 : cfg.temperature),
     ideaTemp:    (cfg.ideaTemp==null ? 0.5 : cfg.ideaTemp),          // v10.13 分任务温度：优化构想
+    dictmasterTemp: (cfg.dictmasterTemp==null ? 0.5 : cfg.dictmasterTemp),  // v1.0.207 新增分任务温度：词典达人（万物词典契约生成）
+    assetsTemp:  (cfg.assetsTemp==null ? 0.7 : cfg.assetsTemp),      // v1.0.208 分任务温度：封面/人物/场景/分镜等资产生成
     titleTemp:   (cfg.titleTemp==null ? 0.5 : cfg.titleTemp),        // v10.15 分任务温度：标题 AI
     chapterTemp: (cfg.chapterTemp==null ? 0.5 : cfg.chapterTemp),   // v10.8 分任务温度：章节
     qcTemp:      (cfg.qcTemp==null ? 0.2 : cfg.qcTemp),              // 分任务温度：词库提取（严谨低温）
     planTemp:    (cfg.planTemp==null ? 0.4 : cfg.planTemp),          // v10.11 分任务温度：章节规划（节拍表）
+    planBeatsTemp:(cfg.planBeatsTemp==null ? 0.4 : cfg.planBeatsTemp),     // v1.0.219 规划师·节拍表 独立温度
+    planTimelineTemp:(cfg.planTimelineTemp==null ? 0.4 : cfg.planTimelineTemp),  // v1.0.219 规划师·全局时间线 独立温度
+    plannerTitlesTemp:(cfg.plannerTitlesTemp==null ? 0.4 : cfg.plannerTitlesTemp),// v1.0.219 规划师·标题定稿 独立温度
+    plannerAuxTemp:(cfg.plannerAuxTemp==null ? 0.4 : cfg.plannerAuxTemp),   // v1.0.280 词典充实 独立温度（原规划师·伏笔已随伏笔网移除）
     stripTemp:   (cfg.stripTemp==null ? 1.0 : cfg.stripTemp),         // v1.0.115 分任务温度：本章梗概（速读，创作温度偏高）
     subplotTemp: (cfg.subplotTemp==null ? 0.25 : cfg.subplotTemp),    // 分任务温度：支线进度更新（契约类窄采样）
-    auditTemp:   (cfg.auditTemp==null ? 0.2 : cfg.auditTemp),        // 分任务温度：审校/锚点提取（契约类窄采样）
     rollingTemp: (cfg.rollingTemp==null ? 0.3 : cfg.rollingTemp),    // 分任务温度：滚动摘要（忠实压缩）
     contentAdviseTemp: (cfg.contentAdviseTemp==null ? 0.6 : cfg.contentAdviseTemp)  // 分任务温度：内容建议（建议类）
   };
@@ -457,8 +616,6 @@ function makeId(){ return 'p' + Date.now().toString(36) + Math.random().toString
 function projectSnapshot(){
   return {
     mode: state.mode || 'shortfilm',
-    recipe: state.recipe || 'mesh',
-    recipeSet: state.recipeSet || {},
     wordRange: state.wordRange || null,
     chapterRange: state.chapterRange || null,
     totalWords: state.totalWords || null,
@@ -470,7 +627,6 @@ function projectSnapshot(){
     outlineConfirmed: state.outlineConfirmed,
     glossAdherence: state.glossAdherence,
     glossAllowFill: state.glossAllowFill,
-    glossAutoFill: state.glossAutoFill,
     glossSeenTs: Number(state._glossSeenTs) || 0,   // v226/8.2 词典「🆕 新增」已读水位线（随项目持久化）
     langLayer: (typeof state.langLayer === 'boolean') ? state.langLayer : true,   // v1.0.129 语言分层开关随项目持久化
     _narrIron: state._narrIron,   // v1.0.133 叙事铁律开关随项目持久化
@@ -478,6 +634,8 @@ function projectSnapshot(){
     gsCollapsed: state.gsCollapsed,
     cpCollapsed: state.cpCollapsed,   // v10.14 梗概卡折叠透传
     soCollapsed: !!state.soCollapsed,
+    deCollapsed: !!state.deCollapsed,   // v1.0.28x：词典充实器卡片折叠态
+    gsCatFold: (state.gsCatFold && typeof state.gsCatFold === 'object') ? state.gsCatFold : { main:false, support:false, walkon:false, place:false, proper:false, sub:false },   // 词典小类别折叠态（仅存结构，运行时各键默认见 state）
     useChapterPlans: true,   // v10.29 恒参与生成（开关已移除，节拍表始终注入）
     plannerFinalized: !!state.plannerFinalized,   // 4.5 规划师定稿标记（genChapterPlans 分批版写入）
     expOpenGroups: state.expOpenGroups,   // P5 长篇导出分组折叠所展开的分组透传
@@ -488,19 +646,13 @@ function projectSnapshot(){
     characters: state.characters,
     ctAdviceHist: Array.isArray(state.ctAdviceHist) ? state.ctAdviceHist : [],   // v10.59 章节标题 AI 建议快照
     contentAdviceHist: Array.isArray(state.contentAdviceHist) ? state.contentAdviceHist : [],   // v10.59 章节内容 AI 建议快照
-    outlineHistory: state.outlineHistory,
     expSel: Array.isArray(state.expSel) ? state.expSel : [],
     hist: state.hist || { characters:[], scenes:[], cover:[], storyboard:[] },
-    chapterStyle: state.chapterStyle || { tags: [], intensity: 2, collapsed: false },
+    chapterStyle: state.chapterStyle || { tags: [], collapsed: false },
     fcCollapsed: !!state.fcCollapsed,   // 4.6 Plus 事实看板卡折叠
     rsCollapsed: !!state.rsCollapsed,   // 4.6 Plus 滚动摘要卡折叠
     _fixQueue: Array.isArray(state._fixQueue) ? state._fixQueue : [],   // 4.6 Plus 正文修复队列
     aiNetwork: state.aiNetwork || { stage:'idle', running:[], completed:[], blockedBy:{} },   // 4.8 旗舰版 AI 协作网络（刷新不丢）
-    _lastPolishBrief: state._lastPolishBrief || null,   // 4.7 Pro 优化构想结构化简报（供大纲 AI 经 formatNavBeaconForOutline 注入）
-    _lastPolishIdeaText: state._lastPolishIdeaText || '',   // v230/1-C：纯文本优化稿存档（新 PRO 无 JSON brief 时构想→大纲的上下文通道）
-    _outlineCandidates: state._outlineCandidates || null,   // v230/3.1：多大纲候选 {batchTs, items:[{id,label,outline}], chosenId}
-    _outlineCandsFolded: !!state._outlineCandsFolded,   // v239/905-2：候选大纲区折叠状态（选择完成后可手动折叠，随项目持久化）
-    quickOutline: !!state.quickOutline,   // v1.0.178「默认大纲」开关状态随项目持久化
     teamShape: (state.teamShape==='dual'||state.teamShape==='trio'||state.teamShape==='quad'||state.teamShape==='quint') ? state.teamShape : 'solo',   // v1.0.188 叙事主体（主角线/双主角/团队）随项目持久化
     _chapterPartial: state._chapterPartial || {},   // 4.8 旗舰版（板块一-3）：流式中断续写缓存（刷新不丢）
     scenes: state.scenes,
@@ -512,14 +664,16 @@ function projectSnapshot(){
     title: (state.outline && state.outline.title) || (state.idea ? state.idea.trim().slice(0,20) : '未命名作品'),
     logline: (state.outline && state.outline.logline) || '',
     _lastCpRaw: state._lastCpRaw || '',
-    _lastTitlesRaw: state._lastTitlesRaw || ''
+    dictmasterHistory: Array.isArray(state.dictmasterHistory) ? state.dictmasterHistory : [],   // 阶段3/3.3：词典达人历史透传
+    dictmasterLatest: state.dictmasterLatest || null,   // 阶段3/3.3
+    dictmasterRan: !!state.dictmasterRan,   // 阶段3/3.0
+    originalIdeaSnapshot: state.originalIdeaSnapshot || '',   // 阶段3/3.7
+    school: (state.school && typeof state.school === 'object') ? state.school : null   // 学校模式：校长/老师 产出 + 各步重试/完成标记（随项目持久化）
   };
 }
 // 把项目快照写入当前 state；内容缺失/损坏时切到空白但保持调用方可控
 function applyProject(p){
   state.mode = (p.mode === 'longnovel') ? 'longnovel' : 'shortfilm';
-  state.recipe = p.recipe || 'mesh';
-  state.recipeSet = migrateRecipeSet(p.recipeSet, p.recipe);
   state.wordRange = (p.wordRange && p.wordRange.min && p.wordRange.max) ? {min:+p.wordRange.min, max:+p.wordRange.max} : (p.chapterRange ? null : null);
   state.chapterRange = (p.chapterRange && p.chapterRange.min && p.chapterRange.max) ? {min:+p.chapterRange.min, max:+p.chapterRange.max} : null;
   state.totalWords = (p.totalWords && +p.totalWords>0) ? +p.totalWords : null;
@@ -533,14 +687,17 @@ function applyProject(p){
   state.outlineConfirmed = !!p.outlineConfirmed;
   state.glossAdherence = (typeof p.glossAdherence === 'number') ? p.glossAdherence : 60;
   state.glossAllowFill = !!p.glossAllowFill;
-  state.glossAutoFill = (typeof p.glossAutoFill === 'boolean') ? p.glossAutoFill : true;
   state._glossSeenTs = Number(p.glossSeenTs) || 0;   // v226/8.2 已读水位线恢复（旧存档缺省 0；旧词条无 _srcTs 恒不标新，兼容）
   state.langLayer = (typeof p.langLayer === 'boolean') ? p.langLayer : true;   // v1.0.129 语言分层开关恢复（旧项目缺省开）
   state._narrIron = (typeof p._narrIron === 'boolean') ? p._narrIron : true;   // v1.0.133 叙事铁律开关恢复（旧项目缺省开）
   state.banList = (p.banList && typeof p.banList === 'object') ? normalizeBanList(p.banList) : null;   // v1.0.132 禁则清单恢复（旧项目缺省 null=内置默认）
-  state.gsCollapsed = (typeof p.gsCollapsed === 'boolean') ? p.gsCollapsed : true;
+  state.gsCollapsed = (typeof p.gsCollapsed === 'boolean') ? p.gsCollapsed : false;   // v1.0.307 万物词典默认展开，避免误以为缺失
   state.cpCollapsed = (typeof p.cpCollapsed === 'boolean') ? p.cpCollapsed : true;   // v10.14 梗概卡默认折叠
   state.soCollapsed = !!p.soCollapsed;
+  state.deCollapsed = !!p.deCollapsed;   // v1.0.28x：词典充实器卡片折叠态恢复
+  state.gsCatFold = (p.gsCatFold && typeof p.gsCatFold === 'object') ? p.gsCatFold : { main:false, support:false, walkon:false, place:false, proper:false, sub:false };   // 词典小类别折叠态恢复
+  // v1.0.28x：旧存档 gsCatFold 只有旧四键（char/place/proper/sub），补新三键默认折叠
+  const _gcf = state.gsCatFold; if(_gcf && typeof _gcf === 'object'){ ['main','support','walkon'].forEach(k=>{ if(typeof _gcf[k] !== 'boolean') _gcf[k] = false; }); }
   state.useChapterPlans = true;   // v10.29 恒参与生成（开关已移除，节拍表始终注入）
   state.plannerFinalized = (typeof p.plannerFinalized === 'boolean') ? p.plannerFinalized : false;   // v11 标题定稿标记（旧项目默认未定稿）
   state.expOpenGroups = Array.isArray(p.expOpenGroups) ? p.expOpenGroups : [];   // P5 长篇导出分组折叠所展开的分组
@@ -557,7 +714,6 @@ function applyProject(p){
   state.characters = p.characters || [];
   state.ctAdviceHist = Array.isArray(p.ctAdviceHist) ? p.ctAdviceHist : [];   // v10.59 老项目缺省空
   state.contentAdviceHist = Array.isArray(p.contentAdviceHist) ? p.contentAdviceHist : [];   // v10.59 老项目缺省空
-  state.outlineHistory = Array.isArray(p.outlineHistory) ? p.outlineHistory : [];
   state.expSel = Array.isArray(p.expSel) ? p.expSel.filter(i=> Number.isInteger(i)) : [];
   state.hist = (p.hist && typeof p.hist === 'object') ? {
     characters: Array.isArray(p.hist.characters)?p.hist.characters:[],
@@ -566,14 +722,13 @@ function applyProject(p){
     storyboard: Array.isArray(p.hist.storyboard)?p.hist.storyboard:[]
   } : { characters:[], scenes:[], cover:[], storyboard:[] };
   state.chapterStyle = (p.chapterStyle && typeof p.chapterStyle === 'object')
-    ? { tags: Array.isArray(p.chapterStyle.tags)?p.chapterStyle.tags:[], intensity: (p.chapterStyle.intensity===1||p.chapterStyle.intensity===3)?p.chapterStyle.intensity:2, collapsed: !!p.chapterStyle.collapsed, elemOpen: p.chapterStyle.elemOpen === true }
-    : { tags: [], intensity: 2, collapsed: false, elemOpen: false };
+    ? { tags: Array.isArray(p.chapterStyle.tags)?p.chapterStyle.tags:[], collapsed: !!p.chapterStyle.collapsed }
+    : { tags: [], collapsed: false };
   wsDraft = null;   // v2.1 切作品后草稿重置（以新作品的生效配置为起点）
   state.scenes = p.scenes || [];
   state.storyboard = p.storyboard || [];
   state.boardConcepts = p.boardConcepts || [];
   state._lastCpRaw = p._lastCpRaw || '';
-  state._lastTitlesRaw = p._lastTitlesRaw || '';
   state.titleHistory = Array.isArray(p.titleHistory) ? p.titleHistory : [];
   state.raw = p.raw || {};
   currentStep = (p.step && p.step >= 1 && p.step <= 5) ? p.step : 1;
@@ -582,11 +737,15 @@ function applyProject(p){
   state.rsCollapsed = !!p.rsCollapsed;
   state._fixQueue = Array.isArray(p._fixQueue) ? p._fixQueue : [];
   state.aiNetwork = (p.aiNetwork && typeof p.aiNetwork === 'object') ? p.aiNetwork : { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络恢复
-  state._lastPolishBrief = (p._lastPolishBrief && typeof p._lastPolishBrief === 'object') ? p._lastPolishBrief : null;   // 4.7 Pro 优化构想简报恢复
-  state._lastPolishIdeaText = (typeof p._lastPolishIdeaText === 'string') ? p._lastPolishIdeaText : '';   // v230/1-C 纯文本优化稿恢复
-  state._outlineCandidates = (p._outlineCandidates && typeof p._outlineCandidates === 'object' && Array.isArray(p._outlineCandidates.items)) ? p._outlineCandidates : null;   // v230/3.1 多大纲候选恢复
-  state._outlineCandsFolded = !!p._outlineCandsFolded;   // v239/905-2 候选大纲区折叠状态恢复
-  state.quickOutline = !!p.quickOutline;   // v1.0.178「默认大纲」开关状态恢复
+  state.dictmasterHistory = Array.isArray(p.dictmasterHistory) ? p.dictmasterHistory : [];   // 阶段3/3.3：词典达人历史恢复
+  state.dictmasterLatest = (p.dictmasterLatest && typeof p.dictmasterLatest === 'object') ? p.dictmasterLatest : null;   // 阶段3/3.3
+  state.dictmasterRan = !!p.dictmasterRan;   // 阶段3/3.0
+  state.originalIdeaSnapshot = (typeof p.originalIdeaSnapshot === 'string') ? p.originalIdeaSnapshot : '';   // 阶段3/3.7
+  state.school = (p.school && typeof p.school === 'object') ? p.school : null;   // 学校模式恢复（校长/老师 产出 + 重试/完成标记）
+  if(!state.school || typeof state.school !== 'object') state.school = {};
+  if(!state.school.finished || typeof state.school.finished !== 'object') state.school.finished = {};
+  if(!state.school.retries || typeof state.school.retries !== 'object') state.school.retries = {};
+  if(!Array.isArray(state.school.teachers)) state.school.teachers = [];   // 阶段3/3.7
   state.teamShape = (p.teamShape==='dual'||p.teamShape==='trio'||p.teamShape==='quad'||p.teamShape==='quint') ? p.teamShape : 'solo';   // v1.0.188 叙事主体恢复
   state._chapterPartial = (p._chapterPartial && typeof p._chapterPartial === 'object') ? p._chapterPartial : {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存恢复
   // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 状态已随「叙事》人设/张力/沙盘」清理整体移除（不再持久化）
@@ -594,43 +753,32 @@ function applyProject(p){
 }
 function clearState(){
   state.mode = 'shortfilm';
-  state.recipe = 'mesh';
-  state.recipeSet = {};
   state.wordRange = null; state.chapterRange = null; state.totalWords = null; state.chapterCount = null;
   state.idea = ''; state.outline = null; state.coverPrompt = ''; state.coverWithTitle = false; state.outlineConfirmed = false;
-  state.glossAdherence = 60; state.glossAllowFill = false; state.glossAutoFill = true; state.gsCollapsed = true;
+  state.glossAdherence = 60; state.glossAllowFill = false; state.gsCollapsed = false;
   state.langLayer = true;   // v1.0.129 语言分层开关：新建作品默认开（仅长篇生效）
   state._narrIron = true;   // v1.0.133 叙事铁律总开关：新建作品默认开
   state.banList = null;   // v1.0.132 禁则清单：新建作品缺省用内置默认（无需修改数据）
   state.useChapterPlans = true;  // v10.29 新建作品默认参与生成
   state.chapters = []; state.characters = []; state.scenes = []; state.storyboard = []; state.boardConcepts = []; state.titleHistory = []; state.raw = {};
   state.ctAdviceHist = []; state.contentAdviceHist = [];   // v10.59 随项目的 AI 建议快照（章节标题 / 章节内容）
-  state.outlineHistory = []; state.expSel = [];
+  state.expSel = [];
   state.hist = { characters:[], scenes:[], cover:[], storyboard:[] };
-  state.chapterStyle = { tags: [], intensity: 2, collapsed: false, elemOpen: false };
-  state.fcCollapsed = true; state.rsCollapsed = true;   // v1.0.163 折叠态重置（默认收合）
+  state.chapterStyle = { tags: [], collapsed: false };
+  state.fcCollapsed = false; state.rsCollapsed = false;   // v1.0.307 折叠态重置（默认展开）
   state._fixQueue = [];   // 4.6 Plus 修复队列重置
-  state._lastPolishBrief = null;   // 4.7 Pro 优化构想简报重置
-  state._lastPolishIdeaText = '';   // v230/1-C 纯文本优化稿重置
-  state._outlineCandidates = null;   // v230/3.1 多大纲候选重置
-  state._outlineCandsFolded = false;   // v239/905-2 候选大纲区折叠状态重置
-  state.quickOutline = false;   // v1.0.178「默认大纲」开关重置为默认关闭
+  state.dictmasterHistory = [];   // 阶段3/3.3：词典达人历史重置
+  state.dictmasterLatest = null;   // 阶段3/3.3
+  state.dictmasterRan = false;   // 阶段3/3.0
+  state.originalIdeaSnapshot = '';   // 阶段3/3.7
+  state.school = null;   // 学校模式：新项目/重置清空（校长/老师产出 + 重试/完成标记）
   state.teamShape = 'solo';   // v1.0.186 叙事主体·团队重置为默认「主角线」
   state._chapterPartial = {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存重置
   state.aiNetwork = { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络重置
   // v1.0.140：_tensionCurve / _personaCards / _branchSandboxes 已随菜单清理整体移除（不再初始化）
   state._lastCpRaw = '';
-  state._lastTitlesRaw = '';
   wsDraft = null;   // v2.1 新项目草稿重置
   currentStep = 1;
-}
-// 兼容旧档 recipe/recipeSet → 现用 recipeSet（节奏/标题风格范式已移除）
-function migrateRecipeSet(set, legacyRecipe){
-  // 节奏/标题风格范式已整体移除（遗留清理）：仅保留 recFold 等对象字段，丢弃已废弃的 rhythm/titleStyle
-  const safe = (set && typeof set === 'object') ? { ...set } : {};
-  delete safe.rhythm;
-  delete safe.titleStyle;
-  return safe;
 }
 // ============ 存储层 v12：每项目一条 localStorage，超限单条自动降级 IndexedDB ============
 // 设计（保持内存模型 lib={curId,items} 不变，仅换落盘/加载通道，调用方无需改动）：
@@ -736,14 +884,15 @@ async function loadState(){
   migrateOldState();
 }
 // v1.0.130 一次性迁移旧版多项目数据到新通道（仅当新索引为空时触发；成功后正式关闭旧通道）。
-// 迁移源：A) localStorage 旧键 fyp_lib（旧版多项目快照数组）; B) 旧 IDB 全库 projects store（idbList）。
-// 目标：写入新索引 fyp_index + 每项目单条 fyp_proj_<id>（超限项目复用 st=idb 单条）。
+// 迁移源：A) 本命名空间 lib 副本 nsKey('lib')（来源=旧共享裸 fyp_lib，见 migrateSharedOnce）; B) 旧 IDB 全库 projects store（idbListLegacy）。
+// 目标：写入新索引 nk('index') + 每项目单条 nk('proj_')<id>（超限项目复用 st=idb 单条）。
+// 只消费本站 ns 副本，不触碰其它站可读的旧共享裸 fyp_lib，从而实现多站隔离。
 // 返回 true 表示已迁移到至少一个项目并加载；调用方凭此短路后续逻辑。
 async function migrateLegacyLibrary(){
   let legacy = [];
-  // A) localStorage 旧键 fyp_lib：旧版为 {items:[], curId} 或直接数组，逐个取其（含每个项目自身 id）
+  // A) 本命名空间 lib 副本：旧版为 {items:[], curId} 或直接数组，逐个取其（含每个项目自身 id）
   try{
-    const raw = localStorage.getItem('fyp_lib');
+    const raw = localStorage.getItem(nsKey('lib'));
     if(raw){
       const parsed = JSON.parse(raw);
       const arr = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.items)) ? parsed.items : null;
@@ -752,10 +901,10 @@ async function migrateLegacyLibrary(){
       if(curId && !legacy.some(x=> x.id === curId)){ /* 找不到 curId 归属，忽略 */ }
     }
   }catch(e){}
-  // B) 旧 IDB 全库 projects store：idbList 返回整库快照数组
+  // B) 旧共享 IDB 全库 projects store：idbListLegacy 读 IDB_LEGACY_NAME(fyp_db) 旧库整库快照数组
   try{
-    if(idbAvailable() && typeof idbList === 'function'){
-      const list = await idbList();
+    if(idbAvailable() && typeof idbListLegacy === 'function'){
+      const list = await idbListLegacy();
       if(Array.isArray(list)) legacy = legacy.concat(list.filter(x=> x && typeof x === 'object' && x.id));
     }
   }catch(e){}
@@ -775,7 +924,7 @@ async function migrateLegacyLibrary(){
   // 迁移成功后加载当前项目
   const cur = lib.items.find(i=> i.id === lib.curId) || lib.items[0];
   if(cur){ lib.curId = cur.id; applyProject(cur); }
-  try{ localStorage.removeItem('fyp_lib'); }catch(e){}   // 一次性：迁移完成即清空旧键，正式关闭旧通道
+  try{ localStorage.removeItem(nsKey('lib')); }catch(e){}   // 一次性：本站迁移完成即清空本 ns 副本（共享裸 fyp_lib 保留，供其它站各自迁移）
   return true;
 }
 // 把任意旧版项目快照规范化为新形状（兼容字段缺省/旧字段名），保证 applyProject 可读。
@@ -785,7 +934,6 @@ function normalizeLegacyProject(p){
   out.mode = (s.mode === 'longnovel' || s.mode === 'long') ? 'longnovel' : (s.mode || 'shortfilm');
   out.mode = (out.mode === 'long') ? 'longnovel' : out.mode;
   out.mode = (out.mode === 'short' || out.mode === 'shortfilm') ? 'shortfilm' : out.mode;
-  out.recipe = s.recipe || 'mesh';
   out.idea = s.idea != null ? s.idea : '';
   out.outline = s.outline || null;
   out.outlineConfirmed = !!s.outlineConfirmed;
@@ -796,10 +944,9 @@ function normalizeLegacyProject(p){
   out.qcRecord = undefined;   // 无残留
   if(out.outline) delete out.outline.titleQC;
   out.chapterStyle = (s.chapterStyle && typeof s.chapterStyle === 'object')
-    ? { tags: Array.isArray(s.chapterStyle.tags)?s.chapterStyle.tags:[], intensity:(s.chapterStyle.intensity===1||s.chapterStyle.intensity===3)?s.chapterStyle.intensity:2, collapsed:!!s.chapterStyle.collapsed }
-    : { tags:[], intensity:2, collapsed:false };
+    ? { tags: Array.isArray(s.chapterStyle.tags)?s.chapterStyle.tags:[], collapsed:!!s.chapterStyle.collapsed }
+    : { tags:[], collapsed:false };
   out.glossAdherence = (typeof s.glossAdherence === 'number') ? s.glossAdherence : 60;
-  out.glossAutoFill = (s.glossAutoFill === undefined) ? true : !!s.glossAutoFill;
   out.langLayer = (s.langLayer === undefined) ? true : !!s.langLayer;
   out._narrIron = (s._narrIron === undefined) ? true : !!s._narrIron;
   out.banList = (s.banList && typeof s.banList === 'object') ? normalizeBanList(s.banList) : null;   // v1.0.132 禁则清单随项目持久化（null=未自定义）
@@ -847,7 +994,7 @@ function persist(){
 // 函数名沿用 callDeepSeek；内部为通用 OpenAI 兼容协议，非 DeepSeek 型号也照常调用。
 
 /* ---------- P2-1 AI 请求/响应日志（最近50条，只存本机，可一键清空） ---------- */
-const KEY_AILOG = 'fyp_ailog';
+const KEY_AILOG = nsKey('ailog');
 let aiLog = [];   // [{ts, task, temp, sys, user, resp, ms, ok, err}]
 (function loadAiLog(){ try{ aiLog = JSON.parse(localStorage.getItem(KEY_AILOG)) || []; }catch(e){ aiLog = []; } })();
 function aiLogPush(rec){
@@ -909,6 +1056,14 @@ function closeAiLogPanel(){ const p=$('#ailogPanel'); if(p) p.remove(); }
 function _f2(x){ const n = Number(x); if(!isFinite(n)) return x; return Math.round(n * 100) / 100; }   // v1.0.162 采样参数收敛到 2 位小数
 async function callDeepSeek(system, user, {temperature=null, topP=null, signal=null, maxTokens=null, onStream=null, retry=2, taskKey=null}={}){
   const _t0 = Date.now();
+  // v1.0.251（方案C）推理模型识别：OpenAI 兼容接口对推理型模型（o1/o3/R1/DeepSeek-Reasoner/思考型）应以
+  // max_completion_tokens（思考+正文总预算）传限长，且通常不支持 temperature/top_p；普通对话模型仍走 max_tokens。
+  function isReasonModel(name){
+    const n = String(name||'').toLowerCase();
+    return /deepseek-reasoner/.test(n)
+      || /(^|[-_/\.])(r1|reasoner|reasoning|think|qwq|1210)([-_/\.]|$)/.test(n)
+      || /^(o[134](-[a-z0-9]+)?|grok-4-latest-reasoning|kimi-k2-thinking)$/.test(n);
+  }
   // P2-1 记录基础信息（task 用 system 前 24 字近似任务名；具体字段在成功/失败收尾时补全）
   // v2.4 记录实际完整长度 sysLen/userLen/respLen，日志展示"前500字/共N字"消除误解
   const _rec = {
@@ -930,12 +1085,15 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
       if(!s.apiKey) throw new Error('请先在 ⚙️ 配置并选择要使用的 AI 账号（API Key）');
       const url = s.baseUrl + '/chat/completions';
       const streaming = typeof onStream === 'function';
+      const _reason = isReasonModel(s.model);   // v1.0.251（方案C）：推理模型走 max_completion_tokens
       const body = {
         model: s.model,
         messages: [{role:'system', content: system}, {role:'user', content: user}],
         // v1.0.162 兜底：temperature/top_p 统一收敛到 2 位小数，杜绝浮点尾差（如 0.95-0.05=0.9000000001）被模型 API 拒绝
-        temperature: _f2(temperature==null ? s.temperature : temperature),
-        top_p: _f2(topP==null ? 0.95 : topP),   // 4.8 旗舰版（板块一-5）：默认开放采样，高潮段可收紧
+        ...(!_reason ? {
+          temperature: _f2(temperature==null ? s.temperature : temperature),
+          top_p: _f2(topP==null ? 0.95 : topP)   // 4.8 旗舰版（板块一-5）：默认开放采样，高潮段可收紧
+        } : {}),   // 推理模型通常不支持 temperature/top_p，省略
         stream: streaming
         // v1.0.122 锁防截断：user 一律整段原样入体（内层供构想/配方等全文发送），绝不在此或上游做长度切片；
         // 实际发送的完整长度可在【请求日志 User·前500字/共N字】观测，N 即全量字符数（前500字仅为展示预览，非发送截断）。
@@ -943,7 +1101,13 @@ async function callDeepSeek(system, user, {temperature=null, topP=null, signal=n
       // 缓存友好：请求的前缀（system + user 恒定首部）在全书各章保持不变，
       // DeepSeek 自动命中上下文缓存，命中价远低于未命中价；可变信息一律放 user 最末。
       if(s.keyInBody) body.api_key = s.apiKey;   // v1.0.136 中转规避：Key 放请求体（api_key）而不放 Authorization 头
-      if(maxTokens && maxTokens>0) body.max_tokens = maxTokens;
+      if(_reason){
+        // v1.0.251（方案C）：推理模型——max_completion_tokens 是思考+正文总预算，需覆盖推理开销；
+         // 在传入预算基础上放大（默认 32K），避免 reasoning_content 吞掉全部正文预算。
+        body.max_completion_tokens = maxTokens && maxTokens>0 ? Math.max(maxTokens, 32768) : 32768;
+      } else if(maxTokens && maxTokens>0){
+        body.max_tokens = maxTokens;
+      }
       // 4.5 P0：默认超时 180 秒，可被传入的 signal 覆盖
       const finalSignal = signal || AbortSignal.timeout(180000);
       let res;
@@ -1225,9 +1389,9 @@ function salvageOutlineFromText(txt){
 }
 
 /* 按钮忙碌态 */
-function busy(btn, on, label){
-  if(on){ btn._txt = btn.innerHTML; btn.disabled = true; btn.classList.add('is-busy'); btn.innerHTML = '<span class="spinner"></span>'+(label||'生成中…'); }
-  else { btn.disabled = false; btn.classList.remove('is-busy'); btn.innerHTML = btn._txt; }
+function busy(btn, on, label, cls){
+  if(on){ btn._txt = btn.innerHTML; btn.disabled = true; btn.classList.add('is-busy'); if(cls) btn.classList.add(cls); btn.innerHTML = '<span class="spinner"></span>'+(label||'生成中…'); }
+  else { btn.disabled = false; btn.classList.remove('is-busy'); if(cls) btn.classList.remove(cls); btn.innerHTML = btn._txt; }
 }
 
 /* ---------- 全局中止控制器（流式停止按钮用） ---------- */
@@ -1278,10 +1442,7 @@ function guardSwitchStep(){
  * 提示词模板（中文，面向国内 + 即梦）
  * ========================================================= */
 /* v1.0.144：原 structure（subLines 副线 / hiddenLine 暗线 / chapterPlan 章节分组）契约块与 MAIN_LINE_BLOCK 常量已彻底移除。
- * 全书拍子仅作大纲生成的节奏指导（见 buildOutlineSys），不再要求 AI 输出任何 structure 字段。 */
-
-// v10.9 公共 JSON 契约句：OUTLINE_GEN_SYS / 各结构 outlineSys 复用，避免双处漂移
-const JSON_HEADER = `请按如下 JSON 结构输出（不要任何解释、不要 markdown 代码块；可在此基础上按下方追加块补充 glossary 等其它顶层字段）：`;
+ * 全书拍子仅作大纲生成的节奏指导，不再要求 AI 输出任何 structure 字段。 */
 
 // 4.7 Pro（3.5/第7章指令2）：旧正文 System（LONG_CHAPTER_SYS_LEGACY）已随主线简述功能一并删除，仅保留 PRO 版。
 
@@ -1291,35 +1452,45 @@ const LONG_CHAPTER_SYS_PRO = `你是一位资深长篇小说「章节执行导�
 
 【输入上下文层级（L0→L4，优先级递减）】
 L0 · 叙事铁律（若开启）：硬铁律（禁则/内心情绪外显/对话口语化/模板词禁用等）与软约束——位于输入上下文最顶层，为最高优先级指令，必须执行。
-L1 · 全书导航：书名、简介、核心定位、深层主题。
-L2 · 本章任务：本章标题、本章节拍表（硬性执行清单，setup/rise/climax/hook）、本章情绪弧、本章必须使用实体。
-L3 · 前后衔接：上一章全文（或摘要）、上一章结尾状态、下一章标题（仅作承接参照）。
-L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词典条目（人物/地点/专名）、未收束伏笔。
+L1 · 全书导航：书名、简介。
+L2 · 本章任务：本章标题、本章节拍表（可依照的素材重心，setup/rise/climax/hook）、本章情绪弧、本章可选用实体（有戏份才落笔，场面不适可不用，禁止为凑名单而生硬点名）。   // v1.0.294：解除正文强制点名
+L3 · 前后衔接：上一章节拍表全文（优先）或上一章正文、上一章结尾状态、下一章标题（仅作承接参照）。   // v1.0.297：上章承接由「上一章全部正文」改为「上一章节拍表内全部内容」
+L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词典条目（人物/地点/专名）。   // v1.0.280：未收束伏笔已随伏笔网移除
 
 【最高优先 · 鲜活性总纲（v1.0.181，优先级高于后续所有编号规则）】
 0. 你是在"讲故事"，不是在"交答卷"。下面所有编号硬规则（节拍承接 / 时间锚 / 视角 / 长度 / 输出）约束的是"什么时候不能出错"，是正确性的底线，绝不是"必须照做的写作套路"——不要为了"看起来每一条都做到了"而机械套用、凑模板。正文必须像一位有才华的作者所写：用具体、有画面感的动名词推进；句式长短交错、段落疏密有致；每段写的是本章真实的情绪与进展，而不是"达标工件"。反模板：禁止多个段落/节拍以同类词起头（如连续用时间词、场景词、动作词开段），禁止干巴巴的单句凑数，禁止把时间锚、节拍标签、视角规则等以任何形式原样写进正文。节拍是"剧情推进的参照"，不是"各写各的填空格"——允许按内容需要自然融合节拍、节拍长度不均、节奏快慢不一（紧张处一句顶一句，舒缓处从容铺陈）。当硬规则之间存在张力或某条规则会逼你写出生硬/模板化的句子时，优先保证文字的鲜活、具体与可读。
 
 【输出要求】
 1. 仅输出本章正文，不得包含标题、章节序号、元评论、分析、json、markdown 代码块。
+1b. 正文末尾**仅允许且必须**追加一行元数据行【本章出场人物】（若本章确有"有名有台词/有戏份"的新增角色）：格式与节拍表的实体清单一致——「人物｜张三｜；人物｜李四｜；地名｜边境镇｜；专名｜玄铁剑｜」，用「类别｜名称｜」分隔、以分号结尾；只列本章新出现且值得被词典收编的核心新实体，**不列**已在词典中、设定已有的常驻名，更不到此登记仅一次出场的氛围路人。若本章没有任何值得收编的新实体，则整行省略。该行仅供「正文收编」环节读取，不计入正文、落库时会被自动剥离。
 2. 正文直接以小说段落呈现，段落之间用空行分隔。
 3. 正文必须覆盖本章节拍表中的四个事件（setup / rise / climax / hook），不得遗漏；但这些节拍是本章内**按因果连续推进的故事小节，不是几个互不相干的独立片段**——相邻节拍之间必须有自然的衔接与过渡（剧情因果驱动、情绪递进、动作延续，或时间/空间切换的过渡句），严禁生硬跳切、严禁硬转场；只要叙事连续，相邻节拍允许融合在同一场景内连续推进，不必每拍单起一段、各换一个场景。
-4. 必须使用本章 requiredEntities 中的全部实体；词典既有实体的设定不得改动或相悖。在此基础上允许按剧情需要自然引入新人物/新地点/新专名：新人物须在文中体现身份、年龄、性格、与既有人物的关系等可入典信息；新地名/新专名须体现其含义或用途。禁止引入与剧情无关的冗余实体。【名字定稿（v244/914）】设定词典已收录的人名/地名/专名一律为最终定稿（含用户手动定名）：必须原样使用，禁止改名、增删字、换写法或自造变体；即便名字看似不合常见命名习惯，也照词典原样使用。
+4. 必须使用本章 requiredEntities 中的全部实体；词典既有实体的设定不得改动或相悖。在此基础上允许按剧情需要自然引入新人物/新地点/新专名，分两类：①有戏份、会再登场或推动情节并值得被词典收编的核心新实体——在文中体现身份/关系等可入典要点，并登记到章末【本章出场人物】（正文自身不直接回填词典，收编统一由「正文收编」环节完成）；②仅作现场氛围的临时路人/小地名/小专名——只一句台词或一个镜头即可，不必刻画任何维度、不入词典、点到即收，也不登记进【本章出场人物】（见【临时闲人】段）。禁止机械式凑数：只在场景自然需要时点缀，绝不为"显得人多"每章硬加、干瘪点名或反复秀存在感。【名字定稿（v244/914）】设定词典已收录的人名/地名/专名一律为最终定稿（含用户手动定名）：必须原样使用，禁止改名、增删字、换写法或自造变体；即便名字看似不合常见命名习惯，也照词典原样使用。
 5. 人物言行须符合其性格设定；对话须有辨识度；时间线须与上一章衔接。
 6. 若 L0 叙事铁律有禁用词/禁写内容，请在输出前自检：是否已遵守硬铁律的全部禁止项。
 7. 结尾须指向下一章标题，埋下线索或悬念，但不得提前揭示下一章具体情节（若上下文未给出下一章标题，则按本章剧情自然收束即可，不强求指向标题）。
 8. 正文长度严格以【篇幅体量】块为准，必须在第一次生成时即写足该块硬下限（v1.0.165：取消"不设上限"宽松口径，禁止写成未达下限的梗概式短场景）。
 9. 场景与节拍的自然衔接铁律：全章必须是一条连续流动的叙事线——每个节拍事件的结尾自然引出下一个节拍的开头；时间/地点/视点的切换必须给出过渡（时间词、空间移动、镜头焦点转移或因果钩子），禁止节拍间硬跳切、禁止把每个节拍写成孤立片段。节拍之外的衔接与过渡文字（非情节推进的铺垫/转场内容）同样是正文的组成部分，不是多余的填充。
-10. 时间锚铁律（若 L1 节拍表标注了时间）：每段节拍标注的【时间】（如 现实·第2天·清晨）是本章时间承接的硬基准——正文各段落在哪个时点、就写那一时段的场景（光线/天色/动静/人物状态），上一章末尾落到哪个时点，本章开头就从那个时点或其自然延续接入，禁止时间跳跃开场、禁止把本章剧情安排到上一章主线的更早时点（同主线时点禁止倒退）。但时间一律靠场景细节自然体现，严禁出现在段首报时（"现在是/此刻是/此时是/当下是"）、严禁把时间锚或"第X天"字样原样照抄进正文；仅当时间确实跳跃时才用"翌日""三日后的黄昏"等自然过渡语融入叙述。跨支线（回忆/梦境/穿越）须按节拍表的支线标签处理，并在文中显式体现进入与回归，不扰乱主线时间顺序。另：严禁章节/段落以时间词开篇——首句不要用"清晨/天色/夜色/翌日/午后/入夜/黄昏"等时间状语起头，也不要把时间锚当首句标题；新章首句应从人物动作、对话、物件或场景细节切入，时间自第二句起用场景细节自然带出（仅当本章时间较上一章确已跳变时，才允许紧接首句之后交代一次，且融入叙述、不作孤立时间状语）。
-11. 视角与上帝视角铁律（v1.0.180）：默认采用"受限视角"叙述——把"摄影机"约 90% 的时间锁在主角身上，只以主角能看到/听到/摸到/感知到的信息推进叙述；想表现他人内心，一律改从主角的观察与推断出发，禁止直接钻进路人/配角/反派的内心"读心"。仅在下列"合法时机"才允许切到"上帝/他人视角"：(a) 章/节/空行分隔之后（有明确视角分界可用）；(b) 与主角核心目标同场产生重大利益冲突的关键时刻（全章最多一两处，用完立即回到主角）；(c) 只"展示而不解释"的客观信息（写他人"做了什么/什么神态/什么动作"，而不是"心里想什么"）；(d) 背景/世界观/前史等设定信息必须"寄生"在角色的即时感官里（经耳朵听到、鼻子闻到、手触及）传达，禁止作者跳出来大段广播；(e) 悬念揭晓的时刻（对前期已埋设的不确定性的兑现）。禁止项：同一场景内多个角色的内心随意跳切（禁止"跳切"）；禁止用上帝视角提前揭示主角与读者尚不该知道的答案（禁止剥夺"侦探权"）；禁止借上帝视角长篇灌输背景设定（禁止"死神"式信息倾泻）；禁止让配角甚至路人获得与主角同等的心理戏、使情感焦点涣散（禁止稀释"主角感"）。【例外】若本章叙事技法采用了「多视角群像」，可放宽为受控视角切换，但仍须每个视角边界清晰、各视角有辨识度、切换有明确分界（章节/空行），且整体仍以主角视角为主轴。
+10. 时间锚铁律（若 L1 节拍表标注了时间）：每段节拍标注的【时间】（如 现实·第2天·清晨）是本章时间承接的硬基准——正文各段落在哪个时点、就写那一时段的场景（光线/天色/动静/人物状态，如熹微/烈日/夕照/星夜/烛火/虫鸣/人物衣物与倦意等细节自然交代），上一章末尾落到哪个时点，本章开头就从那个时点或其自然延续接入，禁止时间跳跃开场、禁止把本章剧情安排到上一章主线的更早时点（同主线时点禁止倒退）。但时间一律靠场景细节自然体现，严禁出现在段首报时（"现在是/此刻是/此时是/当下是"）、严禁把时间锚或"第X天"字样原样照抄进正文；仅当时间确实跳跃时才用"翌日""三日后的黄昏"等自然过渡语融入叙述、不作注释式开场。跨支线（回忆/梦境/穿越）须按节拍表的支线标签处理，并在文中显式体现进入与回归，不扰乱主线时间顺序。（v1.0.24x：删除"严禁时间词开篇/首句禁时间状语"绝对禁令——与章首铁律④「时间开句可用（仅限频次）」及承接任务书菜单⑥冲突；开场方式以章首铁律 6 式为准。）
+11. 视角与上帝视角铁律（v1.0.180）：默认采用"受限视角"叙述——把"摄影机"约 90% 的时间锁在主角身上，只以主角能看到/听到/摸到/感知到的信息推进叙述；想表现他人内心，一律改从主角的观察与推断出发，禁止直接钻进路人/配角/反派的内心"读心"。仅在下列"合法时机"才允许切到"上帝/他人视角"：(a) 章/节/空行分隔之后（有明确视角分界可用）；(b) 与主角核心目标同场产生重大利益冲突的关键时刻（全章最多一两处，用完立即回到主角）；(c) 只"展示而不解释"的客观信息（写他人"做了什么/什么神态/什么动作"，而不是"心里想什么"）；(d) 背景/世界观/前史等设定信息必须"寄生"在角色的即时感官里（经耳朵听到、鼻子闻到、手触及）传达，禁止作者跳出来大段广播；(e) 悬念揭晓的时刻（对前期已埋设的不确定性的兑现）。禁止项：同一场景内多个角色的内心随意跳切（禁止"跳切"）；禁止用上帝视角提前揭示主角与读者尚不该知道的答案（禁止剥夺"侦探权"）；禁止借上帝视角长篇灌输背景设定（禁止"死神"式信息倾泻）；禁止让配角甚至路人获得与主角同等的心理戏、使情感焦点涣散（禁止稀释"主角感"）。【例外】仅当本章写作风格\/配方中明确采用了「多视角群像」等视角切换类叙事技法时，才允许受控视角切换；此时仍须每个视角边界清晰、各视角有辨识度、切换有明确分界（章节\/空行）、整体仍以主角视角为主轴。未明确选用该类技法时，上述限定视角保持硬性，禁止以"多视角\/群像"为借口放松（v1.0.258 收紧例外）。
+
+【写作任务流程（v1.0.271 · 执行骨架：按此编号依次完成，前一阶段做完才进入下一阶段）】
+▶ 阶段一 · 读局（不落笔）——先消化本章节拍表每一段的中枢事件、情绪弧、requiredEntities、上一章节拍表的接续点/收束与下一章标题，在心里排出本章走向：从什么承接点起笔、依次推进哪几段事件、以什么收束。不要马上落笔。
+▶ 阶段二 · 开篇承接（写）——用一段自然承接上一章结尾：未完成的动作/对话/悬念直接续上，不返述上章、不跳时间、不用报时语句。篇幅克制，快速进入本章主线。
+▶ 阶段三 · 逐场推进（写）——按节拍顺序，把所有节拍事件写成完整连续的场面推进。每写一段事件前，先在心里过一遍节拍表留出的演绎空间，把这一段写成"活的场景"而不是"按模板填格子"：上述"铺垫进入 → 中枢动作/冲突 → 对话与反应往返 → 感官与细节 → 落地余波/收束"只是随手可调度的展开手段库，不是每段都必须依次出现的五段固定格式——按这段剧情的需要自由取舍、合并或调整顺序，写得像一位作者在真实铺排一个场景，该快则快、该慢则慢；段与段之间用因果、情绪或空间过渡自然衔接。这是正文的绝大部分，篇幅主要在这一阶段铺足。
+▶ 阶段四 · 收束点题（写）——写到本章收束拍时，视全书进度自然收束：若有下一章标题，在结尾埋下指向它的线索或悬念（但不得提前揭示下章具体情节）；若无，则按本章剧情自然落地收束。
+▶ 阶段五 · 自检门（不写入输出，写完后内部核对）——按下方【内部一致性自检】逐项过一遍，并核对【篇幅体量】硬下限是否达成、节拍事件是否全部覆盖；若不达标，就地补足或调整后再交付。
+说明：以上是"写作的推进顺序"，不是"给每拍贴标签、逐拍独立成段的格式"——阶段三仍要求整章是一条连续流动的叙事线，场面之间自然衔接，不得生硬跳切。
 
 【内部一致性自检（不写入输出）】
 - 时间线不矛盾
 - 人物性格/外貌/年龄与词典一致
-- 词典既有专名使用无误、无相悖；本章新引入的人名/地名/专名均为剧情所需，且已在文中交代设定信息
+- 词典既有专名使用无误、无相悖；本章新引入的核心实体均为剧情所需且已交代设定要点，临时闲人/小地名/小专名为氛围点缀、写一句便止
 - 上一章结尾未完成的动作/对话已承接
 - 伏笔 foreshadowing 已按节拍表埋设
 - 叙事铁律未偏离（无禁用词直述内心情绪、无模板词）
 - 视角未在同场景内随意跳切、未替配角/反派/路人直接读心；背景信息已寄生于角色感官而非作者广播；主角情感焦点未被配角稀释（v1.0.180 上帝视角治理）
+- 未提前兑现本章不应揭示的伏笔、未借上帝视角提前剧透读者与主角尚不该知道的答案（v1.0.258 反剧透自检）
 
 【失败处理】
 若自检发现严重冲突无法调和，请只输出正文，并在正文末尾以单行隐藏注释形式输出：<!-- AI_NOTE: 冲突点 -->, 程序将捕获并转人工复核。`;
@@ -1368,8 +1539,6 @@ const PROMPTS = {
   coverSysTitle: `你是一位资深书籍装帧设计师与插画师。根据用户提供的小说标题与故事梗概，为这部小说的【封面图】产出一条可粘贴到「即梦(Dreamina)」的中文出图提示词【含书名文字版】。
 要求：画面要抓住小说核心意象与情绪（世界观/主角困境/关键场景），构图强烈、光影戏剧化、色彩有记忆点；**封面需包含书法风格的【书名汉字】作为主体文字**，请把小说标题精准写入提示词，指定其为封面主文字（如"金色书法大字『书名』题于画面中央/顶部，字迹遒劲、带有水墨或烫金质感"）；其余可附风格关键词；长度 150-280 字；只输出提示词正文，不要解释、不要 markdown 代码块。`,
 
-  // 4.5：longOutlineSys 已删除，统一使用 OUTLINE_GEN_SYS + buildOutlineSys()（见第 4.2 节）。
-
   // 4.7 Pro（3.5/第7章指令2）：PROMPTS.longChapterSys 指向 LONG_CHAPTER_SYS_PRO（旧 LEGACY 版已随主线简述功能删除）
   longChapterSys: LONG_CHAPTER_SYS_PRO,
 
@@ -1386,7 +1555,12 @@ let polishMulti = true;   // v1.0.121 多方案开关（默认开；极短构想
 // 提示条提供「查看全部（零请求）/ 重新优化（force）/ 清除」；再次优化需 confirm 防误发请求。
 async function polishIdea(btn, force){
   const idea = (state.idea || '').trim();
-  if(!idea){ toast('请先输入故事构想'); return; }
+  if(!idea){
+    // v1.0.255：输入框为空时给出明确引导——历史方案 ≠ 可重跑的输入触体，需先填构想或采用某张历史卡
+    const kept = Array.isArray(state.polishOptions) && state.polishOptions.length;
+    toast(kept ? '输入框为空：请先在上方输入构想，或点某张历史方案卡「✔ 采用此方案」，再点「✨ 优化构想」重新生成' : '请先输入故事构想');
+    return;
+  }
   const kept = Array.isArray(state.polishOptions) && state.polishOptions.length;
   if(kept && !force){
     if(!confirm(`已有 ${kept} 个保留方案，重新优化将覆盖它们。继续？`)) return;
@@ -1399,44 +1573,14 @@ async function polishIdea(btn, force){
   try{
     // 4.8（4.4）：统一经 callAIGuarded('idea')——system=IDEA_POLISH_SYS(PRO)、user=buildIdeaPolishUser(ctx)、校验=validateIdeaProOutput
     // 4.9 加固：把 multi 透传给 getSystemPrompt，按「多方案/单稿」拼接输出模式后缀，让多方案开关真正生效
-    const txt = await callAIGuarded('idea', { multi }, {temperature: resolveActiveSpec().ideaTemp});
+    const txt = await callAIGuarded('idea', { multi }, {temperature: resolveActiveSpec().ideaTemp, maxTokens: clampMaxTokens('polish')});   // v1.0.260 优化构想显式预算 8192 档
     const out = String(txt||'').trim();
     if(!out){ toast('优化失败，请重试'); return; }
 
-    // 新解析：尝试提取结构化 JSON
-    const j = extractJsonObject(out);
-    if(j && j.brief){
-      // 4.7 Pro：结构化简报存档（供大纲 AI 经 formatNavBeaconForOutline 注入【优化构想简报】）
-      state._lastPolishBrief = j.brief;
-      state._lastPolishIdeaText = '';   // v230/1-C：简报与纯文本优化稿互斥存档——"最后优化者胜出"，防止旧简报盖过新成果
-      persist();
-      // 把结构化简报渲染为文本卡片
-      const textBrief = formatIdeaBrief(j.brief);
-      // 若多方案模式需包装
-      if(multi){
-        showPolishResult(JSON.stringify({options:[{name:'优化方案', text:textBrief}]}), multi);
-      } else {
-        showPolishResult(textBrief, multi);
-      }
-      // 在 pol-cards 区域额外展示诊断
-      const diag = formatIdeaDiagnosis(j.diagnosis);
-      if(diag){
-        const box = $('#polishCards');
-        if(box) box.insertAdjacentHTML('afterbegin', diag);
-      }
-      markAIDone('idea');
-      toast('优化完成：已诊断并输出结构化简报');
-    } else {
-      // v230/1-C：纯文本优化稿全文存档——新 PRO 不再输出 JSON brief，此存档是构想→大纲上下文传递的唯一通道；
-      // 同时清掉旧结构化简报（陈旧数据不再参与注入），大纲 AI 经 formatNavBeaconForOutline 的 fallback 吃到本稿
-      state._lastPolishIdeaText = out;
-      state._lastPolishBrief = null;
-      persist();
-      // 降级：旧行为（4.5 结构 optimizedIdea/navBeacon/defects... 由 showPolishResult 兼容解析展示）
-      showPolishResult(out, multi);
-      markAIDone('idea');
-      toast('优化完成');
-    }
+    // 展示（v1.0.249：现行 PRO 输出为纯文本单稿 / 「━━ 方案N」多方案，均由 showPolishResult 切卡；旧「结构化简报」链路已移除）
+    showPolishResult(out, multi);
+    markAIDone('idea');
+    toast('优化完成');
   }catch(e){
     addToFixQueue({kind:'idea', error:e.message});   // 4.8（6.4）：失败进修复队列
     toast('优化失败：'+e.message);
@@ -1594,7 +1738,7 @@ function applyV45ToOutline(o, d){
   (d.seedCharacters||[]).forEach(c=>{
     const nm = String(c&&c.name||'').trim(); if(!nm) return;
     if(g.characters.some(x=>String(x&&x.name||'').trim()===nm)) return;
-    g.characters.push({ name:nm, identity:c.identity||'', age:String(c.age==null?'':c.age), gender:c.gender||'', appearance:c.appearance||'', hobby:c.hobby||'', mannerism:c.mannerism||'', relation:c.relation||'', trait:c.trait||'' });
+    g.characters.push({ name:nm, identity:c.identity||'', age:String(c.age==null?'':c.age), gender:c.gender||'', appearance:c.appearance||'', hobby:c.hobby||'', catchphrase:c.catchphrase||'', relation:c.relation||'', trait:c.trait||'' });
     nC++;
   });
   (d.seedPlaces||[]).forEach(p=>{
@@ -1648,15 +1792,30 @@ function openPolishBox(){
   renderPolishCards(cards);
 }
 
-// v1.0.121 优化构想方案卡：竖向多色卡片（序号徽章/方案名/左侧色条三重视觉编码，复刻 ai配方助手候选列表）。
+// v1.0.205 阶段5.5：未生成/无候选方案 → 「第一步」强调态（红色渐变按钮）；已有方案后恢复普通按钮
+// v1.0.255 优化：强调态判定改为「流程仍处最前期」——只要大纲尚未生成（无书名+无简介+无章节），
+// 一律用「🚀 第一步」大红强调态引导用户先点「✨优化构想」，避免误点下方更醒目的「生成大纲」；
+// 已生成大纲后才恢复普通「✨ 优化构想」（为用户回来重新优化保留普通视觉）。
+function polishIdle(){
+  const o = state.outline;
+  const hasRealOutline = !!o && (String(o.title||'').trim() || String(o.logline||'').trim() || (Array.isArray(o.chapters)&&o.chapters.length));
+  return !hasRealOutline;
+}
+// v1.0.227 优化构想方案卡：竖向多色卡片（序号徽章/方案名/左侧色条三重视觉编码，复刻 ai配方助手候选列表）。
 // 固定六色序列，按生成顺序取色；正文只读可选中；每卡「采用」即导入构想输入框 +「复制」。
 const POLISH_PALETTE = ['#E8A33D','#D64545','#4C6FD5','#3FA36B','#8E5AC8','#2CA6A4'];
+// v1.0.227：从方案文本提取首行「书名：…」（PRO 提示词已要求每版首项产出书名）；缺省返回 ''
+function extractPolishTitle(text){
+  const ln = String(text||'').split('\n').map(s=>s.trim()).find(s=>/^书名\s*[：:]\s*\S/.test(s));
+  if(!ln) return '';
+  return String(ln.replace(/^书名\s*[：:]\s*/, '')).trim();
+}
 function renderPolishCards(container){
   if(!container) return;
   const opts = Array.isArray(state.polishOptions) ? state.polishOptions : [];
   if(!opts.length){
     container.style.display = 'block';
-    container.innerHTML = `<p class="muted" style="margin:8px 0 0">👆 点「✨ 优化构想」生成 2–6 个候选方案；点某张卡的「采用此方案」即导入上方构想输入框。</p>`;
+    container.innerHTML = `<p class="muted" style="margin:8px 0 0">👆 点「✨ 优化构想」从五个方向（商业/反差/情感/悬疑智斗/轻松日常）中按契合度生成 3~5 个候选方案；点某张卡的「✔ 采用此方案」即选中（不覆盖原始构想），再点「生成大纲」搬入书名 / 简介 / 节拍。</p>`;
     return;
   }
   container.style.display = 'block';
@@ -1667,6 +1826,8 @@ function renderPolishCards(container){
     const isAdopted = !!adopted && adopted === name;
     const defects = (o._v45 && Array.isArray(o._v45.defects)) ? o._v45.defects.filter(d=>String(d||'').trim()) : [];
     const hasV45 = !!(o._v45 && (o._v45.navBeacon || (o._v45.seedCharacters&&o._v45.seedCharacters.length) || (o._v45.seedPlaces&&o._v45.seedPlaces.length)));
+    const pTitle = extractPolishTitle(o.text);   // v1.0.227：方案书名置顶展示
+    const pBody = String(o.text||'').replace(/^\s*书名\s*[：:][^\n]*\n?/, '').trim();   // 书名已置顶，正文去掉首行以免重复
     return `<div class="pol-cand${isAdopted?' on':''}" style="--pc:${c}" data-idx="${i}">
       <div class="pol-cand-head">
         <span class="pol-no" style="background:${c}">${i+1}</span>
@@ -1676,7 +1837,8 @@ function renderPolishCards(container){
           <button type="button" class="btn small ghost" data-pol-copy="${i}" title="复制此方案">📋 复制</button>
         </span>
       </div>
-      <div class="pol-cand-body">${esc(String(o.text||''))}</div>
+      ${pTitle?`<div class="pol-cand-title" style="background:${c}">📖 ${esc(pTitle)}</div>`:''}
+      <div class="pol-cand-body">${esc(pBody ? pBody : String(o.text||''))}</div>
       ${defects.length?`<div class="pol-cand-body" style="opacity:.85"><b>⚠️ 构想缺陷清单：</b><br>${defects.map(d=>'· '+esc(String(d))).join('<br>')}</div>`:''}
       <div class="pol-cand-foot">
         ${hasV45?`<button type="button" class="btn small ghost" data-pol-import="${i}" title="导入结构化设定（导航灯塔/种子人物/种子地点/建议章节数）">📥 导入设定</button>`:''}
@@ -1687,10 +1849,11 @@ function renderPolishCards(container){
   container.querySelectorAll('[data-pol-use]').forEach(b=>{
     b.onclick = (e)=>{ e.preventDefault();
       const o = (state.polishOptions||[])[+b.dataset.polUse]; if(!o) return;
-      state.idea = String(o.text||'');
+      // 3.0 后悔药 + 锁定：③词典达人已产出非空即锁，②不可再换方案
+      if(dictmasterLocked()){ toast('词典达人已产出万物词典，②方案已锁定，不可更换'); return; }
       state.polishAdopted = o.name || null;
       persist(); render();
-      toast('已采用：'+(o.name||('方案'+(+b.dataset.polUse+1)))+'（已导入构想输入框）');
+      toast('已选中：'+(o.name||('方案'+(+b.dataset.polUse+1)))+'（不覆盖原始构想；可点「生成大纲」搬入书名/简介/全书节拍）');
     };
   });
   // 4.5「导入设定」：把该方案的结构化设定写入大纲/词典/章节数/风格标签
@@ -1722,7 +1885,7 @@ function bindPolishIdea(){
     sync();
     chk.onchange = ()=>{ polishMulti = chk.checked; };
     const idea = $('#ideaInput');
-    if(idea) idea.oninput = ()=>{ state.idea = idea.value; sync(); };
+    if(idea) idea.oninput = ()=>{ state.idea = idea.value; sync(); syncOrigIdeaCard(); };
   }
   // v1.0.121 移除「复制/保存此版/采用此方案」顶部按钮：方案只读，复制与采用移入每张卡片（renderPolishCards 内绑定）。
   // v10.16 收起：仅隐藏优化区（方案保留，提示条仍在）
@@ -2186,7 +2349,7 @@ function availableCombos(){
 const AI_CAT_LABEL = { '语言质感':'① 语言质感', '情绪与张力':'② 情绪与张力', '节奏与网感':'③ 节奏与网感', '叙事技法':'④ 叙事技法', '台词设计':'⑤ 台词设计', custom:'⭐ 我的自定义' };
 let aiRp = null; // {list:[...], err:'' } 运行期临时候选（不持久化；render 重建主卡时会保留，重启清空）
 // —— v10.57 AI 配方历史快照存储（独立 key，与主 cfg 解耦；生成即存，供书本图标回看）——
-const KEY_AIHIST = 'fyp_aiRecipeHist_v1';
+const KEY_AIHIST = nsKey('aiRecipeHist_v1');
 const AIHIST_CAP = 30;                       // 快照条数上限
 const AIHIST_MAX_BYTES = 3600000;            // 存储体积安全阈值（约 3.4MB）
 function getAiHist(){ try{ return JSON.parse(localStorage.getItem(KEY_AIHIST)||'[]'); }catch(e){ return []; } }
@@ -2296,8 +2459,9 @@ function refreshAdvHistBadge(kind){
 }
 // v11 给 AI 配方助手注入本作书名/简介，让候选配方贴合本小说；无大纲时仅提示先生成。
 // 4.7 Pro（3.6 原码）：资深风格工程师 + 写作配方设计师
+// v1.0.24x：复用「词典达人单一专线」——注入 ②优化构想所选方案完整原文（剔除结构段）为唯一蓝本；上传主线简述入口（遗留物）已移除
 const AI_RECIPE_SYS_PRO = `你是一位资深长篇小说「风格工程师」，同时为「写作配方设计师」。
-【核心任务】根据用户描述或上传的主线简述，设计 2~6 个可直接落地的组合配方。
+【核心任务】根据本小说的②优化构想所选方案（含书名+九要素，其中「风格/题材/氛围/主角气质」等字段是设计配方的首要依据）或用户描述，设计 2~6 个可直接落地的组合配方。
 
 【必须输出的 JSON 结构】
 [
@@ -2308,43 +2472,53 @@ const AI_RECIPE_SYS_PRO = `你是一位资深长篇小说「风格工程师」�
     "why": "为何这样选（中文引用词条 name，1-2句）",
     "scenario": "适用场景（题材/章节阶段/文风匹配度，1-2句）",
     "gap": null
-    // 或 gap: [{"name":"...","cat":"...","id":"...","note":"...","tips":["..."],"avoid":["..."],"check":["..."],"demo":"...","reasons":"..."}]
+    // 或 gap（一次可给多条，务必给全所有缺口）：[
+    //   {"name":"...","cat":"语言质感","id":"...","note":"...","tips":["..."],"avoid":["..."],"check":["..."],"demo":"...","reasons":"..."},
+    //   {"name":"...","cat":"叙事技法","id":"...","note":"...","tips":["..."],"avoid":["..."],"check":["..."],"demo":"...","reasons":"..."}
+    // ]
   }
 ]
 
 【硬性约束】
-1. tags 只能使用现有词库 id；现有词库是基础参照、不是天花板：当现有词条无法覆盖用户诉求时，必须主动设计 1~3 个新词条放入 gap 补位（这是加分项，不是违规，大胆创造）。
-2. gap 为 null 表示现有词库足够；gap 非空时每个新词条必须五维齐全（note/tips/avoid/check/demo），缺一作废。
-3. 不同候选用词尽量不同、风格拉开差异。
-4. why / scenario / reasons 里引用词条时必须使用中文 name，禁止出现英文 id。
-5. 只输出上述 JSON 数组，不要 markdown 代码块、不要解释。`;
+1. tags 只能使用现有词库 id。现有词库只是参照、不是天花板，更不是必须迁就的对象：即使现有词条看似可用，只要它不是百分之百贴合本小说（例如只覆盖了一半的意涵），就必须设计完全为本小说量身定制的全新词条放入 gap——这是核心职责（大胆创造），不是加分项。
+2. gap 数量由真实缺口决定、不机械硬造：现有词库已能完全覆盖本小说所需时，gap 应为 null（0 条、完全不生成新词条是合理且受鼓励的答案，绝不为了"看起来有缺口"而硬凑词条）；只有当确实存在现有词库无法覆盖的缺口维度时，才把它们写成独立的 gap 词条（需几条给几条，把真实缺口一次给全、不要只给 1 个、不要偷懒合并成一条）。
+3. gap 为 null 与 gap 非空都是可接受的自主判断，请勿机械填空、勿为数量而造词：gap 非空时每个词条必须五维齐全（note/tips/avoid/check/demo），缺一作废；尽量覆盖不同的风格维度（语言质感/情绪与张力/节奏与网感/叙事技法/台词设计），避免互相同质重复。
+4. 不同候选用词尽量不同、风格拉开差异。
+5. why / scenario / reasons 里引用词条时必须使用中文 name，禁止出现英文 id。
+6. gap 新词条的 cat 只能取以下五类之一：语言质感、情绪与张力、节奏与网感、叙事技法、台词设计。
+7. 只输出上述 JSON 数组，不要 markdown 代码块、不要解释。
+8. 控制思考深度：先想清楚再作答，不要把大量 token 花在内部推理上；务必把预算留给正文，输出一个完整、可直接 JSON.parse 的数组。`;
 
 function aiRecipeUser(extra){
+  const cand = selectedPolishCandidate();
+  const txt = String((cand && cand.text)||'').trim();
+  if(txt){
+    // 单一专线：只注入所选方案完整原文（剔除「结构」段——节拍/章节规划对风格设计无用），配方须百分之百贴合本小说
+    const body = stripStructureFromIntro(txt);
+    const head = '【所选方案完整原文（唯一蓝本：含书名+九要素，配方须百分之百贴合本小说）】\n' + body;
+    return extra ? `${head}\n\n以下为对该小说的写作风格配方设计请求：\n${extra}` : head;
+  }
+  // 回退：尚未生成②优化构想所选方案时退回书名+简介（有总比没有好）
   const o = state.outline || {};
   const head = (String(o.title||'').trim() && String(o.logline||'').trim())
     ? `【小说书名】${o.title}\n【小说简介】${o.logline}\n\n以下为该小说的写作风格配方设计请求：`
     : '（尚未生成大纲：为让 AI 依据本小说书名与简介设计更贴合的风格配方，建议先到「大纲」步生成书名与简介。）';
   return extra ? `${head}\n\n${extra}` : head;
 }
+// v228/P4 词库 spec 摘要：内置词条取 note 摘要；自定义词条 note 多为「写法:/避免:/自查:」多行结构化配方，只取首行并标注，避免截断成乱麻误导 AI
+function aiRecipeSpecNote(s){
+  const n = String(s.note||'').trim();
+  if(!n) return '';
+  const multi = n.includes('\n') && /写法|避免|自查/.test(n);
+  const head = n.split('\n')[0].trim();
+  return (multi ? (head ? head + '（多行配方·详见词库）' : '（多行配方·详见词库）') : n).slice(0,60);
+}
 function aiRecipePrompt(userDesc){
   const lib = writeStyleLib();
-  const spec = lib.map(s=> `- ${s.id}：${s.name}（${s.cat||'custom'}）｜${String(s.note||'').slice(0,60)}`).join('\n');   // v228/P4：注入 note 摘要，AI 不再"只见名字不见味道"
+  const spec = lib.map(s=> `- ${s.id}：${s.name}（${s.cat||'custom'}）｜${aiRecipeSpecNote(s)}`).join('\n');   // v228/P4：注入 note 摘要，AI 不再"只见名字不见味道"
   // 4.7 Pro（3.6）：system 换 AI_RECIPE_SYS_PRO + 现有词库 id/name/cat
   return { system: AI_RECIPE_SYS_PRO + '\n\n【现有词库 id/name/cat】：\n' + spec, user: aiRecipeUser(userDesc) };
 }
-// v1.0.62 上传主线简述 TXT → 判断该小说文风 → 给可模仿的写作配方（全文直发，不分段）
-// 4.7 Pro（3.6）：同步换 PRO system（保留「完整通读主线简述」语境前缀）
-function aiPromptFromOutline(text){
-  const lib = writeStyleLib();
-  const spec = lib.map(s=> `- ${s.id}：${s.name}（${s.cat||'custom'}）｜${String(s.note||'').slice(0,60)}`).join('\n');   // v228/P4：注入 note 摘要，AI 不再"只见名字不见味道"
-  return { system:
-    '你是资深长篇小说「风格工程师」。用户上传的是一部小说的【主线简述】TXT（非正文）。\n' +
-    '请你【完整通读】这份梗概，判断该小说的文风、叙事节奏、对白与情绪质感，再为"想模仿这部小说写作"的用户设计 2~6 个可直接落地的组合配方。\n\n' +
-    AI_RECIPE_SYS_PRO + '\n\n【现有词库 id/name/cat】：\n' + spec,
-    user: aiRecipeUser(text) };
-}
-// v1.0.62 上传来源标记：'desc'＝描述入口 ／ 'outline'＝主线简述入口（仅用于结果区提示，不持久化）
-let aiSource = 'desc';
 // AI 配方助手卡片（仅长篇小说模式在渲染层调用）
 function aiRecipeCard(){
   const lib = writeStyleLib();
@@ -2352,20 +2526,17 @@ function aiRecipeCard(){
   return `<div class="card ai-recipe-card${collapsed?' collapsed':''}">
     <div class="ai-recipe-head" data-ai-recipe-fold role="button" tabindex="0" title="展开/收起">
       <h3 style="margin:0">🧪 AI 配方助手 <span class="sc-fold-ico">${collapsed?'▸':'▾'}</span></h3>
-      <span class="muted" style="font-size:11px;font-weight:400">为「写作风格」而生 · 描述一段风格，或上传主线简述 AI 提炼配方</span>
+      <span class="muted" style="font-size:11px;font-weight:400">为「写作风格」而生 · 基于本小说②优化构想所选方案设计配方</span>
     </div>
     <div class="ai-recipe-body">
       <div class="ai-desc-wrap">
-        <span class="ai-upload-name" data-ai-upload-name></span>
-        <textarea id="aiReDesc" rows="3" placeholder="用一段话描述你想要的风格/题材/氛围。例如：轻松治愈的都市言情，带点温馨笑料，配角俏皮，节奏明快。" style="width:100%;box-sizing:border-box"></textarea>
+        <textarea id="aiReDesc" rows="3" placeholder="" style="width:100%;box-sizing:border-box"></textarea>
       </div>
       <div class="ai-recipe-tool">
         <button type="button" class="btn primary" data-ai-recipe-gen>✨ 生成配方</button>
         <button type="button" class="btn small ghost" data-ai-recipe-clear>清空</button>
         <button type="button" class="ai-upload-btn ai-hist-btn" data-ai-recipe-hist title="AI 配方历史：回看已生成过的候选配方">📖<span class="ai-hist-badge">${snapAiHist().length||''}</span></button>
-        <button type="button" class="ai-upload-btn" data-ai-recipe-file title="上传主线简述TXT">＋</button>
       </div>
-      <input type="file" id="aiReFile" accept=".txt,text/plain" hidden />
       <div data-ai-recipe-out>${ aiRecipeResultHtml(lib) }</div>
     </div>
   </div>`;
@@ -2384,7 +2555,7 @@ function aiRecipeResultHtml(lib){
         ${ recipeScBadge(c) }
         <span class="muted" style="font-size:11px">${esc(c.desc||'')}</span>
       </div>
-      <div class="ai-recipe-tags">${ (c.tags||[]).map(id=>{ const s=writeStyleById(id); return `<span class="ai-recipe-tg">${esc(s?s.name:id)}</span>`; }).join('') }</div>
+      <div class="ai-recipe-tags">${ (c.tags||[]).map(id=>{ const s=writeStyleById(id); return `<span class="ai-recipe-tg"${s?'':' title="引用了词库外 id"'} style="${s?'':'opacity:.65'}">${esc(s?s.name:id)}${s?'':'（词库外）'}</span>`; }).join('') }</div>
       <div class="ai-recipe-sec"><span class="ar-lab">为何这样选</span>${esc(wiseWhyText(c.why||''))}</div>
       <div class="ai-recipe-sec"><span class="ar-lab">适用场景</span>${esc(wiseWhyText(c.scenario||''))}</div>
       <div class="ai-recipe-gap">
@@ -2412,7 +2583,8 @@ function gapFiveHtml(g){
 }
 function gapHtml(c, ci){
   if(!Array.isArray(c.gap) || !c.gap.length) return `<span class="ar-ok">✓ 现有词库即可覆盖，无需新词条</span>`;
-  return `<div class="ar-gaptitle">⚠️ 存在词条缺口（共 ${c.gap.length} 项，确认后立即纳入当前配方）</div>
+  const pending = c.gap.some(g => !((c.tags||[]).includes(g.id) || libHas(g.id)));   // v1.0.256 至少有一条尚未入库才启用「全部加入」
+  return `<div class="ar-gaptitle">⚠️ 存在词条缺口（共 ${c.gap.length} 项，可逐条或一键全部加入，确认后立即纳入当前配方）</div>
   ${ c.gap.map((g,gi)=>`
     <div class="ai-recipe-gapitem">
       <div class="ar-gaphead"><b>${esc(g.name||'')}</b><span class="muted" style="font-size:11px">${ (AI_CAT_LABEL[g.cat]||g.cat||'custom') }</span></div>
@@ -2420,7 +2592,8 @@ function gapHtml(c, ci){
       <div class="ar-gapnote">${gapFiveHtml(g)}</div>
       ${ g.warning ? `<div class="ar-gapwarn">⚠️ ${esc(g.warning)}</div>` : '' }
       <button type="button" class="btn small ghost" data-ai-recipe-addgap="${ci}__${gi}" ${ (c.tags||[]).includes(g.id)|| libHas(g.id) ? 'disabled' : '' }>＋ 加入词库</button>
-    </div>`).join('') }`;
+    </div>`).join('') }
+  ${ c.gap.length>1 ? `<div style="margin-top:6px"><button type="button" class="btn small primary" data-ai-recipe-addgapall="${ci}" ${pending?'':'disabled'} title="仅加入尚未入库的新词条；已入库的自动跳过">＋ 全部加入词库</button></div>` : '' }`;
 }
 function libHas(id){ return !!writeStyleById(id); }
 // v228/P4：候选配方新词条（gap）五维齐全度标注——true=齐全 / false=有缺维；仅标注供候选卡提示，不强制丢弃（宁松勿误伤）
@@ -2442,52 +2615,38 @@ function recipeScBadge(c){
 }
 // D2：生成候选配方；若返回为空则附修正指令重试 1 次（新词条缺维由候选卡徽标提示，不强制丢弃）
 async function aiRecipeProduce(system, user){
-  const opt = { maxTokens: clampMaxTokens('json'), temperature:(getCfg().aiRecipeTemp==null?0.9:getCfg().aiRecipeTemp), topP:0.5 };
-  const FIX = `\n\n【上一轮修正：新词条必须五维齐全】含新词条（gap 非空）的配方：每个新词条必须五维齐全——note（一句话定位）、tips（≥2 条）、avoid（≥1 条）、check（≥1 条）、demo（示例句）。请务必为每个候选给全、给对上述字段。`;
-  let list = null;
+  // v1.0.250：配方改用独立 clampMaxTokens('recipe')=8192 档——239-249 一直错用 'json'=4096，
+  // 在推理型模型下思考(reasoning_content)易耗尽预算致 content 为空；扩容并靠提示词约束控制思考。
+  const opt = { maxTokens: clampMaxTokens('recipe'), temperature:(getCfg().aiRecipeTemp==null?0.9:getCfg().aiRecipeTemp), topP:0.5 };
+  const FIX = `\n\n【上一轮修正：gap 按需给全、不机械硬造】缺口与否由你自主判断：现有词库能完全覆盖时 gap 应为 null（0 条，不要为凑数而硬造）；确有多条真实缺口时才写 gap，并把它们一次给全（不要只给 1 个、不要合并）；gap 非空时每个新词条必须五维齐全——note（一句话定位）、tips（≥2 条）、avoid（≥1 条）、check（≥1 条）、demo（示例句）。请为非 null 的 gap 给全、给对上述字段。`;
+  const FIX_JSON = `\n\n【上一轮修正：JSON 解析失败】上一轮输出无法被解析为合法 JSON 数组。请严格只输出一个 JSON 数组（不要 markdown 代码块、不要解释、不要任何额外文字）。`;
+  let list = null, lastJsonOk = false;
   for(let attempt=1; attempt<=2; attempt++){
-    const sys = attempt>1 ? String(system)+FIX : system;
+    const sys = attempt>1 ? String(system) + (lastJsonOk ? FIX : FIX_JSON) : system;
     const raw = unwrapAIResult(await callDeepSeek(sys, user, Object.assign({}, opt, {taskKey:'recipe'})));
     const cands = prepRecipeList(parseAiJsonList(raw));
-    if(Array.isArray(cands) && cands.length){ list = cands; break; }
+    lastJsonOk = Array.isArray(cands) && cands.length > 0;
+    if(lastJsonOk){ list = cands; break; }
   }
   if(!list || !list.length) throw new Error('AI 未返回有效配方，请重试');
   return list;
 }
-// 生成候选配方
+// 生成候选配方（v1.0.24x：有 ②优化构想所选方案时描述可选——留空则仅依据专线设计）
 async function aiRecipeGen(){
   const ta = $('#aiReDesc'); if(!ta) return;
   const desc = (ta.value||'').trim();
-  if(!desc){ toast('请先描述你想要的风格'); return; }
-  const out = $('[data-ai-recipe-out]'); if(out) out.innerHTML = `<p class="muted" style="margin:8px 0 0">⏳ AI 正在根据你的描述设计候选配方与词条缺口……</p>`;
+  const hasLine = !!((selectedPolishCandidate()||{}).text || '').trim();
+  if(!desc && !hasLine){ toast('请先描述你想要的风格'); return; }
+  if(!desc && hasLine){ toast('将仅依据所选方案设计配方'); }
+  const out = $('[data-ai-recipe-out]'); if(out) out.innerHTML = `<p class="muted" style="margin:8px 0 0">⏳ AI 正在${hasLine?'依据所选方案':'根据你的描述'}设计候选配方与词条缺口……</p>`;
   const gen = $('[data-ai-recipe-gen]'); if(gen){ gen.disabled = true; gen.textContent = '生成中…'; }
   try{
     const {system, user} = aiRecipePrompt(desc);
     const list = await aiRecipeProduce(system, user);   // D2/C①：生成即校验新词条五维齐全，不合格自动重试
     aiRp = { list, hi: 0 };
-    // v10.57 生成成功即存历史快照（书本图标可回看；outline 由 aiRecipeFromOutline 存）
-    if(aiSource !== 'outline') addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'desc', desc: desc, list: JSON.parse(JSON.stringify(list)), applied:[] });
+    addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'desc', desc: desc || '依据所选方案', list: JSON.parse(JSON.stringify(list)), applied:[] });
   }catch(e){
     aiRp = { list:null, err: (e&&e.message)||'生成失败' };
-  }
-  if(out) out.innerHTML = aiRecipeResultHtml();
-  if(gen){ gen.disabled = false; gen.textContent = '✨ 生成配方'; }
-}
-// v1.0.62 上传主线简述 → 全文直发 AI 通读 → 提炼可模仿的写作配方（复用 aiRp 渲染链，不分段）
-let _aiOutlineFname = ''; // v10.57 暂存上传文件名，供快照 desc 标记
-async function aiRecipeFromOutline(text){
-  aiSource = 'outline';
-  const out = $('[data-ai-recipe-out]');
-  if(out) out.innerHTML = `<p class="muted" style="margin:8px 0 0">⏳ AI 正通读主线简述并提炼可模仿的写作配方…</p>`;
-  const gen = $('[data-ai-recipe-gen]'); if(gen){ gen.disabled = true; gen.textContent = '通读中…'; }
-  try{
-    const {system, user} = aiPromptFromOutline(text);
-    const list = await aiRecipeProduce(system, user);   // D2/C①：生成即校验新词条五维齐全
-    aiRp = { list, hi: 0 };
-    // v10.57 生成成功即存历史快照（以梗概文件名标记来源；不存原文大文本）
-    addAiHist({ id: aiHistEntryId(), ts: Date.now(), src:'outline', desc: _aiOutlineFname || '主线简述', list: JSON.parse(JSON.stringify(list)), applied:[] });
-  }catch(e){
-    aiRp = { list:null, err: (e&&e.message)||'通读失败' };
   }
   if(out) out.innerHTML = aiRecipeResultHtml();
   if(gen){ gen.disabled = false; gen.textContent = '✨ 生成配方'; }
@@ -2531,10 +2690,10 @@ function applyChosenCandidate(c, opts){
   const libIds = writeStyleLib().map(s=>s.id);
   // v10.48 选用即应用：替换写生效配置并持久化；回退依赖「收藏当前」预设或本配方仍存于「我的配方」
   const st2 = writeStyleState();
-  const d2 = wsDraftInit();                       // 从生效配置取 intensity
+  const d2 = wsDraftInit();                       // 从生效配置取 tags
   d2.tags = (c.tags||[]).filter(id=> libIds.includes(id));   // 替换而非并集
   (c.gap||[]).forEach(g=>{ if(g && g.id && libIds.includes(g.id) && !d2.tags.includes(g.id)) d2.tags.push(g.id); });
-  st2.tags = d2.tags.slice(); st2.intensity = d2.intensity||2;
+  st2.tags = d2.tags.slice();
   persist();
   wsDraft = null;                                 // 草稿与生效合一 -> 卡片显示「✔已生效」
   if(!opts || opts.render !== false) aiRp = null;
@@ -2560,17 +2719,14 @@ function aiRecipeSave(ci){
   toast('已加入「我的配方」（未应用）：'+stored.name);
 }
 // 确认加入缺口词条 → styleCustom.added，并立即纳入当前配方草稿（决策2）
-function aiRecipeAddGap(key){
-  if(!aiRp || !Array.isArray(aiRp.list)) return;
-  const [ci, gi] = String(key||'').split('__').map(Number);
-  const c = aiRp.list[ci]; if(!c) return;
-  const g = (c.gap||[])[gi]; if(!g) return;
-  if(writeStyleById(g.id)){ toast('该词条已在词库中'); return; }
+// v1.0.265 缺口词条入库核心（实时候选与历史候选共用）：入词库 + 纳入当前配方草稿；返回新 id，已在库返回 null
+function addGapEntryToLib(g){
+  if(!g) return null;
+  if(writeStyleById(g.id)) return null;
   const group = ['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'].includes(g.cat) ? g.cat : 'custom';
   const cfg = getCfg(); cfg.styleCustom = cfg.styleCustom || {};
   cfg.styleCustom.added = cfg.styleCustom.added || [];
   const id = (g.id && /^[a-z][a-z0-9_]*$/i.test(g.id)) ? g.id : ('c'+Math.random().toString(36).slice(2,8));
-  // id 冲突则加后缀
   let finalId = id, mx = 1; const existing = writeStyleLib().map(s=>s.id);
   while(existing.includes(finalId)) finalId = id + (mx++);
   cfg.styleCustom.added.push({ id:finalId, group, name:(g.name||'').trim(), note:(g.note||'').trim(),
@@ -2579,10 +2735,54 @@ function aiRecipeAddGap(key){
     check:Array.isArray(g.check)?g.check.map(x=>String(x||'').trim()).filter(Boolean):[],
     demo:(g.demo||'').trim(), seal:(g.seal===undefined?0:g.seal), warning:(g.warning||'') });
   saveCfg(cfg);
-  // 立即纳入当前配方草稿 + 把该 id 补进当前候选 tag
   const d = wsDraftInit(); if(!d.tags.includes(finalId)) d.tags.push(finalId);
+  return finalId;
+}
+function aiRecipeAddGap(key){
+  if(!aiRp || !Array.isArray(aiRp.list)) return;
+  const [ci, gi] = String(key||'').split('__').map(Number);
+  const c = aiRp.list[ci]; if(!c) return;
+  const g = (c.gap||[])[gi]; if(!g) return;
+  const finalId = addGapEntryToLib(g);
+  if(!finalId){ toast('该词条已在词库中'); return; }
   if(c.tags && !c.tags.includes(finalId)) c.tags.push(finalId);
   toast('已加入词库并纳入当前配方：'+(g.name||finalId));
+  const out = $('[data-ai-recipe-out]'); if(out) out.innerHTML = aiRecipeResultHtml();
+}
+
+// v1.0.265 历史候选缺口词条入库：与实时候选共用 addGapEntryToLib，仅源数据来自历史快照
+function aiHistAddGap(ei, ci, gi){
+  const a = getAiHist(); const entry = a[ei]; if(!entry||!Array.isArray(entry.list)) return;
+  const c = entry.list[ci]; if(!c) return;
+  const g = (c.gap||[])[gi]; if(!g) return;
+  const finalId = addGapEntryToLib(g);
+  if(!finalId){ toast('该词条已在词库中'); return; }
+  toast('已加入词库并纳入当前配方：'+(g.name||finalId));
+  const out = $('[data-ai-recipe-out]'); if(out) out.innerHTML = aiRecipeResultHtml();
+}
+function aiHistAddGapAll(ei, ci){
+  const a = getAiHist(); const entry = a[ei]; if(!entry||!Array.isArray(entry.list)) return;
+  const c = entry.list[ci]; if(!c||!Array.isArray(c.gap)||!c.gap.length) return;
+  let added = 0, skipped = 0;
+  c.gap.forEach((g)=>{
+    if(!g) return;
+    if((c.tags||[]).includes(g.id) || writeStyleById(g.id)){ skipped++; return; }
+    if(addGapEntryToLib(g)) added++;
+  });
+  const out = $('[data-ai-recipe-out]'); if(out) out.innerHTML = aiRecipeResultHtml();
+  toast(added ? (skipped ? `已加入 ${added} 条新词条（跳过已入库 ${skipped} 条），并已纳入当前配方` : `已加入 ${added} 条新词条，并已纳入当前配方`) : '这些新词条都已在词库中，无需重复加入');
+}
+
+// v1.0.256 一键全部加入缺口词条：逐条调用 aiRecipeAddGap（自动跳过已入库/标签已含）
+function aiRecipeAddGapAll(ci){
+  if(!aiRp || !Array.isArray(aiRp.list)) return;
+  const c = aiRp.list[ci]; if(!c || !Array.isArray(c.gap) || !c.gap.length) return;
+  let added = 0, skipped = 0;
+  c.gap.forEach((g, gi)=>{
+    if((c.tags||[]).includes(g.id) || (g && writeStyleById(g.id))){ skipped++; return; }
+    aiRecipeAddGap(ci + '__' + gi); added++;
+  });
+  toast(added ? (skipped ? `已加入 ${added} 条新词条（跳过已入库 ${skipped} 条），并已纳入当前配方` : `已加入 ${added} 条新词条，并已纳入当前配方`) : '这些新词条都已在词库中，无需重复加入');
   const out = $('[data-ai-recipe-out]'); if(out) out.innerHTML = aiRecipeResultHtml();
 }
 
@@ -2619,18 +2819,18 @@ function writeStyleLib(){
   const added = Array.isArray(c && c.added) ? c.added : [];
   // v10.19 系统内置词条保留原始来源 cat（语气基调/文风质感/语言元素），供章节风格组内分块展示
   const base = WRITE_STYLES.filter(s=> !removed.includes(s.id)).map(s=>{
-    const cat = s.cat || (s.group==='tone' ? 'tone' : (s.group==='texture' ? 'texture' : 'element'));
+    const cat = s.cat || 'element';
     return { ...s, group:'element', cat, note: notes[s.id] || s.note };
   });
   const customs = added.map(a=>{
     // v10.52 优先用入库时持久化的五维；老数据（无独立 tips/avoid/check）回退 parseCustomStyleNote 从 note 拆
     const hasStruc = (Array.isArray(a.tips)&&a.tips.length) || (Array.isArray(a.avoid)&&a.avoid.length) || (Array.isArray(a.check)&&a.check.length);
     const parsed = hasStruc ? { tips:a.tips||[], avoid:a.avoid||[], check:a.check||[], demo:a.demo||'' } : parseCustomStyleNote(a.note||'');
-    // v10.20 自定义项归入用户选择的五大类分类；老数据（tone/texture/element）映射到自定义兜底
+    // v10.20 自定义项归入用户选择的五大类分类；老数据（未命五大类）映射到自定义兜底
     const cat = ['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计'].includes(a.group) ? a.group : 'custom';
     return { id:a.id, group:'element', name:a.name||'未命名', note:a.note||'', custom:true, cat, tips:parsed.tips||[], avoid:parsed.avoid||[], check:parsed.check||[], demo:parsed.demo||a.demo||'', seal:(a.seal===undefined?0:a.seal), warning:a.warning||'' };
   });
-  // v11 移除「标题风格(tone)/梗概风格(texture)」残留分组：写作风格收敛为章节风格(element)，按五大类 cat 组织展示。
+  // v11 起写作风格收敛为章节风格(element)，按五大类 cat 组织展示。
   return base.concat(customs);
 }
 function writeStyleById(id){
@@ -2652,23 +2852,18 @@ function wiseWhyText(txt){
 }
 // 当前生效的写作风格配置：override 优先（单章覆盖/对比用），缺省用 state.chapterStyle
 function curWriteStyle(override){
-  if(override && Array.isArray(override.tags)) return { tags: override.tags, intensity: (override.intensity===1||override.intensity===3)?override.intensity:2 };
+  if(override && Array.isArray(override.tags)) return { tags: override.tags };
   const s = state.chapterStyle || {};
-  return { tags: Array.isArray(s.tags)?s.tags:[], intensity: (s.intensity===1||s.intensity===3)?s.intensity:2 };
+  return { tags: Array.isArray(s.tags)?s.tags:[] };
 }
-// v10.17 按使用目标分组取所选风格对象：章节风格(element)/标题风格(tone)/梗概风格(texture)
-function wsGroupStyleTags(override, group){
+// 取所选章节风格(element)对象（写作风格已收敛为章节风格一组）
+function wsGroupStyleTags(override){
   const st = curWriteStyle(override);
   const lib = writeStyleLib();
-  return (Array.isArray(st.tags) ? st.tags : []).map(id=> lib.find(s=>s.id===id)).filter(s=> s && s.group === group);
+  return (Array.isArray(st.tags) ? st.tags : []).map(id=> lib.find(s=>s.id===id)).filter(Boolean);
 }
-const WS_CONC_TXT = {
-  1:'浓度（轻）：全章约三分之一段落体现风格，其余按常规写作；每段最多 1-2 处风格痕迹。写完自查：不足处不必强补，保持自然。',
-  2:'浓度（中）：全章大部分段落（约三分之二）体现风格，每段至少 1 处明显痕迹；开头段落必须体现以立住基调。写完自查：不达标段落补强。',
-  3:'浓度（重）：全章每一段都要体现风格，对话与叙述几乎句句带痕迹，形成统一文风。写完自查：无风格痕迹的段落一律重写。'
-};
-// 生成注入块：最高优先指令 + 浓度量化 + 四件套配方（仅展开选中项）；无选中返回空串
-function wsStyleNoteBlock(items, st, headTitle, intro, demoLabel){
+// 生成注入块：最高优先指令 + 四件套配方（仅展开选中项）；无选中返回空串
+function wsStyleNoteBlock(items, headTitle, intro){
   if(!items.length) return '';
   const lines = ['【' + headTitle + '（用户指定 · 最高优先指令）】', intro];
   items.forEach(s=>{
@@ -2683,18 +2878,15 @@ function wsStyleNoteBlock(items, st, headTitle, intro, demoLabel){
 }
 // 章节风格（element 组）注入：用于章节正文生成（单章/批量/重生成；含角色扮演对比）
 function chapterStyleNote(override){
-  const items = wsGroupStyleTags(override, 'element');
-  const st = curWriteStyle(override);
-  return wsStyleNoteBlock(items, st, '写作风格', '本指令为本章写作的最高优先要求（第一优先，压过本次人工干预）：当它与节奏、篇幅、原创性等任何其他要求冲突时，以本指令为准；唯一不可逾越的红线：不得破坏人名/地名/专名一致性、不得违反基础剧情逻辑与人物设定。');
+  const items = wsGroupStyleTags(override);
+  return wsStyleNoteBlock(items, '写作风格', '本指令为本章写作的最高优先要求（第一优先，压过本次人工干预）：当它与节奏、篇幅、原创性等任何其他要求冲突时，以本指令为准；唯一不可逾越的红线：不得破坏人名/地名/专名一致性、不得违反基础剧情逻辑与人物设定。');
 }
-// v11 规划师轻量风格注入：只给所选章节风格(element)的名称 + 浓度，不给 note/五维（规划师只需风格基调锚点，避免与正文完整版重复）。
+// v11 规划师轻量风格注入：只给所选章节风格(element)的名称，不给 note/五维（规划师只需风格基调锚点，避免与正文完整版重复）。
 function writeStyleNamesBlock(){
-  const items = wsGroupStyleTags(null, 'element');
+  const items = wsGroupStyleTags(null);
   if(!items.length) return '';
   const names = items.map(s=>s.name).join('、');
-  const st = curWriteStyle();
-  const conc = WS_CONC_TXT[st.intensity] ? `浓度：${WS_CONC_TXT[st.intensity]}` : '';
-  return `【写作风格（第一优先）】写作风格：${names}${conc?('，'+conc):''}。\n本指令为本章规划的最高优先要求：当其与其它要求冲突时以本指令为准；唯一不可逾越红线：不破坏人名/地名/专名一致性、不违反基础剧情逻辑与人物设定。`;
+  return `【写作风格（第一优先）】写作风格：${names}。\n本指令为本章规划的最高优先要求：当其与其它要求冲突时以本指令为准；唯一不可逾越红线：不破坏人名/地名/专名一致性、不违反基础剧情逻辑与人物设定。`;
 }
 
 
@@ -2867,6 +3059,9 @@ function clampMaxTokens(task){
     chapterPlan: 32000, // 全书规划师单批(25章完整节拍表)输出，避免批次 JSON 超出 4096 被截断
     glossary: 9216,     // v242/911-②：词典类输出（规划师④/逐章提取/批量兜底）——4096 会把 7 字段人物条目卡在 ~25-30 条；v1.0.197 增 mannerism（小动作/口头禅）字段，8192→9216 防同量条目截断
     json: 4096,         // JSON 类契约输出
+    recipe: 8192,       // v1.0.250：AI 配方助手——注入②所选方案全文且要求逐条原创五维新词条，思考+正文总预算需放宽；4096 在推理型模型下易被 reasoning_content 耗尽致 content 为空(finish_reason=length)
+    polish: 8192,       // v1.0.260：优化构想——原未传 maxTokens 吃模型默认上限，普通模型 4K 且开「多方案」时偏紧；显式给 8192 抬升普通模型下限（推理模型仍由 callDeepSeek 放大到 32K）
+    plannerAux: 8192,   // v1.0.280：词典充实辅助任务（原伏笔网已移除）
     continue: 8192,     // 续写补充段
     summary: 2048,      // 梗概/摘要
     strip: 5000         // 速读梗概
@@ -2880,7 +3075,7 @@ function dynamicChapterParams(idx){
   const total = (o && o.chapters && o.chapters.length) || 1;
   const ratio = (idx + 1) / total;
   let phase = 'act1';
-  // v1.0.141：断掉旧 structure.acts，改按「大纲节拍的结构」阶段数分三条温度带
+  // v1.0.141：断掉旧 structure.acts，改按「全书节拍」阶段数分三条温度带
   const stages = chapterPlanStages(o);
   if(stages.length >= 3){
     if(ratio <= 0.33) phase = 'act1';
@@ -2888,13 +3083,7 @@ function dynamicChapterParams(idx){
     else phase = 'act3';
   } else if(ratio > 0.75) phase = 'act3';
   else if(ratio > 0.35) phase = 'act2';
-  // climax beat 密度检测：本章节拍表 climax 段 requiredEntities 密度高时再降温度保稳
-  const plan = (o && Array.isArray(o.chapterPlans) && o.chapterPlans[idx]) || {};
-  let climaxDense = false;
-  if(plan && Array.isArray(plan.beats)){
-    const climax = plan.beats.find(b => b && isClimaxType(b.type));
-    if(climax && Array.isArray(climax.requiredEntities) && climax.requiredEntities.length >= 3) climaxDense = true;
-  }
+  // v1.0.285：climax 密度检测依赖旧 JSON beats 数组，已随其退役移除（温度分带仍由章节所处阶段驱动）
   const map = {
     act1: { temperature: 0.70, topP: 0.95 },   // 立人设：低温稳
     act2: { temperature: 0.85, topP: 0.95 },   // 中段铺陈：稍高激发变化
@@ -2905,13 +3094,13 @@ function dynamicChapterParams(idx){
   const t = base + (p.temperature - 0.75);
   return {
     temperature: Math.max(0.1, Math.min(1.2, t)),
-    topP: climaxDense ? Math.max(0.5, Math.round((p.topP - 0.05) * 100) / 100) : p.topP,   // v1.0.162 修复浮点尾差（0.95-0.05=0.9000000001 超 2 位小数被 API 拒）
+    topP: p.topP,
     phase
   };
 }
-// v1.0.149：structure 已整体移除，但「大纲节拍的结构」作为全书拍子的阶段成果重新起效（用户方案①）。
-// 不再依赖 AI 输出任何 structure 字段，而是复用「大纲节拍的结构卡」（beatStructureCardHtml）的本地均分算法，
-// 按当前所选「全书拍子」阶段数 + 现有章节列表 把各章归入阶段，供规划师节拍表 / 章节标题 / 正文结构定位 / 伏笔网 真正拿到阶段约束。
+// v1.0.149：structure 已整体移除，但「全书节拍」作为全书拍子的阶段成果重新起效（用户方案①）。
+// 不再依赖 AI 输出任何 structure 字段，而是复用「全书节拍卡」（beatStructureCardHtml）的本地均分算法，
+// 按当前所选「全书拍子」阶段数 + 现有章节列表 把各章归入阶段，供规划师节拍表 / 章节标题 / 正文结构定位 真正拿到阶段约束。
 // 注意：这不会把全书拍子的「选择值」塞进规划师——只是把大纲阶段映射注入，作为节奏指导，仍符合「拍数只注入大纲生成」的分工。
 function chapterPlanStages(o){
   const outline = o || state.outline || {};
@@ -2936,18 +3125,11 @@ function chapterActBlock(i){
   if(!st) return '';
   return `【本章结构定位】本章（第 ${i+1} 章）落在全书「${currentBookBeatCfg().label}」的「${st.name}」阶段（第 ${st.first}—${st.last} 章）。本章节拍事件须落在此阶段内、服务该阶段走向；属于本阶段的节拍事件必须兑现，不属于本阶段的事件不得越过阶段提前兑现。`;
 }
-// 结构骨架（供伏笔网生成注入）：输出「大纲节拍的结构」阶段列表，让伏笔设计有结构依据。
-function structureSkeletonBlock(){
-  const stages = chapterPlanStages(state.outline);
-  if(!stages.length) return '';
-  const txt = stages.map(s=>`第 ${s.first}—${s.last} 章「${s.name}」`).join('；');
-  return `【大纲节拍的结构】全书按「${currentBookBeatCfg().label}」划分为 ${stages.length} 个阶段推进：${txt}。伏笔植入与回收须落在合理的阶段跨度内，不得越过所对应阶段提前兑现。`;
-}
-// v1.0.151：全书拍子 → 章节阶段的演算规则（chapterPlanStages 与「大纲节拍的结构卡」共用，保证显示与注入一致）。
+// v1.0.151：全书拍子 → 章节阶段的演算规则（chapterPlanStages 与「全书节拍卡」共用，保证显示与注入一致）。
 //   · 章节数 ≥ 拍段数：按整除基数把各章均分到每个拍段（余数向前补），每个阶段 ≥1 章。
 //   · 章节数 < 拍段数（少章数小说，如 6 章配 十二拍/十五拍）：不再截断丢弃，而是把 M 个拍子按出现顺序
-//     均匀合并成「章节数」个阶段（每阶段承载 1 章），使全书节拍弧（含结尾燃点/收束）在少章书中被完整呈现；
-//     阶段名取合并区间「首拍→尾拍」，如「反击转折→收束余波」。
+//     均匀合并成「章节数」个阶段（每阶段承载 1 章），使全书节拍弧（含结尾高潮/收束）在少章书中被完整呈现；
+//     阶段名取合并区间「首拍→尾拍」，如「反击转折→结局收束」。
 function bookStagePlan(chapterCount){
   const full = beatStageNames();
   const C = Math.floor(chapterCount) || 0;
@@ -2970,74 +3152,528 @@ function mergedBeatName(full, s, e){
   if(e <= s) return a;
   return `${a}→${full[e] || a}`;
 }
+/* =========================================================
+ * 学校模式 · 校长分组引擎（阶段优先 / 过短可并 / 过大均分拆 / 不留孤儿尾组）
+ * 定案（D2）：组界遵循《全书节拍》的"段"——一组≈一个完整剧情单元，老师数不硬压到 ⌈N÷20⌉。
+ *   · 段 ≤20 → 一位老师独立成组（除非过短可并入相邻）。
+ *   · 段 >20 → 段内先定份数 k=⌈段章数÷20⌉，再均分成 k 份（余数摊给靠前）——所以 41 章只会出 14/14/13，
+ *     绝不会出现 20/20/1 式孤儿尾组。
+ *   · 过短组（<6 章）并入相邻（并入后 ≤20 才并；两侧都超 20 则保留，尊重阶段边界）。
+ *   · 划不出《全书节拍》段 → 按章序连续 ⌈N÷20⌉ 均分兜底（同样不留小尾巴）。
+ * ========================================================= */
+const SCHOOL_GROUP_MIN = 6;    // 判定"过短"的组章数下限
+const SCHOOL_GROUP_MAX = 20;   // 每师上限
+function schoolStageGroups(){
+  const o = state.outline || {};
+  let N = (Array.isArray(o.chapters) ? o.chapters.length : 0);
+  if(!N){ const c = Math.floor(Number(chapterCountVal())||0); if(c>=1&&c<=200) N = c; }
+  if(!N) return [];
+  let groups = [];
+  let plan = null; try{ plan = bookStagePlan(N); }catch(e){ plan = null; }
+  if(plan && plan.length){
+    let cur = 1;
+    const CN = '一二三四五六七八九十';
+    for(const st of plan){
+      const n = Math.max(0, Math.floor(st.n)||0); if(!n) continue;
+      const k = (n<=SCHOOL_GROUP_MAX) ? 1 : Math.ceil(n/SCHOOL_GROUP_MAX);
+      const base = Math.floor(n/k), rem = n%k;
+      for(let i=0;i<k;i++){
+        const c = base + (i<rem?1:0); if(c<=0) continue;
+        const nm = k>1 ? `${st.name||''}·${CN[i]||(i+1)}` : (st.name||'');
+        groups.push({ stage: nm, first: cur, last: cur+c-1 });
+        cur += c;
+      }
+    }
+  } else {
+    const k0 = Math.max(1, Math.ceil(N/SCHOOL_GROUP_MAX));
+    let k = k0; while(k < N && Math.ceil(N/k) > SCHOOL_GROUP_MAX) k++;
+    const base = Math.floor(N/k), rem = N%k;
+    let cur = 1;
+    for(let i=0;i<k;i++){
+      const c = base + (i<rem?1:0); if(c<=0) continue;
+      groups.push({ stage:`第${i+1}组`, first:cur, last:cur+c-1 });
+      cur += c;
+    }
+    return groups;
+  }
+  // 过短合并（<SCHOOL_GROUP_MIN 组并入相邻，并入后 ≤20 才并）
+  const len = g => g.last - g.first + 1;
+  const join = (a,b)=> a===b ? a : `${a}→${b}`;
+  let guard = 0;
+  while(guard++ < groups.length * 6){
+    let idx = -1;
+    for(let i=0;i<groups.length;i++){ if(len(groups[i]) < SCHOOL_GROUP_MIN){ idx = i; break; } }
+    if(idx < 0) break;
+    const L = len(groups[idx]);
+    const lOk = idx>0   && L + len(groups[idx-1]) <= SCHOOL_GROUP_MAX;
+    const rOk = idx<groups.length-1 && L + len(groups[idx+1]) <= SCHOOL_GROUP_MAX;
+    if(lOk && rOk){
+      const lsz = len(groups[idx-1]), rsz = len(groups[idx+1]);
+      if(rsz < lsz){ groups[idx] = { stage:join(groups[idx].stage, groups[idx+1].stage), first:groups[idx].first, last:groups[idx+1].last }; groups.splice(idx+1,1); }
+      else { groups[idx-1] = { stage:join(groups[idx-1].stage, groups[idx].stage), first:groups[idx-1].first, last:groups[idx].last }; groups.splice(idx,1); }
+    } else if(lOk){ groups[idx-1] = { stage:join(groups[idx-1].stage, groups[idx].stage), first:groups[idx-1].first, last:groups[idx].last }; groups.splice(idx,1); }
+    else if(rOk){ groups[idx] = { stage:join(groups[idx].stage, groups[idx+1].stage), first:groups[idx].first, last:groups[idx+1].last }; groups.splice(idx+1,1); }
+    else { break; }
+  }
+  return groups;
+}
+function schoolGroupsLabel(){
+  const g = schoolStageGroups();
+  if(!g.length) return '';
+  return `${g.length} 位老师 · ` + g.map(x => `老师${g.indexOf(x)+1}（${x.first}-${x.last}章${x.stage?('·'+x.stage):''}）`).join(' · ');
+}
+// v1.0.30x：返回覆盖第 ci 章（0 基）且已备课的老师下标 gi；无则 -1。供正文章卡「📖 教案」定位
+function chapterOfPlan(ci){
+  if(!state.school) return -1;
+  const groups = schoolStageGroups();
+  const teachers = state.school.teachers || [];
+  for(let gi=0; gi<groups.length; gi++){ const g = groups[gi]; if(teachers[gi] && ci+1>=g.first && ci+1<=g.last) return gi; }
+  return -1;
+}
+// v1.0.30x：取第 ci 章（0 基）的「本章教案」完整原文段（老师已备课才有），正文按图索骥；无则 ''
+function teacherChapterPlan(ci){
+  const gi = chapterOfPlan(ci); if(gi < 0) return '';
+  const t = state.school.teachers && state.school.teachers[gi]; if(!t || !t.raw) return '';
+  const re = new RegExp(`^第\\s*${ci+1}\\s*章\\b[\\s\\S]*?(?=^第\\s*\\d+\\s*章\\b|$)`, 'm');
+  const m = String(t.raw).match(re);
+  return m ? String(m[0]).trim() : '';
+}
+
+/* =========================================================
+ * 学校模式 · 校长/老师 施教生成（在既有《全书节拍》分组之上）
+ * -----------------------------------------------------------
+ * 产出存 state.school（随项目持久化）：
+ *   finished:{ dictMaster, dictEnrich, principal, t0..tK }  ← 各步骤完成标记
+ *   retries:{ dictMaster, dictEnrich, principal, t0..tK }   ← 本步显式重试计数(≤16)
+ *   principal:{ ts, groups:[{gi,stage,first,last}], raw }
+ *   teachers:[ { gi, ts, raw } ]   · gi 对应校长分组下标，一次备完全组逐章教案
+ * 每步最多显式重试 SCHOOL_RETRY_MAX=16 次，失败在按钮名右上角亮红角标 ↻N（成功清零）。
+ * ========================================================= */
+const SCHOOL_RETRY_MAX = 16;
+function scState(){
+  if(!state.school || typeof state.school !== 'object') state.school = {};
+  state.school.finished = state.school.finished || {};
+  state.school.retries  = state.school.retries  || {};
+  state.school.teachers = Array.isArray(state.school.teachers) ? state.school.teachers : [];
+  return state.school;
+}
+function scRetry(key){ return scState().retries[key] || 0; }
+function setScRetry(key, n){ scState().retries[key] = Math.max(0, Math.min(SCHOOL_RETRY_MAX, n||0)); persist(); }
+function scDone(key){ const sc = state.school; return !!(sc && sc.finished && sc.finished[key]); }
+function scMark(key, done){ const sc = scState(); sc.finished[key] = !!done; if(done) setScRetry(key, 0); persist(); }
+function scBadge(key){
+  const n = scRetry(key);
+  return n > 0 ? `<b class="sc-retry-badge" title="本步已自动重试 ${n}/${SCHOOL_RETRY_MAX} 次（失败重试，成功清零）">↻${n}</b>` : '';
+}
+// 就地刷新按钮红角标（失败自增时无需整体重渲染）
+function scRefreshBadge(el, key){
+  if(el && el.querySelectorAll){ el.querySelectorAll('.sc-retry-badge').forEach(x => x.remove()); }
+  const n = scRetry(key);
+  if(el){
+    if(n > 0){ el.insertAdjacentHTML('beforeend', `<b class="sc-retry-badge" title="本步已自动重试 ${n}/${SCHOOL_RETRY_MAX} 次">↻${n}</b>`); el.classList.add('sc-failed'); }
+    else el.classList.remove('sc-failed');
+  }
+}
+function schoolStepBtn(key, icon, label, title){
+  const done = scDone(key);
+  return `<button type="button" class="sc-step ${done?'done':''}" data-scp-step="${key}" title="${esc(title||'')}">${icon}<span class="sc-lab">${esc(label)}</span><i class="sc-tick">${done?'✓':''}</i>${scBadge(key)}</button>`;
+}
+function schoolTeacherBtn(g, i){
+  const key = 't'+i, done = scDone(key);
+  const nCh = g.last - g.first + 1;
+  const sc = g.stage || `第${i+1}组`;
+  const range = `${g.first}-${g.last} 章`;
+  return `<div class="sc-teacher-card ${done?'done':'todo'}">
+    <div class="sc-tc-h">
+      <span class="sc-tc-no">🎓 ${i+1}</span>
+      <span class="sc-tc-stage">${esc(sc)}</span>
+      <span class="sc-tc-ch">${esc(range)} (${nCh}章)</span>
+      <span class="sc-tc-st ${done?'done':'todo'}">${done?'✓ 已备':'⏳ 未备'}</span>
+    </div>
+    <div class="sc-tc-b">
+      <button type="button" class="sc-step sc-teacher ${done?'done':''}" data-scp-step="teacher" data-scp-teacher="${i}" title="老师${i+1}：负责第 ${g.first}-${g.last} 章（${esc(g.stage||'')}），一次备完全组逐章教案">备课${scBadge(key)}</button>
+      <button type="button" class="sc-plan-btn" data-scp-plan="${i}" title="${done?('查看老师'+ (i+1) +'本组教案（预览 / 原始稿切换）'):'该组教案尚未生成，先生成后才能阅读'}">📖 读教案</button>
+    </div>
+  </div>`;
+}
+// —— 原料简述：写作风格/配方 + 全量词典 + 各组《全书节拍》节选 ——
+function scStyleBrief(){
+  const parts = [];
+  const tags = (state.chapterStyle && Array.isArray(state.chapterStyle.tags)) ? state.chapterStyle.tags : [];
+  if(tags.length) parts.push('写作风格词条：' + tags.join('、'));
+  try{ const c = selectedPolishCandidate && selectedPolishCandidate(); if(c && c.name) parts.push('②优化构想所选方案：' + String(c.name)); }catch(e){}
+  return parts.length ? parts.join('\n') : '（尚未选配方；由校长依简介与词典自行凝练守则）';
+}
+function scGlossaryBrief(maxChar){
+  const g = (state.outline && state.outline.glossary) || {};
+  const lines = [];
+  const cap=[]; (g.characters||[]).forEach(x=>{ const nm = `${String((x&&x.name)||'').trim()}${x&&String(x.identity||'').trim()?('·'+String(x.identity).trim()):''}`; if(nm) cap.push(nm); });
+  if(cap.length) lines.push('人物：' + cap.slice(0,80).join('、'));
+  const pl=[]; (g.places||[]).forEach(x=>{ if(x&&String(x.name||'').trim()) pl.push(`${String(x.name).trim()}${String(x.type||'').trim()?('·'+String(x.type).trim()):''}`); });
+  if(pl.length) lines.push('地名：' + pl.slice(0,40).join('、'));
+  const pn=[]; (g.propernouns||[]).forEach(x=>{ if(x&&String(x.name||'').trim()) pn.push(String(x.name).trim()); });
+  if(pn.length) lines.push('专名/设定：' + pn.slice(0,40).join('、'));
+  const wr=[]; (g._worldRules||[]).forEach(x=>{ const r=String((x&&x.rule)||'').trim(); if(r) wr.push(r); });
+  if(wr.length) lines.push('世界观规则：\n' + wr.slice(0,30).map(r=>'- '+r).join('\n'));
+  const rel=[]; (g._relationshipTable||[]).forEach(x=>{ if(x && x.a && x.b) rel.push(`${x.a}(${x.relation||'关系'})${x.b}`); });
+  if(rel.length) lines.push('人物关系：' + rel.slice(0,40).join('、'));
+  let s = lines.join('\n');
+  const m = maxChar || 7000;
+  if(s.length > m) s = s.slice(0, m) + '…（已截断）';
+  return s || '（暂无词典，正文将在老师教案中按需自洽）';
+}
+function scGroupBeats(g, maxChar){
+  const plans = (state.outline && Array.isArray(state.outline.chapterPlans)) ? state.outline.chapterPlans : [];
+  const out = [];
+  for(let i=g.first-1;i<g.last;i++){
+    const ch = i+1;
+    const title = (state.outline && state.outline.chapters && state.outline.chapters[i] && String(state.outline.chapters[i].title||'').trim()) || '';
+    const bt = plans[i] && String(plans[i].beatsText||'').trim();
+    out.push(`第${ch}章${title?('《'+title+'》'):''}${bt?('\n'+bt):''}`);
+  }
+  let s = out.join('\n\n');
+  const m = maxChar || 6000;
+  if(s.length > m) s = s.slice(0, m) + '…（已截断）';
+  return s || '（本章节拍为空，老师依全校守则与本组框架自拟）';
+}
+function scAllGroupsBeats(groups, maxChar){
+  const parts = groups.map((g,i)=>`— 组${i+1}·老师${i+1}（第${g.first}-${g.last}章${g.stage?('·'+g.stage):''}） —\n${scGroupBeats(g, 5000)}`);
+  let s = parts.join('\n\n');
+  const m = maxChar || 12000;
+  if(s.length > m) s = s.slice(0, m) + '…（已截断）';
+  return s;
+}
+function extractSection(txt, from, until){
+  const s = String(txt||'');
+  const i = s.indexOf(from); if(i < 0) return '';
+  const j = until ? s.indexOf(until, i + from.length) : -1;
+  const seg = j > i ? s.slice(i, j) : s.slice(i);
+  return seg.trim();
+}
+function scGroupTitles(g){
+  const out = [];
+  for(let i=g.first-1;i<g.last;i++){
+    const title = (state.outline && state.outline.chapters && state.outline.chapters[i] && String(state.outline.chapters[i].title||'').trim()) || '';
+    out.push(`第${i+1}章 ${title?('《'+title+'》'):'（待命）'}`);
+  }
+  return out;
+}
+
+// —— 校长（统一次性产出：全校守则 + 各组组级框架 + 全书标题总表）——
+const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治学人）。你只用下方 user 消息给出的结构化材料，一次性产出全校统筹成果，供下面的「老师」逐一备课。
+
+【输入格式】(user 消息按【键】分节装载，逐节使用、缺失标「无」)
+【长篇小说】书名；【全书简介】；【优化构想·所选方案】；【全校章节数】；【章节微拍】；【写作风格/配方】；【全量万物词典】(全量共享不切片)；【既有《全书节拍》·阶段优先分组】及《全书节拍》节选。
+
+【任务·逐项产出】
+① 全校写作守则——分两层：
+   · 配方锚点：逐条浓缩「写作风格/配方」原文要点，保留原句风格特征（防层层凝练失真）
+   · 可执行纪律：全体老师一致遵循的写作纪律（人物言行一致、时间不乱标、术语统一、章间承接连贯）
+② 各组组级框架——每组一份、逐组齐全。每份固定字段：
+   · 起止章与剧情段；每章功能分工（仅到「引入/推进/转折/高潮/收束」标签 + 一句目标）；整组节奏与情绪曲线；跨组承接（承上=承接上一组末章收束后本组从何接续、首组「开篇·冷开场」；启下=末章给下一组留的钩）；重点调用词典要素。
+③ 全书章节标题总表——为全部章节各拟一题，一批拉通给出、前后呼应。
+
+【输出契约·严格遵守】
+- 只输出纯文本 Markdown；禁止 JSON、禁止用三个反引号围栏包裹输出、禁止引语/开场白/结束语/解释。
+- 严格按下述小节与标记组织，段名与章节号逐项齐全、不得省略：
+# 全校写作守则
+## 配方锚点
+## 可执行纪律
+# 各组组级框架
+## 组1 · 老师1（第1-20章 · 段名）
+- 功能分工：第1章=引入/…；第2章=…
+- 节奏与情绪曲线：…
+- 跨组承接：承上=…（首组写「开篇·冷开场」）；启下=…
+- 重点调用词典要素：…
+## 组2 · 老师2（第21-35章 · 段名）
+…（逐组齐全，直到组K）
+# 全书章节标题总表
+第1章 《标题》
+第2章 《标题》
+…（连排到全书最后一章）`;
+function buildPrincipalUser(groups){
+  const o = state.outline || {};
+  const lines = [];
+  lines.push(`【长篇小说】${o.title||'（未定书名）'}`);
+  if(o.logline) lines.push(`【全书简介】${o.logline}`);
+  let cand = null; try{ cand = selectedPolishCandidate && selectedPolishCandidate(); }catch(e){}
+  if(cand && cand.name) lines.push(`【优化构想·所选方案】${String(cand.name).trim()}${cand.brief?('\n'+String(cand.brief).trim()):''}`);
+  lines.push(`【全校章节数】${(o.chapters||[]).length || chapterCountVal() || '未知'} 章`);
+  // 章节微拍注入校长守则（结构化键值）→ 老师教案「节奏/情绪」
+  const bc = currentBeatCfg ? currentBeatCfg() : null;
+  if(bc && bc.label) lines.push(`【章节微拍】名称=${bc.label}${bc.desc?('；说明='+bc.desc):''}\n要求：把这套整章节奏写进「全校写作守则·可执行纪律」，并让每位老师落进组内每份教案的「本章推进骨架 / 情绪走向与突出点」。`);
+  lines.push('【写作风格/配方】\n' + scStyleBrief());
+  lines.push('【全量万物词典·共享不切片】\n' + scGlossaryBrief(7000));
+  lines.push('【既有《全书节拍》· 阶段优先分组】');
+  groups.forEach((g,i)=>{ lines.push(`组${i+1}·老师${i+1}（第${g.first}-${g.last}章${g.stage?('·'+g.stage):''}）`); });
+  lines.push('\n【各组对应的《全书节拍》节选】\n' + scAllGroupsBeats(groups, 10000));
+  lines.push('\n请按输出契约产出【全校写作守则】【各组组级框架】【全书章节标题总表】三段（逐组齐全），只给纯文本 Markdown。');
+  return lines.join('\n\n');
+}
+async function genPrincipal(btn, opts){
+  if(!isLong()){ toast('仅长篇小说模式支持校长分组'); return false; }
+  const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能分组'); return false; }
+  scState();
+  markAIRunning('principal'); if(btn) busy(btn, true, '校长统筹中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
+  try{
+    for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
+      try{
+        const txt = await callAIGuarded('principal', PRINCIPAL_SYS, buildPrincipalUser(groups), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
+        if(!txt || !String(txt||'').trim()){ setScRetry('principal', attempt); scRefreshBadge(btn,'principal'); throw new Error('校长返回空'); }
+        const sc = scState();
+        sc.principal = { ts:Date.now(), groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt) };
+        scMark('principal', true); markAIDone('principal');
+        render();
+        toast(`校长统筹完成：${groups.length} 位老师分组 + 全校守则 + 组级框架 + 标题总表已就绪`);
+        playDoneSound('single');   // 校长步完成 → 单个完成音
+        return true;
+      }catch(e){
+        if(e && e.name === 'AbortError'){ setScRetry('principal', attempt); toast('已停止校长统筹'); return false; }
+        setScRetry('principal', attempt); scRefreshBadge(btn,'principal');
+        if(attempt < SCHOOL_RETRY_MAX) await new Promise(r=>setTimeout(r,1500));
+      }
+    }
+    toast(`校长统筹失败（已自动重试 ${SCHOOL_RETRY_MAX} 次）`);
+    return false;
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='principal');
+    hideStopBtn(); if(btn) busy(btn,false); scRefreshBadge(btn,'principal');
+  }
+}
+
+// —— 老师（对本组"一次备完全组"逐章教案）——
+const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），负责对校长分给你的一整组章节，一次性备好组内每一章的「本章写作框架（教案）」，供下面的「学生（正文 AI）」照此写正文。
+
+【教学观·必须贯穿始终】
+你是老师，给的是"怎么教"的写作指令，不是"代写答案"。你立好本章的框架骨架——它告诉学生"这一章从哪里写到哪里、期间要走完哪些环节、每环节的落点是什么"，把框架缝隙铺得密一点、好带学生走完一整章；但你要给学生留出充分的创作空间，绝不要替学生把正文写出来，也不要给一整段成品范文让他照抄。示例只允许"点到为止"：一句话的情绪基调、一个代表性动作或氛围点，作示范方向即可，严禁成段示范散文、严禁把某段正文替你写掉。框架是用来"引学生写长、写完整"，不是"紧箍咒"——不要用密到窒息的字数要求或逐句规定把学生框死，导致正文写不长。
+
+【输入格式】(user 消息按【键】分节装载，逐节使用、缺失标「无」)
+【全校写作守则】/【本组组级框架】/【本组章节标题】/【全量词典·共享不切片】/【本组《全书节拍》节选】。
+
+【任务】对组内每一章产出一份教案，逐章齐全直到本组最后一章。每份教案固定字段（一个不少）：
+- 功能与位置：本章在本组 / 全书中的角色
+- 剧情时间落点：落在哪日 / 哪几天的哪些时段（防正文乱标时间）
+- 本章推进骨架（从哪写到哪）：把本章从开篇承接点到收尾的整条推进路线，拆成一连串更细的环节（建议 5-8 个推进环节，覆盖 承接点→铺垫→第一次小冲突/变化→推进→转折/升温→高潮→余波→收束/钩子），按顺序逐个写出每个环节"这一环节要发生/要写到什么"（一两句话说明该环节的落点即可，点到即止）。环节之间要有先后与因果，让整体既密集成串、又给学生留了在每个环节内自由铺陈的余地；不要把每环节再套字数，也不要写成逐句剧本。
+  - 【随微拍调密·骨架环节数不等同微拍拍数】本章口径是【章节微拍】注入的节奏类型。微拍拍数只决定"整章节奏怎么走"，与骨架拆几个环节无关——无论哪种微拍，骨架始终拆满 5-8 个环节。
+  - 若是【双拍结构】（前段长铺垫 2500 字 + 后段揭示收束 500 字）：骨架仍保 5-8 环节，但按"铺垫多环节 + 揭示少环节"重新排布——把 4-7 个细环节放进前段长铺垫内部（承接点→设疑/立局→逐层铺线索、一根明/暗线索一个环节→丢一个歧途/假象/误判→气氛或矛盾加温→推向临界点），每根线索单独占一个环节点明"这一环节埋下什么/让人误以为是什么"，这正是双拍的密处；后段揭示只留 1-2 个环节（一次性串合前面全部线索、点明每根线怎么接上→以一句交代事件后果/余味并留钩收束）。严禁因只有 2 拍就把骨架压成 2 个环节。
+  - 微三拍可相应压缩到 4-5 环节、微七拍可放开到 8 环节，但都不得低于 4 个、不得写成笼统一段。
+- 情绪走向与突出点：推向什么情绪、突出什么（可给一句简短的情绪基调或一个代表性动作/氛围点作示例锚点，点到为止——只示范方向方向即可，禁止代写成段正文）
+- 连续性：上一章收尾到哪、本章从何承接（正文 AI 不偷看上一章，全靠此处喂；务必以【上一组末章·收束状态/上章正文状态】为据，写明"承接自第几章哪个状态，本章从哪里接续"）
+- 本章出场名单：本章必须出场/将出场的有名角色（从词典全量名单里点名，写清人物名），只列本章真的要用的；没有就不写。此名单是正文唯一能看到的人物范围（点名制：名单外角色正文一律不可写、不可提），据此防止正文漏戏/剧透。
+标题直接用给定的本组标题，不另写、不改写。
+
+【输出契约·严格遵守】
+- 只输出纯文本 Markdown；禁止 JSON、禁止用三个反引号围栏包裹输出、禁止额外说明/开场白/结束语。
+- 严格按章编号逐章输出直到本组最后一章，第几章就写第几章，不可缺章/跳章/漏一本没写：
+第X章 《标题》
+- 功能与位置：…
+- 剧情时间落点：…
+- 本章推进骨架：①… → ②… → ③… → ④… → ⑤… → ⑥… → ⑦… → ⑧…（每环节一句落点，密而留白，不套字数）
+- 情绪走向与突出点：…（示例锚点一句话即可，点到为止，禁代写成品段）
+- 连续性：…（写明承接自第几章什么状态）
+- 本章出场名单：…（只列本章真正用到的有名角色，无则写「无」）`;
+function buildTeacherUser(g, gi){
+  const pr = (state.school && state.school.principal) || {};
+  const o = state.outline || {};
+  const lines = [];
+  lines.push(`【全校写作守则】\n${(pr.raw && extractSection(pr.raw,'全校写作守则','各组组级框架')) || '（校长未产出守则）'}`);
+  lines.push(`【本组组级框架（组${gi+1}·老师${gi+1}，第${g.first}-${g.last}章）】\n${(pr.raw && extractSection(pr.raw,'各组组级框架','全书章节标题总表')) || (pr.raw || '（校长未产出组级框架）')}`);
+  lines.push(`【本组章节标题】\n${scGroupTitles(g).join('\n')}`);
+  // v1.0.315 章节微拍直喂老师：不再只靠校长守则带一句，让老师明确本章口径是哪种微拍，好按双拍等节奏把骨架写密
+  const _bc = currentBeatCfg ? currentBeatCfg() : null;
+  if(_bc && _bc.label) lines.push(`【章节微拍】名称=${_bc.label}${_bc.wc?('；配比='+_bc.wc):''}${_bc.types?('；拍=('+_bc.types.map(t=>t.label+' '+t.wc).join('，')+')'):''}\n要求：对每章教案的「本章推进骨架」按此微拍节奏写密（环节数可 4-8，不等同微拍拍数；双拍按"铺垫多环节+揭示少环节"排布，详见教案字段说明）。`);
+  lines.push('【全量词典（共享不切片）】\n' + scGlossaryBrief(7000));
+  lines.push(`【本组《全书节拍》节选】\n${scGroupBeats(g, 8000)}`);
+  // v1.0.310 跨组红线清单：上一老师末章教案的收束状态，供本老师据以承接（第一刀）
+  lines.push('【上一组末章·收束状态】\n' + prevGroupTailState(gi, g));
+  lines.push('\n请对本组每一章产出一份「本章写作框架」，逐章齐全。');
+  return lines.join('\n\n');
+}
+// v1.0.310 跨组红线清单：返回上一老师组末章教案的收束状态（供下一老师承接；gi=0 首组返回开篇提示）
+function prevGroupTailState(gi, g){
+  const groups = schoolStageGroups();
+  if(gi <= 0 || !groups[gi-1]) return '（本组为全书首组：上一组为「开篇」）——首章采用冷开场/悬念引入，无需承接前文。';
+  const prev = (state.school && state.school.teachers && state.school.teachers[gi-1]) || null;
+  const prevGroup = groups[gi-1];
+  if(!prev || !prev.raw || !prevGroup) return '（上一组（老师'+gi+'）尚未备课）：请本组首章按「承上节的钩」自行设计衔接。';
+  const lastCh = prevGroup.last;   // 上一组末章（1 基）
+  const re = new RegExp(`^第\\s*${lastCh}\\s*章\\b[\\s\\S]*?(?=^第\\s*\\d+\\s*章\\b|$)`, 'm');
+  const m = String(prev.raw).match(re);
+  if(!m) return '（上一组（老师'+gi+'）末章教案缺失）请本组首章按承上节的钩自洽设计衔接。';
+  const raw = String(m[0]).trim();
+  const grab = (k)=>{ const r=new RegExp(`-\\s*${k}[：:]([^\\n]*(?:\\n[^\\n-].*)*)`); const mm=raw.match(r); return mm?mm[1].trim():''; };
+  const continuity = grab('连续性') || grab('本章推进骨架');
+  return '上一组末章（第'+lastCh+'章）教案原文片段，供本组首章据此承接：\n' + raw.slice(0, 700) + (continuity ? ('\n【重点承接】' + continuity.slice(0, 350)) : '');
+}
+async function genTeacher(btn, gi){
+  if(!isLong()){ toast('仅长篇小说模式支持老师施教'); return false; }
+  const groups = schoolStageGroups(); const g = groups[gi];
+  if(!g){ toast('未找到该分组'); return false; }
+  if(!scDone('principal')){ toast('请先生成校长（分组/守则/组级框架）'); return false; }
+  const key = 't'+gi;
+  scState();
+  markAIRunning(key); if(btn) busy(btn, true, '备课中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
+  try{
+    for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
+      try{
+        const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
+        if(!txt || !String(txt||'').trim()){ setScRetry(key, attempt); scRefreshBadge(btn,key); throw new Error('老师返回空'); }
+        const sc = scState(); sc.teachers[gi] = { gi, ts:Date.now(), raw:String(txt) };
+        scMark(key, true); markAIDone(key);
+        render();
+        toast(`老师${gi+1}备课完成：第 ${g.first}-${g.last} 章共 ${g.last-g.first+1} 份教案已就绪`);
+        playDoneSound('single');   // 老师步完成 → 单个完成音
+        return true;
+      }catch(e){
+        if(e && e.name === 'AbortError'){ setScRetry(key, attempt); toast('已停止备课'); return false; }
+        setScRetry(key, attempt); scRefreshBadge(btn,key);
+        if(attempt < SCHOOL_RETRY_MAX) await new Promise(r=>setTimeout(r,1500));
+      }
+    }
+    toast(`老师${gi+1}备课失败（已自动重试 ${SCHOOL_RETRY_MAX} 次）`);
+    return false;
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!==key);
+    hideStopBtn(); if(btn) busy(btn,false); scRefreshBadge(btn,key);
+  }
+}
+
+// —— 词典达人/词典充实 复用的 16 次显式重试壳（红角标自增）——
+async function nailRetry(key, label, run, btn){
+  for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
+    let ok = false; try{ ok = await run(); }catch(e){ ok = false; }
+    if(ok){ scMark(key, true); scRefreshBadge(btn, key); return true; }
+    setScRetry(key, attempt); scRefreshBadge(btn, key);
+    if(attempt < SCHOOL_RETRY_MAX) await new Promise(r=>setTimeout(r,1200));
+  }
+  toast(`${label}失败（已自动重试 ${SCHOOL_RETRY_MAX} 次）`);
+  scRefreshBadge(btn, key);
+  return false;
+}
+
+// —— 学校一键：达人 → 充实 → 校长 → 全部老师 一气呵成 ——
+async function genSchoolAll(btn){
+  if(genBusy()){ toast('已有生成任务进行中，请稍候'); return; }
+  const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能一键开学'); return; }
+  const steps = [
+    { key:'dictMaster', label:'词典达人', run:()=> genDictMaster(null) },
+    { key:'dictEnrich', label:'词典充实', run:()=> genDictEnrich(null,{}) },
+    { key:'principal', label:'校长统筹', run:()=> genPrincipal(null) },
+    ...groups.map((g,i)=>({ key:'t'+i, label:'老师'+(i+1)+'备课', run:()=> genTeacher(null,i) }))
+  ];
+  const allBtn = ()=> document.querySelector('[data-scp-all]');
+  const setTxt = t=>{ const b=allBtn(); if(b){ if(b._txt === undefined) b._txt = b.innerHTML; b.textContent = t; } };
+  const finish = ()=>{ const b=allBtn(); if(b){ if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; } b.classList.remove('running'); } };
+  if(btn){ btn.classList.add('running'); setTxt(`学校一键（0/${steps.length}）…`); }
+  try{
+    for(let i=0;i<steps.length;i++){
+      const st = steps[i]; setTxt(`学校一键（${i+1}/${steps.length}·${st.label}）…`);
+      const zone = document.querySelector('.school-zone');
+      let stopped = false;
+      if(zone){ showStopBtn(zone); zone.classList.add('cp-stopping'); if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true}); }
+      const ok = await st.run();
+      hideStopBtn(); if(zone) zone.classList.remove('cp-stopping');
+      if(!ok){ toast(stopped ? `已停止学校一键（停在「${st.label}」）` : `学校一键中断于「${st.label}」，可单独点该步骤重试`); return; }
+    }
+    toast('学校一键全部完成：达人→充实→校长→全部老师备课就绪');
+    playDoneSound('all');
+  }finally{ finish(); }
+}
+
+// —— 学校区按钮绑定（render 时经 bindChapterPlan 调用）——
+function bindSchoolSteps(){
+  const all = $('[data-scp-all]'); if(all) all.onclick = ()=> genSchoolAll(all);
+  $$('[data-scp-step]').forEach(btn=>{
+    if(btn._sB) return; btn._sB = 1;
+    btn.onclick = async ()=>{
+      const step = btn.dataset.scpStep;
+      if(step === 'dictMaster'){ const ok = await nailRetry('dictMaster','词典达人', ()=> genDictMaster(btn), btn); if(ok) playDoneSound('single'); return; }
+      if(step === 'dictEnrich'){ const ok = await nailRetry('dictEnrich','词典充实', ()=> genDictEnrich(btn,{}), btn); if(ok) playDoneSound('single'); return; }
+      if(step === 'principal'){ const ok = await genPrincipal(btn); return; }
+      if(step === 'teacher'){ const gi = Number(btn.dataset.scpTeacher); const ok = await genTeacher(btn, gi); return; }
+    };
+  });
+  // v1.0.30x：教案阅读器入口（老师「📖 教案」 / 校长「📋 成果」）
+  $$('[data-scp-plan]').forEach(b=>{ b.onclick = ()=> openSchoolPlanReader(+b.dataset.scpPlan); });
+  const pv = $('[data-scp-plan-pr]');
+  if(pv) pv.onclick = ()=> openSchoolRawPanel('📋 校长成果','全校写作守则 + 组级框架 + 全书章节标题总表', (state.school&&state.school.principal&&state.school.principal.raw)||'');
+}
+
+// —— 教案阅读器：预览（卡片）/ 原始稿（纯文本）切换 ——
+function splitTeacherPlanChapters(raw){
+  const res = [];
+  let cur = null;
+  String(raw||'').split('\n').forEach(ln=>{
+    const m = String(ln).match(/^\s*第\s*(\d+)\s*章\b(.*)$/);
+    if(m){ cur = { ch:+m[1], title:String(m[2]||'').replace(/《|》/g,'').trim(), fields:[] }; res.push(cur); return; }
+    if(cur){
+      const f = String(ln).match(/^\s*[-•*]\s*([^：:]+)[：:]\s*(.*)$/);
+      if(f && String(f[2]||'').trim()) cur.fields.push({ k:String(f[1]||'').trim(), v:String(f[2]).trim() });
+    }
+  });
+  return res;
+}
+let _planCUR_GI = 0, _planCUR_VIEW = 'card';
+function openSchoolPlanReader(gi, jumpCh){
+  const sc = state.school, t = sc && sc.teachers && sc.teachers[gi];
+  const g = schoolStageGroups()[gi];
+  if(!t || !g){ toast(t ? '未找到该分组' : '该组教案尚未生成，请先让老师备课'); return; }
+  _planCUR_GI = gi; _planCUR_VIEW = 'card';
+  const n = g.last - g.first + 1;
+  const ov = document.createElement('div'); ov.className='gs-overlay';
+  ov.innerHTML = `<div class="gs-modal school-plan-modal">
+    <div class="gs-modal-head"><b>🎓 老师${gi+1} · 本组教案</b><span class="sc-plan-meta muted">段「${esc(g.stage||'')}」 · 第 ${g.first}-${g.last} 章 · ${n} 章</span></div>
+    <div class="sc-plan-tool">
+      <span class="sc-plan-tgl" id="scPlanTgl">
+        <span class="sp-tgl-itm on" data-v="card">预览</span><span class="sp-tgl-itm" data-v="raw">原始稿</span>
+      </span>
+      <button class="gs-x" data-sp-close>✕</button>
+    </div>
+    <div class="sc-plan-body" id="scPlanBody" style="max-height:68vh;overflow:auto;padding:12px 16px 20px"></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-sp-close]').onclick = ()=> ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+  ov.querySelectorAll('.sp-tgl-itm').forEach(el=>{
+    el.onclick = ()=>{ _planCUR_VIEW = el.dataset.v; ov.querySelectorAll('.sp-tgl-itm').forEach(x=>x.classList.toggle('on', x===el)); renderSchoolPlanBody(ov, gi, jumpCh); };
+  });
+  renderSchoolPlanBody(ov, gi, jumpCh);
+  if(jumpCh){ setTimeout(()=>{ const el = ov.querySelector('#planCh-'+jumpCh); if(el){ el.style.transition='box-shadow .5s,background .5s'; el.style.boxShadow='0 0 0 2px var(--accent)'; el.style.background='color-mix(in srgb, var(--accent) 12%, transparent)'; setTimeout(()=>{ el.style.boxShadow=''; el.style.background=''; },1600); el.scrollIntoView({block:'center',behavior:'smooth'}); } },80); }
+}
+function renderSchoolPlanBody(ov, gi, jumpCh){
+  const g = schoolStageGroups()[gi]; const t = state.school.teachers[gi];
+  const body = ov.querySelector('#scPlanBody'); if(!body || !g) return;
+  if(_planCUR_VIEW === 'raw'){ const d=document.createElement('pre'); d.className='sc-plan-raw'; d.textContent = t.raw; body.innerHTML=''; body.appendChild(d); return; }
+  const blocks = splitTeacherPlanChapters(t.raw);
+  const byCh = new Map(blocks.map(b=>[b.ch,b]));
+  let html = '';
+  for(let ch=g.first; ch<=g.last; ch++){
+    const b = byCh.get(ch) || null;
+    const rows = (b && b.fields.length) ? b.fields.map(f=>`<div class="sc-kf"><span class="sc-kf-k">${esc(f.k)}</span><span class="sc-kf-v">${esc(f.v)}</span></div>`).join('') : '<div class="sc-kf"><span class="sc-kf-k">提示</span><span class="sc-kf-v">该章节教案缺少可读字段，可切「原始稿」查看。</span></div>';
+    html += `<div class="sc-plan-ch" id="planCh-${ch}">
+      <div class="sc-plan-ch-t">第${ch}章${b&&b.title?(' · '+esc(b.title)):''}</div>
+      <div class="sc-kf-wrap">${rows}</div>
+    </div>`;
+  }
+  body.innerHTML = html;
+}
+// 通用原始稿阅读（校长成果等纯文本）
+function openSchoolRawPanel(title, sub, raw){
+  const ov = document.createElement('div'); ov.className='gs-overlay';
+  ov.innerHTML = `<div class="gs-modal school-plan-modal">
+    <div class="gs-modal-head"><b>${esc(title)}</b><button class="gs-x" data-sp-close>✕</button></div>
+    ${sub?`<div class="gs-modal-sub">${esc(sub)}</div>`:''}
+    <div class="sc-plan-body" style="max-height:68vh;overflow:auto;padding:12px 16px 20px"><pre class="sc-plan-raw">${esc(raw||'（暂无内容）')}</pre></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-sp-close]').onclick = ()=> ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+}
+
 /* 万物词典统一要求块：无论选哪种结构都追加到大纲提示词，保证模型输出 glossary（建议7/决策8/9）
  * glossary 等顶层字段仍以“下方追加块”形式补充（S2）。v1.0.144：structure 已彻底移除，仅以 remaining 的逐章 chapterPlans 承载节奏。 */
 /* 基础大纲 JSON 契约（仅是大纲内容，与『结构』彻底无关）：用户未选任何结构范式时，作为独立的大纲内容块注入，
   * 只定 title/logline/chapters 的形态。不含任何"多线/三定"等结构偏好——结构未选则不推主线条/副暗线等结构命令。 */
-// 4.5：大纲 AI 输出 title/logline/anchor/thesis 等顶层字段；章节标题仍在后续独立步骤生成。
-// 4.7 Pro（3.2/第7章指令2）：旧常量改名为 OUTLINE_GEN_SYS_LEGACY 保留回退，新常量用旧名指向 OUTLINE_GEN_SYS_PRO。
-const OUTLINE_GEN_SYS_LEGACY = `你是一位能驾驭超长篇的小说架构师。
-
-【核心任务】
-基于用户的结构化构想（navBeacon），设计一部经典长篇小说的：书名、简介、核心定位、深层主题、结构骨架。
-
-【输入】
-用户会提供：
-- navBeacon：题材、主角、对手、核心冲突、世界观规则、风格基调、目标体验
-- 章节数 N（全书总章数，必须严格遵守）
-
-【输出格式】
-严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{
-  "title": "小说名",
-  "logline": "小说简介（含核心冲突与深层命题，严格落在指定字数区间）",
-  "anchor": "核心一句话定位：题材+主角+核心冲突，≤50字",
-  "thesis": "深层主题命题，≤80字"
-}
-
-【硬性约束】
-1. title 必须有记忆点，不与常见网文重名。
-2. logline 必须包含：主角、核心冲突、核心动机、代价/悬念；字数严格落在【简介字数约束】区间内。
-3. anchor 必须包含 navBeacon.genre + protagonist + coreConflict 三要素，≤50字。
-4. thesis 必须点出作品要探讨的核心主题/情感内核，≤80字。
-5. 严禁输出 chapters 字段；章节标题在后续独立步骤生成。`;
-
-// 4.7 Pro（3.2）大纲 AI 新系统提示词：资深长篇架构师 + 结构诊断师，输出 书名+简介+核心定位（v1.0.144 起不再输出 structure）。
-// 注：md 原码中「当前为 ${N} 章」为运行时插值，顶层求值会崩；此处改为引用用户提示中给定的 N（buildOutlineSys 会注入具体 N）。
-const OUTLINE_GEN_SYS_PRO = `你是一位资深长篇小说架构师，同时担任「结构诊断师」。
-【核心任务】根据用户的一句话或几句构想，设计一部长篇小说的：书名、小说简介、以及可直接落地的结构骨架。
-
-【必须输出的 JSON 结构】
-{
-  "title": "小说名（≤12字，有记忆点，不套路）",
-  "logline": "小说简介：必须包含 题材+主角+核心冲突+深层命题，控制在【简介字数约束】区间内",
-  "anchor": "核心一句话定位：题材+主角+核心冲突，≤50字",
-  "thesis": "深层主题命题，≤80字，点出作品要探讨的核心主题/情感内核",
-  "genreTags": ["题材标签1", "题材标签2"],
-  "tone": "整体情绪基调"
-}
-
-【硬性约束】
-1. title ≤ 12 字；不得使用高频套路书名（如《重生之xxx》《xxx系统》《xxx的xxx》）。
-2. logline 必须点明核心冲突与深层命题，篇幅严格落在末尾【简介字数约束】区间内，偏差不得超过 5%。
-3. genreTags 只能出现 2-4 个，且必须与 logline 一致。
-4. anchor 必须包含 题材+主角+核心冲突 三要素，≤50字；thesis 必须点出作品的核心主题/情感内核，≤80字；二者均不得为空。
-5. 忠实度硬约束：用户构想中出现的专名、称谓、设定、意象与关键情节点，必须在输出中原样保留；不得替换、改名或省略；如需调整须以用户原文为基准做增量扩展。
-6. 多主角叙事（仅当输入含【叙事主体·】（双主角或团队）时生效）：书名/简介须体现多主角之间如何组织、共同卷入的冲突与各自的作用，anchor 须含主角并凸显与他人的关系/协作方式；深化"缺一不可/各自弧线"的构成理由，不得把其他主角写成单枪匹马的背景或陪衬。
-7. 只输出上述 JSON，不要 markdown 代码块、不要解释。
-
-【输出示例】
-{
-  "title": "雾中第七日",
-  "logline": "一座滨海小城在第七次大雾中接连发生失踪案，退休法医沈渔为追查女儿下落，发现凶手正是三十年前她亲手定罪、如今早已"死去"的连环杀手。",
-  "genreTags": ["悬疑", "女性视角", "冷峻克制"],
-  "tone": "冷峻、压抑、结尾沉重",
-  "anchor": "冷峻悬疑：退休法医为救女儿追查三十年旧案，揭开小城权力与亲情的双重谎言。",
-  "thesis": "面对体制性遗忘与亲情创伤，个人如何在执念中完成自我救赎。"
-}`;
-
-// 4.7 Pro（第7章指令2）：新常量用旧名——buildOutlineSys 等既有引用点自动升级为 PRO 提示词
-const OUTLINE_GEN_SYS = OUTLINE_GEN_SYS_PRO;
 
 /* =========================================================
  * 人名硬约束（中国角色）· 百家姓 + 两字名 + 禁叠字 + 避网文高频名
@@ -3061,7 +3697,6 @@ const BANLIST_DEFAULT = {   // v1.0.132 禁则清单内置默认（含既有硬/
   rules: [],                                 // 附加规则条目：每条声明生效 AI 范围
   scopeAi: ['chapter']                       // 缺省生效范围（仅正文）；用户可按 AI 扩展大纲/标题/规划师
 };
-const NM_NAME_RULE_TEXT = '\n【人名规范（硬约束，仅限中国角色）】凡姓名首字（或首两字）属《百家姓》者视为中国角色：必须为「百家姓姓氏 + 两字名」——单姓全名恰为 3 个汉字、复姓全名恰为 4 个汉字；名字不得使用叠字（如"琳琳""小雨"）。【用户禁则（软硬均须遵守）】全姓名中禁止出现汉字「晚」「砚」「秋」「檐」中任意一个（任何位置都算）；禁止使用以下指定人名（不得逐字符原样使用，也不得把其中某个人名作为现成名字选用）：男生——林辰、苏辰、顾夜寒、陆泽、墨渊、叶辰、江亦琛、傅景深、沈辞、萧景琰、凌夜、顾言、裴衍、楚慕言、厉承勋、谢珩、温景然、云烬、宋砚、慕云凡；女生——苏清月、晚卿、沈知予、顾晚柠、林晚星、慕晚晴、苏沐瑶、温妤、夏晚璃、楚清鸢、叶轻寒、姜知微、云舒、苏念汐、洛清欢、白若曦、顾绾绾、江晚渔、宋知晚、宁疏影。宜用职业特征/意象组合造名且风格与世界观一致。姓名首字不在百家姓者视为外国角色，不适用本条约束（但禁用字与禁用名清单仍应规避）。【定稿豁免（v244/914）】设定词典已收录的人物名一律视为最终定稿（含用户手动命名），不受本条「姓+两字名」等约束，禁止改写、增删字或替换；本条仅约束你新造的人名。';
 // 返回违规原因字符串；合规返回 ''。首字非百家姓（外国角色/外文名）一律放行。
 function nmNameRuleViolation(nm){
   const s = String(nm||'').trim();
@@ -3135,91 +3770,15 @@ function banListViolation(nm){
   return '';
 }
 
-const GLOSSARY_SYS = `\n\n【glossary 万物词典（必须一并输出）】请在返回的 JSON 顶层再追加一个 glossary 字段，作为全文保持一致性的权威基准：
-"glossary":{"characters":[{"name":"人物姓名","identity":"身份/职业/社会身份","age":"岁数/年龄","gender":"性别","appearance":"外貌特征","hobby":"爱好/习惯","mannerism":"习惯小动作/口头禅（有则写专属小动作或口头禅；判定没有则填「无」）","relation":"与该人的血缘/人际关联（妹妹/姐姐/朋友/仆人等）","trait":"性格要点"}],"places":[{"name":"地名/场景名","type":"类型","note":"设定要点"}],"propernouns":[{"name":"专名/专属设定术语","note":"含义与拼写唯一约定"}]}
-必须列出本故事涉及的全部重要人物（含配角）、关键地域地名与专属设定术语；**全书正文一律只使用本词典中的人名/地名/专名，禁止自造或混用其他拼写**。每名人物**必须**标注 identity（身份/职业/社会身份）、age（岁数/年龄）、gender（性别）、appearance（外貌特征）、hobby（爱好/习惯）、mannerism（习惯小动作/口头禅），正文中人物的身份、年龄、性别、外貌、爱好、小动作/口头禅须与此保持一致。
-【relation 与 identity 务必区分，不可混淆】
-· identity 身份 = 她/他自己是谁：职业/职务/族群/社会地位，可独立成句——「她是捕快」「她是市长」「她是尼罗河努比亚族船女」「她是篮球运动员」；
-· relation 关系 = 她/他和谁是什么关联：血缘/姻亲/友伴/主仆，必须带"谁的"才成立——「林晚的妹妹」「她的仆人」「朋友：陈默」；禁止把身份词（捕快/市长/船女）写进 relation；
-人物条目中不设"职能/角色定位"字段。trait 归纳稳定性格以便后续各章保持一致。mannerism 记录该人物专属的习惯小动作/口头禅，供正文反复强化塑造；并非人人都有——主角/重要配角较常有，判定没有的配角填「无」。
-【人物字段自洽（硬约束）】同一人物的名字与其各字段必须相互自洽、并能容纳其剧情设定，禁止出现下列矛盾：
-· 已写明"在此地居住/任职/习武多年"，而 age 却小于该年限——例如"已在此住了30年"却仅23岁；应上调 age 或下调年限，取能自圆其说的一致值；
-· 履历类身份（当官/从军/任职）须让年龄能容纳任职时长——例如18岁却"当官5年"自相矛盾；任职起始须早于当前 age，身份与 age 区间匹配（太后/驸马/童养媳等对 age 亦有隐含约束）；
-· relation 蕴含的年龄轴：子代须小于亲代、兄弟/姐妹年龄差须合理；
-· 特殊预设（转世/穿越/长生/修仙/不老/永生）可豁免数值约束，但必须在 identity 或 relation 中显式标注，不允许无理由的年限冲突。` + NM_NAME_RULE_TEXT;
-
-// v11 全书规划师：不再生成"节奏/埋点/回收"三段式梗概，改为每章节拍表 + 定稿章节标题 + 初期万物词典。
-// 一套请求三样产出：titles(定稿标题) / chapterPlans(每章节拍表) / glossary(初期词典，写正文的一致性种子)。
-// 4.5：升级为节拍表版——每章输出 {beats[], requiredEntities[], emotionalArc}（主线简述 summary/advance 字段已彻底移除）。
-// 4.7 Pro（3.4/第7章指令2）：旧常量 CHAPTER_PLAN_SYS_LEGACY 已随主线简述功能一并删除，新常量用旧名指向 CHAPTER_PLAN_SYS_PRO。
-
-// 4.7 Pro（3.4 原码）：资深全书级叙事工程师 + 节拍设计师。
-// 修复 md 原码 bug：硬性约束1 原文为「必须严格等于现有章节数」，与分批生成（每批≤25 章）冲突，
-// 改为「用户提示中指定的章节数」——批次章节数由 genChapterPlans 在 user 侧注入。
-const CHAPTER_PLAN_SYS_PRO = `你是一位资深全书级叙事工程师，同时担任「节拍设计师」。
-【核心任务】基于小说书名、小说简介、全书拍子节奏、全部章节标题、设定词典，产出三样产物：定稿标题、每章四段节拍表、初期万物词典。
-
-【必须输出的 JSON 结构】
-{
-  "titles": ["第1章·定稿标题", "第2章·定稿标题", "..."],
-  "chapterPlans": [
-    {
-      "beats": [
-        {"type": "setup",   "event": "切入本章情境的触发事件", "emotional": "本章起始情绪", "requiredEntities": ["必须出现的人名/地名/专名"], "foreshadowing": ["本章埋下的伏笔（有才填）"]},
-        {"type": "rise",    "event": "冲突升级/人物行动推进", "emotional": "情绪变化", "requiredEntities": [], "foreshadowing": []},
-        {"type": "climax",  "event": "本章高潮/关键转折", "emotional": "高潮情绪", "requiredEntities": [], "foreshadowing": []},
-        {"type": "hook",    "event": "章末钩子/悬念/承接下一章的线索", "emotional": "章末情绪落点", "requiredEntities": [], "foreshadowing": []}
-      ],
-      "emotionalArc": "本章情绪弧：从X到Y，用一句话概括",
-      "requiredEntities": ["本章必须使用的核心实体汇总"]
-    }
-  ],
-  "glossary": {
-    "characters": [{"name":"人名","identity":"身份","age":"岁数","gender":"性别","appearance":"外貌","hobby":"爱好","mannerism":"习惯小动作/口头禅","relation":"关系","trait":"性格"}],
-    "places": [{"name":"地名","type":"类型","note":"设定"}],
-    "propernouns": [{"name":"专名","note":"含义"}]
-  }
-}
-
-【硬性约束】
-1. titles 与 chapterPlans 数量必须严格等于用户提示中指定的章节数，顺序一一对应。
-2. 每章 chapterPlans[i].beats 必须恰好包含 4 段，type 严格为 setup / rise / climax / hook，顺序不可变。
-3. 每段 beat.event 10—40 字；emotional 1—8 字。
-4. requiredEntities 与 foreshadowing 只能使用设定词典中已有人名/地名/专名，禁止自造新名。
-5. glossary 人物必须 8 字段齐全（name 之外：identity/age/gender/appearance/hobby/mannerism/relation/trait，mannerism 判无写「无」）；人物字段自洽（年龄与履历/居住年限不矛盾）。
-6. 若用户提示中出现【写作风格】块，标题措辞必须优先贴合。
-7. 若用户提示中出现【核心定位】与【深层主题】，节拍表必须优先服务于核心冲突。
-8. 阶段锚定（v1.0.141）：每章节拍表必须落在【大纲节拍的结构】所属阶段内，服务该阶段走向，不得越过当前阶段提前兑现后续阶段内容；相邻章推进连续递进。
-9. 只输出上述 JSON，不要 markdown 代码块、不要解释。
-
-【输出示例】
-{
-  "titles": ["第1章 雾中第七日", "第2章 旧信"],
-  "chapterPlans": [
-    {
-      "beats": [
-        {"type": "setup",  "event": "大雾降临，沈渔独居小屋接到女儿语音", "emotional": "不安", "requiredEntities": ["沈渔"], "foreshadowing": ["旧信"] },
-        {"type": "rise",   "event": "她重返旧案现场，发现与三十年前案件相同的符号", "emotional": "警觉", "requiredEntities": ["沈渔"], "foreshadowing": [] },
-        {"type": "climax", "event": "她在雾中看见一个与已故凶手身形一致的人", "emotional": "震惊", "requiredEntities": ["沈渔"], "foreshadowing": [] },
-        {"type": "hook",   "event": "她回到家，发现门缝里塞着三十年前的旧信封", "emotional": "悬念", "requiredEntities": ["旧信"], "foreshadowing": ["旧信"] }
-      ],
-      "emotionalArc": "从孤独不安到震惊悬念",
-      "requiredEntities": ["沈渔", "旧信"]
-    }
-  ],
-  "glossary": {...}
-}`;
-
-// 4.7 Pro（第7章指令2）：新常量用旧名，引用点零改动自动升级
-const CHAPTER_PLAN_SYS = CHAPTER_PLAN_SYS_PRO;
+// v1.0.285：旧 JSON 节拍表提示词 CHAPTER_PLAN_SYS_PRO / CHAPTER_PLAN_SYS 已随 beats 数组退役整体删除——
+// 节拍表由 buildBeatsSys() 纯文本生成（v1.0.273 起），下方 AIValidators.chapterPlan 死映射同步移除。
 
 /* ============ v1.0.138 规划师四段拆分 ============
  * 原「全书规划师」一次请求产出 标题+简述+节拍+词典，30 章可达 2.6 万字，易截断。
- * 现拆成 4 个独立阶段（各自可单独重跑）：
- *   ① 节拍表   buildBeatsSys()          → chapterPlans[i].beats
+ * 现拆成 3 个独立阶段（各自可单独重跑）：
+ *   ① 节拍表   buildBeatsSys()          → chapterPlans[i].beatsText
  *   ② 章节标题（复用 REGEN_TITLES_SYS）→ chapters[i].title
- *   ③ 万物词典 PLANNER_GLOSSARY_SYS     → glossary
- *   ④ 伏笔网   PLANNER_FORESHADOW_SYS   → _foreshadowLedger
+ *   ③ 全局时间线 PLANNER_TIMELINE_SYS    → _globalTimeline
  */
 
 /* ============ v1.0.137 节拍表可配置：四拍 / 七拍 / 十二拍 / 十五拍 ============
@@ -3231,24 +3790,24 @@ const CHAPTER_PLAN_SYS = CHAPTER_PLAN_SYS_PRO;
  * 决定全书的宏观剧情节奏（注入大纲生成的拍子指导），与下方单章微节拍 BEAT_OPTIONS 独立。
  * ========================================================= */
 const BOOK_BEAT_OPTIONS = [
-  { id:4,  label:'四拍', emoji:'📜', subtitle:'万法之祖 · 四段底层骨架', desc:'中国古典乃至全世界故事的底层骨架：起（铺垫）→承（推进）→转（转折/燃点）→合（余波/结局）。', pro:'极度合适、永不过时；结构清晰，适合篇幅中等、想在落笔前先立龙骨的作品。', con:'太过骨架化——大神靠四字就能写出神作，新手实操易卡文，常不知每部分具体该塞什么。', note:'按「起→承→转→合」划分全书三幕/四段。',
-    ai:{ stages:['铺垫','推进','燃点','余波'],
+  { id:4,  label:'四拍', emoji:'📜', subtitle:'万法之祖 · 四段底层骨架', desc:'中国古典乃至全世界故事的底层骨架：起（铺垫）→承（推进）→转（转折/高潮）→合（后果收束/结局）。', pro:'极度合适、永不过时；结构清晰，适合篇幅中等、想在落笔前先立龙骨的作品。', con:'太过骨架化——大神靠四字就能写出神作，新手实操易卡文，常不知每部分具体该塞什么。', note:'按「起→承→转→合」划分全书三幕/四段。',
+    ai:{ stages:['铺垫','推进','高潮','结局收束'],
       duty:['交代世界观、主角处境与主要目标','展开冲突，主角行动升级',
-        '全书最高强度的核心高潮事件（关系/利益/真相的关键节点）','收束主线后果，交代结局或为下一卷预留接口'],
+        '全书最高强度的核心高潮事件（关系/利益/真相的关键节点）','收束各线，给出明确结局与余味；若为分卷/续集，可在结局后预留续接口'],
       must:'必须按以上 4 个阶段顺序升格推进；每个阶段必须设置一个明确的阶段高潮事件并标注其性质（如夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰）；相邻两阶段的性质必须不同。',
       forbid:'禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内注水无进展的填充内容。' } },
-  { id:7,  label:'七拍', emoji:'⚡', subtitle:'商业网文首选 · 七段强节奏', desc:'把「承」拆成两次推进、再补悬念钩子：铺垫→推进→转折→推进→燃点→余波→悬念。', pro:'节奏感极强，读者像坐过山车；快节奏强冲突，男频升级流 / 女频飒爽文的标配。', con:'全书都是 7 步循环，读多了容易让读者产生「套路疲劳」。', note:'全书大循环按七段推进，情绪高低交替，章末必留钩。',
-    ai:{ stages:['铺垫','推进','转折','推进','燃点','余波','悬念'],
-      duty:['交代世界观、主角现状与首个目标','展开首次冲突，主角开始行动','引入变化、阻力升级，计划被打乱','第二阶段加压，主角调整策略继续推进','情绪或利益最高点，本阶段核心回报','高能量回落，收拾后果','章末留下钩子（新目标/新信息）驱动续读'],
+  { id:7,  label:'七拍', emoji:'⚡', subtitle:'商业网文首选 · 七段强节奏', desc:'把「承」拆成两次推进、再以高潮后的收束收尾到结局：铺垫→推进→转折→推进→高潮→后果收束→结局收束。', pro:'节奏感极强，读者像坐过山车；快节奏强冲突，男频升级流 / 女频飒爽文的标配。', con:'全书都是 7 步循环，读多了容易让读者产生「套路疲劳」。', note:'全书大循环按七段推进，情绪高低交替，章节衔接处可留钩，全末尾段必收束到结局。',
+    ai:{ stages:['铺垫','推进','转折','推进','高潮','后果收束','结局收束'],
+      duty:['交代世界观、主角现状与首个目标','展开首次冲突，主角开始行动','引入变化、阻力升级，计划被打乱','第二阶段加压，主角调整策略继续推进','情绪或利益最高点，本阶段核心回报','高能量回落，收拾后果；若为全书最终段，则收束全书主线并给出明确结局','收束各线，给出全书明确结局与余味；若为分卷/续集，可在结局后预留续接口'],
       must:'必须按以上 7 个阶段顺序升格推进；每个阶段必须设置一个明确的阶段高潮事件并标注其性质（如夺得神器/收服人心/破解身世/决战宿敌/绝境反击/真相揭露/关系破冰）；相邻两阶段的性质必须不同。',
       forbid:'禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内注水无进展的填充内容。' } },
   { id:12, label:'十二拍', emoji:'🏛️', subtitle:'奇幻/成长史诗 · 心理蜕变', desc:'极细地刻画主角内心成长的每一个心理阶段（拒绝召唤、历险试炼、灵魂黑夜等），心理线与剧情线同步推进。', pro:'长线叙事、心理蜕变刻画深，适合玄幻修仙 / 奇幻冒险 / 人物传记。', con:'前期铺垫过长（前 5 拍都在准备出发），不适合开局就要炸场的题材。', note:'前期铺垫较长，重点写心理蜕变与伙伴/敌人矩阵。',
-    ai:{ stages:['日常铺垫','意外推进','犹豫转折','助力推进','决心突破','试炼推进','逼近核心','绝境燃点','短暂余波','归程转折','终极燃点','圆满余波'],
-      duty:['呈现主角常规生活与隐藏诉求','一起意外打破日常，主角被动卷入','主角犹豫是否行动，内心拉扯显形','获得助力/情报，主角定下行动决心','走出舒适区，主动出击','一路试炼积累能力与同伴','逼近主要矛盾核心，阻力全面升级','接近绝境的高压强情绪点（中段高点）','危机暂解，喘息换气','归程再生变数或引发身份真相','全书终局最高强度的对决/揭晓','收束各线，给出结局与余味'],
+    ai:{ stages:['日常铺垫','意外触发','内心犹豫','助力推进','决心行动','试炼推进','逼近核心','绝境高潮','压力回落','再生变数','终局高潮','结局收束'],
+      duty:['呈现主角常规生活与隐藏诉求','一起意外打破日常，主角被动卷入','主角犹豫是否行动，内心拉扯显形','获得助力/情报，主角定下行动决心','走出舒适区，主动出击','一路试炼积累能力与同伴','逼近主要矛盾核心，阻力全面升级','接近绝境的高压强情绪点（中段高点）','危机暂解，压力回落','再生变数或引发身份真相','全书终局最高强度的对决/揭晓','收束各线，给出结局与余味'],
       must:'必须按以上 12 个阶段顺序升格推进；前期铺垫节奏适中，心理线须随剧情线同步进度；每个阶段必须设置一个明确的阶段高潮事件并标注其性质；相邻两阶段的性质必须不同。',
       forbid:'禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内注水无进展的填充内容。' } },
   { id:15, label:'十五拍', emoji:'🎬', subtitle:'剧本感/悬疑推理 · 中段拆分', desc:'把「中段」拆得最细：中点、坏人逼近、一无所有、灵魂黑夜、反击、决战，层层反转。', pro:'逻辑严密、多重反转，适合悬疑 / 推理 / 职场商战等注重布局的故事。', con:'对新手过于繁琐，容易为了填满 15 拍而注水。', note:'强调中段布局与多线并置，反转节点需提前预埋。',
-    ai:{ stages:['开篇铺垫','主题铺垫','背景铺垫','催化推进','内心转折','新境推进','副线铺垫','轻松推进','中部转折','压力推进','至暗燃点','绝望余波','反击转折','终极燃点','收束余波'],
+    ai:{ stages:['开篇铺垫','主题铺垫','背景铺垫','变故触发','内心质变','换场推进','副线铺垫','轻松推进','中部转折','压力推进','绝境极点','低谷重整','反击转折','终局高潮','结局收束'],
       duty:['立境并给出主角目标','亮出核心命题与主角立场','补世界观与势力关系','由触发事件打破平衡，主角入局','主角第一次重大权衡/质变','进入新环境、新阶段','埋入支线人物与伏笔','相对平缓的一拍，蓄力并埋钩','全书中点的关键转向','局势收紧，主角处处受制','接近绝境的高压强情绪点','低潮收拾、短暂重整','主人公重新集结、发起反击','终局最高强度的对决/揭示','收束各线结局，留余味'],
       must:'必须按以上 15 个阶段顺序升格推进；中段（中部转折至反击转折）须布局多线并置，反转节点必须提前预埋；每个阶段必须设置一个明确的阶段高潮事件并标注其性质；相邻两阶段的性质必须不同。',
       forbid:'禁止为了凑满 15 拍而注水；禁止跳过任一阶段；禁止把多个阶段揉进同一章；禁止全书反复使用同一种性质的高潮；禁止在阶段内无进展地填充内容。' } }
@@ -3283,30 +3842,30 @@ function bookBeatHtml(){
  * v1.0.163 双层拆分：type.note / type.aiDirective 仅供 AI（节拍设计师 buildBeatsSys 注入），
  * type.uiHint 仅供用户（节拍表卡/提示 UI 显示）。label/key 双端共享（名称 + JSON 契约），wc 为结构指令。 */
 const BEAT_OPTIONS = [
-  { id:5,  label:'微五拍', emoji:'⚖️', desc:'标准叙事节奏：铺垫→推进→转折→汇合→收束+悬念', wc:'500/800/500/700/500（共约3000字/章）', types:[
+  { id:5,  label:'微五拍', emoji:'⚖️', desc:'五段式最稳妥：起头→推进→加转折→交出一项成果→结尾留钩子，节奏不赶不拖、最百搭', wc:'500/800/500/700/500（共约3000字/章）', types:[
       { key:'setup',  label:'开篇铺垫', uiHint:'开头先说清：在哪里、和谁、要做什么，别急着倒信息。', note:'交代本章的时间、地点与在场人物，说明当前要做的事（~500字）', aiDirective:'必须用简短铺垫立境（场景＋此刻要做的事）；禁止在本拍灌注大段设定或人物背景。', wc:'~500字' },
       { key:'rise',   label:'冲突推进', uiHint:'推进主线，制造一处具体阻力或新信息，让情节往前动。', note:'引入一个具体的阻力或新信息，推动本章目标向前进展（~800字）', aiDirective:'必须引入具体的阻力或新信息推动目标进展，事件要具体可感；禁止原地重复、禁止只剩对话而无动作推进。', wc:'~800字' },
       { key:'turn',   label:'意外转折', uiHint:'先让人以为会怎样，再给出变化，超出读者预判。', note:'先建立预期，再呈现计划之外的变化，使发展超出读者预判（~500字）', aiDirective:'必须先立预期再呈现计划外的变化；禁止无铺垫的随意反转、禁止反转后与主线脱节。', wc:'~500字' },
-      { key:'climax', label:'进展燃点', uiHint:'收拢整段的积累，给出一次明确的成果或回报。', note:'收拢本章积累，达成一次明确的成果或回报（~700字）', aiDirective:'必须收拢前面积累并交付一项明确的成果/回报/认知；禁止在无积累时凭空给奖励、禁止重复已用过的回报类型。', wc:'~700字' },
-      { key:'hook',   label:'余波+悬念', uiHint:'把这一拍收好，在结尾留一个新信息或钩子给下一章。', note:'收束本章，并以一处伏笔或新信息为下一章留下接口（~500字）', aiDirective:'必须收束本拍阶段情绪，并在章末留出新信息/新目标/关系变化作为续读钩子；禁止以总结句或无关陈述收尾。', wc:'~500字' }
+      { key:'climax', label:'阶段高潮', uiHint:'收拢整段的积累，给出一次明确的成果或回报。', note:'收拢本章积累，达成一次明确的成果或回报（~700字）', aiDirective:'必须收拢前面积累并交付一项明确的成果/回报/认知；禁止在无积累时凭空给奖励、禁止重复已用过的回报类型。', wc:'~700字' },
+      { key:'hook',   label:'收束+悬念', uiHint:'把这一拍收好，在结尾留一个新信息或钩子给下一章。', note:'收束本章，并以一处伏笔或新信息为下一章留下接口（~500字）', aiDirective:'必须收束本拍阶段情绪，并在章末留出新信息/新目标/关系变化作为续读钩子；禁止以总结句或无关陈述收尾。', wc:'~500字' }
   ]},
-  { id:3,  label:'微三拍', emoji:'🚀', desc:'快速推进型新媒体文：铺垫→进展→收束+悬念，一章一个明确节点', wc:'300/1500/1200（共约3000字/章）', types:[
+  { id:3,  label:'微三拍', emoji:'🚀', desc:'三段快速爽：开头一小节，中段一口气猛推进，结尾收尾+留钩，一章一个明确节点', wc:'300/1500/1200（共约3000字/章）', types:[
       { key:'setup',  label:'开局铺垫', uiHint:'一两句话交代主角处境和本章要处理的问题，快速入题。', note:'交代主角当前处境与本章要处理的问题（~300字）', aiDirective:'必须简洁交代主角当前处境与本章要解决的问题并迅速进入；禁止用长篇心理或环境描写拖慢节奏。', wc:'~300字' },
       { key:'climax', label:'核心进展', uiHint:'给出本章最要紧的进展或成果，回应开头的期待。', note:'给出本章的关键进展或成果，回应开头建立的期待（~1500字）', aiDirective:'必须给出本章关键进展并回应前文期待、占篇幅最大；禁止无进展的注水对白或冗余环节。', wc:'~1500字' },
       { key:'hook',   label:'收束+悬念', uiHint:'收好本章成果，在衔接处留个新信息点当引子。', note:'收束本章成果，在衔接处留下新的信息点以引出下一章（~1200字）', aiDirective:'必须收束本章成果，并在章末留下一个新信息点引出下一章；禁止以强行悬念或重复信息收尾。', wc:'~1200字' }
   ]},
-  { id:7,  label:'微七拍', emoji:'🍵', desc:'慢热细腻型：逐步推进、以情感联结动人，结尾留一份温暖期许', wc:'350/400/500/600/550/400/200（共约3000字/章）', types:[
+  { id:7,  label:'微七拍', emoji:'🍵', desc:'七段慢慢升温、主打细腻走心：靠人物互动和情绪一点点拉近，不追快进度，结尾留暖意', wc:'350/400/500/600/550/400/200（共约3000字/章）', types:[
       { key:'daily',     label:'日常铺垫', uiHint:'先立时间、地点、气温等感官氛围，让读者进得来。', note:'以时节/气温/光线等感官细节立境，交代时间地点与主角当下去向（~350字）', aiDirective:'必须用具体的气候、光线、气味等感官细节把日常铺开并立境；禁止在本拍制造冲突或信息倾倒。', wc:'~350字' },
       { key:'interact',  label:'小互动', uiHint:'引入一个活物或熟识的人，几句最简往来，让画面活起来。', note:'借一个活物或熟识的人带出极简对话的细微往来（~400字）', aiDirective:'必须借具体活物或熟人带出一段日常互动、对话点到为止；禁止空泛寒暄、禁止长篇对话独白。', wc:'~400字' },
       { key:'misunder',  label:'小误会', uiHint:'一次轻微又双向的理解偏差，带起一点克制的小波澜。', note:'一次双向无恶意的轻微误解，读者是"早知道"的知情者（~500字）', aiDirective:'必须设计成双向无恶意的轻微偏差、并让读者处于知情位置制造张力；禁止让误会失控成激烈对立或长时间冷场。', wc:'~500字' },
       { key:'heart',     label:'谈心推进', uiHint:'借一件共同的琐事把两人推近，走到情感破冰的一刻。', note:'借外在事件（雨/食事/修葺等）促成靠近，推动一次真心交流（~600字）', aiDirective:'必须用一个具体外在契机把两人推近并推进一段走心对话；禁止用说教或空谈代替具体情节。', wc:'~600字' },
-      { key:'warm',      label:'温馨燃点', uiHint:'全段唯一的小高点，力度极轻：只写身体本能，不靠告白。', note:'本段唯一燃点但力度极轻：以手温/指尖/汤暖等生理细节呈现暖意（~550字）', aiDirective:'必须以极轻的生理细节（心跳漏拍、耳朵发烫、低头搅汤、嘴角微弯）呈现暖意；禁止直接表白、禁止大动作煽情。', wc:'~550字' },
-      { key:'glow',      label:'细腻余波', uiHint:'情绪缓缓回落，镜头拉远到周遭的声音、气味与光。', note:'情绪回落，镜头拉远收进环境的声音/气味/光线，余味悠长（~400字）', aiDirective:'必须让上一拍的情绪自然回落、以环境感官细节收束；禁止突然跳入新冲突。', wc:'~400字' },
+      { key:'warm',      label:'温馨高点', uiHint:'全段唯一的小高点，力度极轻：只写身体本能，不靠告白。', note:'本段唯一高点但力度极轻：以手温/指尖/汤暖等生理细节呈现暖意（~550字）', aiDirective:'必须以极轻的生理细节（心跳漏拍、耳朵发烫、低头搅汤、嘴角微弯）呈现暖意；禁止直接表白、禁止大动作煽情。', wc:'~550字' },
+      { key:'glow',      label:'余味收束', uiHint:'情绪缓缓回落，镜头拉远到周遭的声音、气味与光。', note:'情绪回落，镜头拉远收进环境的声音/气味/光线，余味悠长（~400字）', aiDirective:'必须让上一拍的情绪自然回落、以环境感官细节收束；禁止突然跳入新冲突。', wc:'~400字' },
       { key:'promise',   label:'明日约定', uiHint:'用一句"明天/改日"的约定或期许收章，留一个弱悬念与盼头。', note:'以一句约定/期许收章，留弱悬念与明日的延续感（~200字）', aiDirective:'必须以约定/期许/承诺收章并留弱悬念与延续感；禁止封闭式总结、禁止开放式烂尾。', wc:'~200字' }
   ]},
-  { id:2,  label:'双拍结构', emoji:'🔍', desc:'悬疑/惊悚/推理：长铺垫+短揭示，前段积累后段收束', wc:'2500/500（共约3000字/章）', types:[
+  { id:2,  label:'双拍结构', emoji:'🔍', desc:'前头一大段慢慢铺陈（看似平淡、其实全是伏笔），最后一小段集中揭晓真相/抛出惊吓，专治悬疑惊悚推理', wc:'2500/500（共约3000字/章）', types:[
       { key:'hold',   label:'长段铺垫', uiHint:'前面一大段都用来铺线索、攒信息，把气氛一点点垫起来。', note:'用较长篇幅铺设线索、逐步积累信息，营造渐进的氛围（~2500字）', aiDirective:'必须用长篇幅连续铺设线索、逐步积累信息、营造渐进氛围；禁止情绪化辞藻堆砌、禁止段落间信息断裂。', wc:'~2500字' },
-      { key:'burst',  label:'反转收束', uiHint:'结尾极短篇幅，把前面线索一次性揭示、收束。', note:'在较短篇幅给出关键揭示与剧情反转，收束前面积累的线索（~500字）', aiDirective:'必须在结尾用较短篇幅对前面积累的线索给出关键揭示并收束，各线索须自洽串起；禁止为反转引入未铺垫的新元素、禁止悬而未决。', wc:'~500字' }
+      { key:'burst',  label:'揭示收束', uiHint:'结尾极短篇幅，把前面线索一次性揭示、收束，并留一句事件后果。', note:'在较短篇幅给出关键揭示并收束前面积累的线索，末尾再以一句交代事件后果或余味（~500字）', aiDirective:'必须在结尾用较短篇幅对前面积累的线索给出关键揭示并收束，各线索须自洽串起；揭示收束后必须再以一句交代事件后果或余味再结束；禁止为反转引入未铺垫的新元素、禁止悬而未决、禁止揭晓后戛然而止无任何收尾。', wc:'~500字' }
   ]}
 ];
 /* 微拍选型铁律（用户主导、随拍数注入规划师 prompt）：
@@ -3318,12 +3877,12 @@ const BEAT_DEFAULT_ID = 5;
 const BEAT_LABEL_ALL = (()=>{ const m={}; BEAT_OPTIONS.forEach(c=>c.types.forEach(t=>{ m[t.key]=t.label; })); return m; })();
 // 旧体系（四/七/十二/十五拍）多余/冲突 type 的兼容别名：切换微拍后，历史节拍表的旧 type 仍能正确显示中文，不显示英文裸 key。
 const BEAT_LEGACY_LABEL = {
-  rise2:'推进', after:'余波', turn:'转折', incident:'意外推进', hesitate:'犹豫转折', assist:'助力推进',
-  resolve:'决心突破', trial:'试炼推进', core:'逼近核心', abyss:'绝境燃点', afterglow:'短暂余波',
-  return_turn:'归程转折', final_climax:'终极燃点', harmony:'圆满余波', open:'开篇铺垫', theme:'主题铺垫',
-  bg:'背景铺垫', catalyst:'催化推进', inner_turn:'内心转折', new_world:'新境推进', subline:'副线铺垫',
-  easy:'轻松推进', mid_turn:'中部转折', pressure:'压力推进', dark_climax:'至暗燃点', despair:'绝望余波',
-  counter:'反击转折', close:'收束余波'
+  rise2:'推进', after:'后果收束', turn:'转折', incident:'意外触发', hesitate:'内心犹豫', assist:'助力推进',
+  resolve:'决心行动', trial:'试炼推进', core:'逼近核心', abyss:'绝境高潮', afterglow:'压力回落',
+  return_turn:'再生变数', final_climax:'终局高潮', harmony:'结局收束', open:'开篇铺垫', theme:'主题铺垫',
+  bg:'背景铺垫', catalyst:'变故触发', inner_turn:'内心质变', new_world:'换场推进', subline:'副线铺垫',
+  easy:'轻松推进', mid_turn:'中部转折', pressure:'压力推进', dark_climax:'绝境极点', despair:'低谷重整',
+  counter:'反击转折', close:'结局收束'
 };
 // 全部拍数节拍的「用户层提示」全局映射（取自 type.uiHint：通俗解释，供节拍表卡/提示 UI 显示）
 const BEAT_HINT_ALL = (()=>{ const m={}; BEAT_OPTIONS.forEach(c=>c.types.forEach(t=>{ m[t.key]=t.uiHint||''; })); return m; })();
@@ -3351,107 +3910,50 @@ function beatTypeKeys(){ return beatTypesDefs().map(t=>t.key); }
 function beatCnt(){ return beatTypesDefs().length; }
 function beatLabelFor(key){ return BEAT_LABEL_ALL[key] || BEAT_LEGACY_LABEL[key] || (()=>{ const t=beatTypesDefs().find(x=>x.key===key); return t?t.label:key; })(); }
 function beatNoteFor(key){ return BEAT_HINT_ALL[key] || ''; }   // v1.0.163 用户层：返回通俗 uiHint，不再暴露 AI 化 note
-// 是否属「燃点」类节拍（用于章节生成的高潮/张力检测，任意拍数通用）
-function isClimaxType(key){ return /燃点/.test(BEAT_LABEL_ALL[key] || key); }
-// 动态节拍系统提示词：按所选拍数生成 N 段节拍表
+// 是否属「高潮/高点」类节拍（用于章节生成的高潮/张力检测，任意拍数通用）——v1.0.262 随节奏阶段改名从 /燃点/ 同步调整
+function isClimaxType(key){ return /高潮|高点/.test(BEAT_LABEL_ALL[key] || key); }
+// v1.0.291：节拍编排「后悔药」历史（beatsHistOf/Push/Restore）随「阅读节拍表」移除编辑/历史功能一并退役——已无任何读取入口，属失效冗余，彻底清除。
+// 动态节拍系统提示词（v1.0.273 纯文本化）：不再生成 JSON"拍表"骨架，而是为每个章节输出内容丰满、可让正文展开成约3000字的「章节编排」纯文本。
 function buildBeatsSys(){
-  const cfg = currentBeatCfg(), defs = cfg.types, cnt = defs.length;
-  const specLines = defs.map((t,i)=>`${i+1}. ${t.label}（type="${t.key}"）——功能说明：${t.note}${t.wc?`；该拍字数：${t.wc}`:''}${t.aiDirective?`\n    硬命令：${t.aiDirective}`:''}`).join('\n');
+  const cfg = currentBeatCfg(), defs = cfg.types;
+  const rhythm = defs.map((t,i)=>`${i+1}. ${t.label}（type=${t.key}）：${t.note}${t.wc?`（该拍字数配比：${t.wc}）`:''}`).join('\n');
   const selectRule = cfg.id===3 ? '读者偏好短促密集的节奏（新媒体型）' : (cfg.id===5 ? '读者偏好约 1500 字一次小幅情绪起伏（传统男女频标准）' : (cfg.id===2 ? '读者偏好前段积累、后段集中揭示的结构（悬疑惊悚）' : '读者偏好细腻温和的情感递进（慢热细腻型）'));
-  // v1.0.175：时间锚——为每拍给定「支线·时点」，三条时间规则（支线内单调 / 主线跨章承接 / 支线切换显式进出）
-  const _timeOn = _timeAnchorOn();
-  const _timeOpen = _timeOn ? `，并为每段节拍给定"时间锚"（time，见下）` : '';
-  const _timeRules = _timeOn ? `\n【时间锚（每段 beat 必填字段 "time"，缺失即失败）】
-每个 beat 的 time 形如「支线·时点」，例如 现实·第2天·清晨 / 现实·第3天·夜 / 回忆·主线第1天前 / 梦境·现实第2天夜 / 穿越·主线第7天。五条规则：
-· 时间节奏须自然化（最关键，反"应付"）：时间跨度由【剧情内容】决定，绝不由【章节序号】决定——严禁"第 N 章=第 N 天"这类等差死板排期，一部多章小说不可能机械地在 N 天内讲完。节奏要贴近内容：同一场景内的多拍可落在同一时刻/同一日连续推进；赶路、养伤、修炼、晋升等待、信使往来、多日布局等"带过性时间"可在章节或批次间跳到数日/数旬/数月之后；紧迫戏（追杀/夺宝/对决/倒计时/宫斗交锋）应密集压缩到同一日内甚至数小时内。时点须贴合事件真实耗时（吃饭→同日，负伤昏迷→数日，长途远行→数日/旬月），前后章时点衔接自然、全书时间跨度在叙事上成立。
-· 支线内单调：同一支线内部的时点严格单调推进，禁止在支线内部倒退时间。
-· 主线跨章承接：现实（主线）支线必须全书串联为一条不倒退的连续时钟——本批首章首拍的"现实·时点"必须承接上一批/前章的"现实末尾时点"（正文会在后文按此续写），绝不把本批剧情安排到更早的时段；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰。
-· 切换显式进出：进入回忆/梦境/穿越支线的 beat，其 event 必须写明触发点（如"他陷入回忆""入梦""启动穿越"），并在该拍或紧邻拍把剧情拉回主支线（写明回归触发）；禁止无触发、无语义的乱跳时间层。
-· 时间节奏自检：全部 time 填完后回看整体，若全书时间明显呈"每章递进固定一天/刻板等差"的应付式排布，判不合格——须打散重组为贴合情节的真实节奏（有的章跨数天、有的章数拍落在同一刻），重组后再复查单调与承接是否仍成立。` : '';
-  const _timeEx = _timeOn ? `, "time":"现实·第2天·清晨"` : '';
-  const _timeLaw = _timeOn ? `7. 每段 beat 必须填写 time（支线·时点），缺失视为失败；时点须贴合该拍剧情真实耗时与全书叙事节奏（严禁"第 N 章=第 N 天"的机械化等差排期，有的章跨数天、有的章数拍在同一刻）；体积精简：time 只写支线名与一个时点（≤12 字），例如 现实·第2天·清晨。\n` : ``;
-  return `你是一位资深长篇「节拍设计师」。请为指定批次的章节，基于【章节标题】【已定稿的前文骨架】【全书导航/大纲节拍结构/设定词典】生成${cnt}段节拍表（当前选定「${cfg.label}」微拍体系——${selectRule}）${_timeOpen}。
-【反机械化总览（v1.0.181）】你不是在"填空格"：节拍表是创作蓝图、不是打卡清单。每段 beat 的 event 必须写清该拍真实发生的具体人物动作、直接冲突与即时目标，且不同章节、不同拍之间要有事件与节奏的差异起伏——禁止全书各章套同一模板句、闹出雷同事件或流水账。时间排布遵循下方时间锚规则、贴合情节真实节奏（紧迫戏密集紧凑、舒缓戏从容铺陈），严禁按章节序号机械逐天排成"第 N 章=第 N 天"的等差。
-【微拍铁律】
-1. 本章节点规模须克制：每章设一个明确的事件节点，强度与本章篇幅匹配，禁止把后续才应出现的转折或资源提前用尽。
-2. 聚焦章节小目标：每章只推进一件具体的小事/小进展即可，不要贪多；章事件须为长线主线输出至少一个信息/线索/关系推进。
-3. ${cfg.wc||''}（标称字数配比，正文撰写时按此把每拍写足）。
-4. 每拍 event 必须写得足够具体：用一句话写清该拍的人物动作、直接冲突、即时目标与情绪走向（约40字上下，具体不空泛；禁止笼统概括、禁止模板句），正文才能按对应字数把这一拍展开到位。
-5. 每段节拍必须承接前一段续写态势，禁止各自孤立成片；本章各拍合一构成连续一场（或一条连续剧情线），情绪逐拍推进。
-${shapeKind()==='team' ? `6. 【团队拍型（当前「${currentTeamShape().label}」）】每章须让核心团队在场并让每位成员有"存在反应"：event 尽力写清"由谁主导/谁执行"，全书穿插互补、互救、分歧、救场、归队等团队拍型；对话拍要有≥两个声音的对手戏并区分声口；不得整章只写主角独角戏、把配角写成背景板，也不得主角单刷、队友挂机。
-6b.【时间锚微注】团队核心成员默认共处同支线同时点，除非剧情需要按任务/职责拆线。
-` : shapeKind()==='dual' ? `6. 【双主角拍型（当前「双主角」）】两位主角各有可独立推进的戏线是本作核心：节拍表须让两条主线都拿到实质性推进与镜头（各自的事件、冲突、情绪节拍）；两位主角的交汇/对照/张力拍要成为本书最有记忆点的拍型之一；双线视角切换的节拍要有明确衔接点，禁止全程只写某一方把另一方晾成背景。
-6b.【时间锚微注】双主角可在同一支线同时点各自展开独立场景（非共同场景），若分处不同时点须在节拍上给出进入/回收说明。
-` : `6. 【拍型】当前为「主角线」单人叙事，专注单主角的行为与心理即可。
-`}${_timeOpen ? '7. 【时间锚】每拍须给定 time（见下）。' : ''}
-【输入】会给出：本批次章节标题、核心定位/深层主题、大纲节拍的结构、设定词典、已定稿前文骨架。
-【节拍结构与顺序（严格按此 ${cnt} 段）】
-${specLines}
-【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{
-  "chapterPlans": [
-    {
-      "beats": [
-        {"type":"${defs[0].key}", "event":"本节拍关键事件：写清人物动作、直接冲突与即时目标（一句话约40字，具体不空泛）", "emotional":"情绪，1—8字", "requiredEntities":["必须出现的人名/地名/专名"], "foreshadowing":["本章埋下的伏笔（有才填）"]${_timeEx}},
-        {"type":"${defs[Math.min(1,cnt-1)].key}", "event":"推进/转折事件：人物做了什么、冲突如何升级（一句话约40字）", "emotional":"情绪变化", "requiredEntities":[], "foreshadowing":[]},
-        ${cnt>3 ? `{"type":"${defs[cnt-2].key}", "event":"章末前的承转或余波事件：人物心理/动作/对话如何收束（一句话约40字）", "emotional":"情绪落点", "requiredEntities":[], "foreshadowing":[]},\n` : ''}        {"type":"${defs[cnt-1].key}", "event":"章末钩子/悬念：承接下一章的线索或关系突变（一句话约40字）", "emotional":"章末情绪落点", "requiredEntities":[], "foreshadowing":[]}
-      ],
-      "emotionalArc": "本章情绪弧：从X到Y，用一句话概括",
-      "requiredEntities": ["本章必须使用的核心实体汇总"]
-    }
-  ]
-}${_timeRules}
-【硬性约束】
-1. chapterPlans 数量必须严格等于用户提示中指定的章节数，顺序一一对应。
-2. 每章 beats 必须恰好 ${cnt} 段，type 依序使用 ${beatTypeKeys().join(' / ')}，顺序不可变。
-2b. 特例（全书末章）：当批次指令声明某章为全书最后一章时，该章末拍 type 改为 "ending"（「全书结局」拍——收束全书主线与各主要人物归宿、给出核心冲突的最终解决与确定结局或余味，禁止悬念钩子/开放式烂尾），其余各拍仍严格依序不变；非末章一律不得使用 "ending"。
-3. 节拍事件必须从章节标题与「大纲节拍的结构」阶段推导，不得偏离当前阶段、不得自创剧情；每段节拍必须贴合其【功能说明】的叙事职责。
-4. requiredEntities 与 foreshadowing 只能使用设定词典中已有人名/地名/专名，禁止自造新名。
-5. 精简输出（提速）：event 紧扣「人物动作+直接冲突+即时目标」，一句话说清（约 40 字上下），严禁精简成空泛模板句或事件雷同；每段 requiredEntities 至多 2 个；emotional ≤6 字。
-6. 只输出上述 JSON，不要 markdown 代码块、不要解释。
-${_timeLaw}`;}
-
-// ④ 万物词典：产出初期词典种子，合并进权威词典（同名以现有为准）。
-// v242/911-①：「宁缺毋滥」改为「宁全勿缺」——数量下限（user 侧按章节数计算）+ 允许题材衍生，解决词典供给单薄。
-const PLANNER_GLOSSARY_SYS = `你是一位长篇「设定词典构建师」。请基于全书结构骨架与全部章节标题，产出作品初期万物词典。
-【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{
-  "glossary": {
-    "characters": [{"name":"人名","identity":"身份","age":"岁数","gender":"性别","appearance":"外貌","hobby":"爱好","mannerism":"习惯小动作/口头禅","relation":"关系","trait":"性格"}],
-    "places": [{"name":"地名","type":"类型","note":"设定"}],
-    "propernouns": [{"name":"专名","note":"含义"}]
-  }
-}
-【硬性约束】
-1. 词典须覆盖全书叙事所需：主要人物（含配角）、关键地名/场景、专属设定术语。各类条目数量必须达到 user 侧【词典规模要求】给出的下限；宁全勿缺。
-2. 以章节标题/「大纲节拍的结构」阶段中出现的实体为主；不足下限时，允许依据题材惯例与本章节阶段职责合理衍生配角、地点、场景、组织、器物、术语等（衍生条目在 identity/note 末尾标注「（衍生）」），名称须符合本书题材与世界观的命名风格，禁止无意义凑数。
-3. 中国背景人物建议采用百家姓姓氏+两字名（柔性参考，不作强制）；其他文化背景人物按其世界观自然命名，程序不会因命名拦截任何条目。
-4. 若输入中已给出【现有词典】，同名条目不要重复输出，只补缺失条目。
-5. 人物必须输出全部 8 个字段：identity / age / gender / appearance / hobby / mannerism / relation / trait；mannerism（习惯小动作/口头禅）并非人人都有——主角/重要配角较常有专属小动作或口头禅，判定配角的没有就填「无」，禁止缺字段/留空。
-6. 只输出上述 JSON。`;
-
-// ⑤ 伏笔网：跨章节设计伏笔—回收链，写入伏笔台账。（v1.0.141 断链：不再引用旧结构骨架/幕；改为基于「大纲节拍的结构」阶段）
-const PLANNER_FORESHADOW_SYS = `你是一位长篇「伏笔设计师」。请基于全部章节标题与「大纲节拍的结构」阶段——若输入中提供了【全局时间线】与【各章节拍事件】，也必须将它们一并作为依据——设计一张贯穿全书的伏笔网络（植入章—回收章配对）。
-【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{
-  "foreshadows": [
-    {"plantChapter": 5, "payoffChapter": 21, "text": "伏笔内容（≤40字）", "type": "人物/物件/事件/设定"}
-  ]
-}
-【硬性约束】
-1. 伏笔必须能从章节标题、「大纲节拍的结构」阶段、【各章节拍事件】或【全局时间线】中找到依据，禁止无中生有；每条给出明确的植入章与回收章（回收章 > 植入章）。
-2. 全书记 5—15 条为宜；重大主线伏笔 1—3 条贯穿全书，其余为局部小伏笔（回收跨度 3—8 章）。
-3. 回收章的剧情必须能承接该伏笔的兑现。
-4. 伏笔的植入与回收必须落在「大纲节拍的结构」合理跨度内：重大贯穿伏笔的回收章应落在其植入阶段之后、且不越过所对应的推进/合阶段；不得把伏笔植入或回收到与其阶段职责无关的章节。
-5. 【时间线感知】若提供了【全局时间线】，伏笔的植入时点与回收时点须贴着全局时间推进——避免全部伏笔挤在同一时点（如同日）或同一段紧邻章节内批量兑现；重大伏笔应跨出真实可感知的时间跨度（覆盖数章乃至全书），局部小伏笔也要覆盖一段有意义的剧情。
-6. 【多主角个人线】（仅当输入含【叙事主体·】（双主角或团队）时生效）：双主角——两位主角各配至少一条可独立推进的伏笔/弧线，且作为互不合并的两条线跨章回收；团队——除主角外给每位主要配角各配至少一条"个人线"伏笔（身世/旧伤/隐瞒/私欲/独立目标）。植入—回收须跨出真实章距，不能与其团队交集或彼此关系线性合并；成员间/双主角间的暗流、分歧、隐瞒也是可用的伏笔来源。
-7. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
-
-// v1.0.116 小说核心锚点提取器：从完整线性简介中提炼「核心一句话定位 + 深层命题」，作为下游 AI 的导航灯塔。
-// 只读提炼，不做创作；低温(0.2)严格把关，不改变 logline 本身。
-const ANCHOR_EXTRACT_SYS = `你是小说核心定位提取器。给定一段完整的小说简介（通常按开端—发展—高潮—结局的顺序写成一段连续叙事），请从整段中主动提炼最核心的定位，而不是照抄简介的开头或结尾。
-请严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{"anchor":"核心一句话定位，≤50字，须包含 题材+主角+核心冲突 三要素","thesis":"深层主题命题，≤80字，点出作品要探讨的核心主题/情感内核"}`;
+  const shape = shapeKind()==='team' ? `本作采用团队群像：每章须让核心团队在场并让每位成员有“存在反应”，对话要有多声口对手戏，不得整章只写主角独角戏、配角当背景板。` : (shapeKind()==='dual' ? `本作采用双主角：两条主线都要拿到实质推进与镜头，交汇/对照/张力拍是本书记忆点，不得只写一方晾另一方。` : `本作采用主角线单人叙事，专注单主角的行为与心理。`);
+  return `你是一位资深长篇「章节编排师」。请为指定批次的章节，基于【全书章节标题】【全书节拍阶段】【设定词典】【前文骨架】，为每一章各输出一份「章节编排」纯文本。**你的职责是排「节拍」——这一章由哪几个节拍、按什么顺序推进，每个节拍具体发生什么——而不是写正文散文。**正文散文由正文 AI 负责；你只产出每一章的节拍蓝图：每个节拍一段微剧情梗概 + 字数配比，让正文 AI 拿着它就能按拍展开成约3000字正文，且不机械重复。
+【当章微拍节奏（${cfg.label}）——${selectRule}】
+${rhythm}
+${shape}
+【每章编排要素（一律用独立小节标题顶格起行，冒号紧跟；节拍表按这些小节清晰展示，不是散文）】
+1. 承接点：本章从上一章哪个动作/对话/悬念自然续上（第1章则写登场切入点）。
+2. 场景链与切换：本章依剧情推进依次经过哪些场景/地点，用「→」连成一条场景链，并在节点括号注明该场景在此发生什么；刻意让场景与地点错落变化，严禁连续多章默认落在同一场景里原地打转；确需重复地点时，也要换人物组合/新冲突/新信息切进这一地点的不同侧面。
+3. 逐拍推进（核心·要密实）：必须严格按上方【当章微拍节奏】的每一拍，**逐拍单独成行**输出，格式为「拍名（约字数）：该拍具体发生什么」；「约字数」取该拍自身标注的字数配比。**严禁把任何一拍写成一句话概括**：每一拍都必须写成一段"微剧情"（至少 2~4 句、约 60~120 字），写清——该拍发生在何地/何时、在场有谁、主角在此拍的动作与交锋、遇到的冲突或阻碍、以及这拍结束时人物/局势的状态变化或新信息；不要用"他遇到了困难"这类空洞概括，要给出能直接落成画面、动作、对话、心理活动的具体素材，让正文 AI 拿它就能独自把这一拍铺成约其目标字数的正文。禁止把各拍合并成整段散文、禁止省略或合并任何一拍、禁止只留一句骨架。
+4. 情绪弧：本章情绪从什么到什么，一句话概括。
+5. 出场实体：本章要落到文中的人名/地名/专名（优先取自设定词典；确需新增的配角/路人/地名/专名一并纳入，并在底部【本章实体清单】统一登记）。
+6. 埋设伏笔：本章要在文中悄悄埋下什么线索（可留空，有则写，措辞直白不绕弯）。
+7. 收束设计：本章以何种落地/悬置方式收尾并指向下一章。
+【输出格式（严格纯文本，不是 JSON）】
+对输入中的每一章各输出一个章节块，格式严格为（前后各空一行）；块内各小节标题（承接点 / 场景链与切换 / 逐拍推进 / 情绪弧 / 出场实体 / 埋设伏笔 / 收束设计）一律**顶格、以冒号紧跟**，便于程序按小节识别展示。逐拍推进下，每个节拍一行：
+===== 第N章 =====
+承接点：……
+场景链与切换：青石村（林小满的家）→ 村口（……）→ 田地（……）
+逐拍推进：
+开篇铺垫（约500字）：……
+冲突推进（约800字）：……
+（其余每拍按【当章微拍节奏】继续，“拍名（约字数）：内容”各占一行，拍数与节拍一一对应）
+情绪弧：……
+出场实体：……
+埋设伏笔：……
+收束设计：……
+【时间线要点】（独占一行，紧接收束设计之后）——用一两句话浓缩【全书时间线】判时所需的时间精华：支线 + 本章起止时点 + 时间跨度 + 关键的承接与收束（如「现实·第2天清晨→第4天傍晚（约3日）：承接上章追杀突围后逃离，收束抵达边境镇入夜」）。只写与"时间如何流动"直接相关的内容，不含无关情节细节；无明确时间则写实际在场时刻/跨度。
+【本章实体清单】（独占一行，紧接【时间线要点】之后，**仅确有新实体才写此行**，无则省略）——格式示例：「人物｜张三｜；人物｜李四｜；地名｜边境镇｜；专名｜玄铁剑｜」，每个实体用「类别｜名称｜」分隔，「类别」固定为「人物/地名/专名」，末尾加分号。不输出多余文字。
+章节块之间空一行；“第N章”的 N 必须用输入中该章的绝对章号。章节块之外不要输出任何解释、前后缀或 markdown 代码块。
+【硬约束】
+1. 每章编排须落在其所属「全书节拍的阶段」内、服务该阶段走向，不得越过当前阶段提前兑现后续阶段剧情；相邻章连续递进。
+2. 事件描述必须具体、无歧义、给正文留演绎空间：写清谁、做了什么、结果/冲突是什么，可直白、不要反义/潜台词式的绕弯表达（正文会误读）。
+3. 出场实体可取自设定词典；确需引入词典外的下位配角/路人/地名/专名以丰满本章时，允许适度新增（主角/核心反派/核心地域的绝对核心名仍禁止乱加），所增新名一律登记到本块【本章实体清单】供词典充实收编。
+4. 每章编排要足够密实——要让正文能据此写出约3000字。自我判定：只看「逐拍推进」下每一拍的描述，若某一拍一两句就能读完、正文 AI 拿它无米可下锅，就判为"一句话骨架"并重写；全章所有拍的描述合起来，须让正文 AI 有充足的场景、地点、动作、人物互动、冲突与结果可铺，足以撑起约3000字的正文。不要流水账、不要多章雷同、不要总分总套话。
+5. 只输出上述章节编排纯文本。
+`;}
 
 // v1.0.115 本章梗概（速读）：把本章正文压缩到约 1/3 字数，作为用户没耐心读完全文时的省时阅读工具。
 // 最大来源是本章真实正文；该章词典仅作覆盖性参考。
@@ -3494,12 +3996,12 @@ function validateStripLen(text, target){
 // 4.5 已有 validatePolishOutput（返回字符串约定），此处指向它；其余按 4.7 Pro 各节新增的 validator。
 const AIValidators = {
   idea: validateIdeaProOutput,   // 4.8 适配：兼容 4.7 Pro 的 {diagnosis,brief,advice} 结构与 4.5 的 optimizedIdea 结构
-  outline: validateOutlineFaithful,   // v228/P3：结构 + 忠实度双闸（未保留用户构想核心词将被打回修复队列）
   titles: validateTitleOutput,
-  chapterPlan: validateChapterPlanOutput,
+  // v1.0.285：chapterPlan 校验已随旧 JSON 节拍表退役移除（节拍表走 buildBeatsSys 纯文本，无 JSON 校验）
   subplot: validateSubplotOutput,
     glossary: validateGlossaryExtract,
-    strip: validateStripLen
+    strip: validateStripLen,
+    dictmaster: validateDictMasterOutput   // 阶段3/3.3：词典达人（新 AI）产物校验
 };
 
 // 4.8 适配修复：4.7 Pro 优化构想 AI 输出 {diagnosis, brief, advice}（非 4.5 的 optimizedIdea 结构），
@@ -3523,7 +4025,7 @@ function ideaKeyTerms(idea){
 }
 // 返回 ''=通过，否则返回不忠实提示。
 // v1.0.164 放宽：只对「硬芯专名被整体丢弃」或「总体命中率过低」的情形发提示，且该提示不再作废候选——
-// 多候选路径（genOutlineMulti）会容错降级为「可选用 + 黄标警示」，不再整条跳过。
+// 忠实度校验：未通过时容错降级为「可选用 + 黄标警示」，不再整条跳过。
 function validateIdeaFaithful(j, idea){
   const { coined, soft, short } = ideaKeyTerms(idea);
   if(short || (!coined.length && !soft.length)) return '';       // 极短/无关键词：豁免
@@ -3559,7 +4061,7 @@ function validateIdeaProOutput(j, ctx){
 }
 
 // 4.7 Pro（第 4 章原码）：统一校验入口。
-// 适配修复①：4.5 校验器存在两类返回约定——{ok:boolean} 对象（validateTitleOutput 等）与字符串（''=通过，非空=错误信息，validatePolishOutput/validateOutlineOutput），此处归一化。
+// 适配修复①：4.5 校验器存在两类返回约定——{ok:boolean} 对象（validateTitleOutput 等）与字符串（''=通过，非空=错误信息，如 validatePolishOutput），此处归一化。
 // 适配修复②：chapter / strip 属于「非 JSON 输出」（正文/梗概为纯文本），extractJsonObject 会毁掉原文，直接传 raw 原文给校验器。
 function validateAIOutput(kind, raw, ctx){
   const j = extractJsonObject(raw);
@@ -3577,7 +4079,7 @@ function validateAIOutput(kind, raw, ctx){
 // 4.8 旗舰版（第 4 章 4.4）：新形态 callAIGuarded(kind, extra, opts)——system / user / ctx 全部由 AIBus 派生；
 // 兼容旧形态 callAIGuarded(kind, system, user, ctx, opts)（第二参为字符串时按 4.7 逻辑执行）。
 async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
-  // v227 分任务模型：kind（'idea'/'outline'）在 TM_KEYS 内时透传为 taskKey，新旧形态共用；其余 kind 不注入（跟随全局）
+  // v227 分任务模型：kind 在 TM_KEYS 内时透传为 taskKey，新旧形态共用；其余 kind 不注入（跟随全局）
   const _tmKey = TM_KEYS.includes(kind) ? kind : null;
   // 4.9 修复：callDeepSeek 已改为返回 {text, finishReason, usage} 对象，必须经 unwrapAIResult 解包为纯文本后再校验/回传；
   // 否则对象被 String() 转成 "[object Object]"，JSON 解析必然失败（大纲误报「SCHEMA 返回不是对象」、构想误报「EMPTY」），
@@ -3607,14 +4109,6 @@ async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
   const txt = _unwrap(await callDeepSeek(system, user, callOpts));
   const report = validateAIOutput(kind, txt, busCtx);
   if(!report.ok){
-    // v1.0.164：tolerateFaithOutline —— 多候选大纲路径可用。忠实度/结构 SCHEMA 失败不再整条丢弃，
-    // 而是把原始文本连同校验警示一并返回，交由调用方「降级为可选用候选项」而非跳过；
-    // 真正硬伤（书名/简介无法解析）由调用方 attempt() 内的 title/logline 检查再次截获，仍会重试/跳过。
-    if(callOpts.tolerateFaithOutline && kind === 'outline' && report.code === 'SCHEMA'){
-      const boxed = new String(txt);
-      try{ boxed._validateWarn = report.details || '未通过结构/忠实度校验'; }catch(e){}
-      return boxed;
-    }
     throw new Error(`${kind} AI 输出校验失败：${report.code} ${report.details || ''}`);
   }
   return txt;
@@ -3637,15 +4131,14 @@ const AIBus = {
       // v235/E3：删除 userParams 死配置（chapterCount||30 等，全库零消费者，且避免"||30"误导后来维护者）
     };
     switch(kind){
-      case 'idea': return { ...base, rawIdea: state.idea || '', loglineRange: state.loglineRange };
-      case 'recipe': return { ...base, outline: o, existingTags: (state.chapterStyle?.tags||[]) };
-      case 'outline': return { ...base, polishBrief: state._lastPolishBrief || null };
+      case 'idea': return { ...base, rawIdea: state.idea || '' };
       case 'titles': return { ...base, outline: o, glossary: o.glossary, expectedN: extra?.n || (o.chapters||[]).length };
-      case 'chapterPlan': return { ...base, outline: o, titles: (o.chapters||[]).map(c=>c.title), glossary: o.glossary };
+      // v1.0.285：chapterPlan case 已随旧 JSON 节拍表退役移除（节拍表走 buildBeatsSys 纯文本）
       case 'chapter': return this._chapterCtx(extra?.idx);
       case 'subplot': return { ...base, chapterIdx: extra?.idx, content: state.chapters[extra?.idx]?.content, prevLog: (o.glossary?.subplots)||[] };
       case 'glossary': return { ...base, chapterIdx: extra?.idx, content: state.chapters[extra?.idx]?.content, existingGlossary: o.glossary };
       case 'strip': return { ...base, chapterIdx: extra?.idx, content: state.chapters[extra?.idx]?.content, targetZhs: extra?.targetZhs };
+      case 'dictmaster': return { ...base, outline: o, candidate: (selectedPolishCandidate && selectedPolishCandidate()) || null };   // 阶段3/3.3：词典达人输入=②所选方案九要素+书名
       default: return base;
     }
   },
@@ -3661,25 +4154,22 @@ const AIBus = {
       mode: state.mode, longMode: isLong(),
       navBeacon: o.navBeacon || '',
       L1_outline: { title: o.title, logline: o.logline, tone: o.tone, total: (o.chapters||[]).length, idx: idx+1 },
-      L2_chapter: { title: c?.title, beats: plan.beats, emotionalArc: plan.emotionalArc, requiredEntities: plan.requiredEntities },
+      L2_chapter: { title: c?.title, beatsText: (plan && String(plan.beatsText||'').trim()) ? plan.beatsText : '', emotionalArc: plan.emotionalArc, requiredEntities: plan.requiredEntities },   // v1.0.285：beats 数组退役，L2 快照改携 beatsText
       L3_neighbor: { prevTitle: prev?.title, prevTail: prev?.content?.slice(-300), nextTitle: next?.title, lastScene: o._factCard?.lastScene },
-      L4_context: { rollingSummaries: buildRollingSummary(idx), relevantGlossary: relevantGlossaryForChapter(idx), unresolvedHooks: o._factCard?.unresolvedHooks || [] }
+      L4_context: { rollingSummaries: buildRollingSummary(idx), relevantGlossary: relevantGlossaryForChapter(idx) }   // v1.0.280：unresolvedHooks 已随伏笔网移除
     };
   }
 };
 
-// 4.8 旗舰版（第 4 章 4.4）：根据 kind 返回 *_PRO 系统提示词（outline/chapter 为组装函数，strip 注入目标字数）
+// 4.8 旗舰版（第 4 章 4.4）：根据 kind 返回 *_PRO 系统提示词（chapter 为组装函数，strip 注入目标字数）
 function getSystemPrompt(kind, extra){
   switch(kind){
     case 'idea': return IDEA_POLISH_SYS + (extra && extra.multi ? POLISH_MULTI_MODE : '');   // 4.9 加固：多方案开关接线（此前 POLISH_MULTI_MODE 只定义从未拼入，勾选「多方案」实际不生效）
-    case 'recipe': return AI_RECIPE_SYS_PRO;
-    // v230/3.2：outline 支持多候选角度尾注（genOutlineMulti 经 extra.angleNote 注入【本候选创意角度】）
-    case 'outline': return buildOutlineSys() + ((extra && extra.angleNote) ? '\n\n' + extra.angleNote : '');
     case 'titles': return REGEN_TITLES_SYS;
-    case 'chapterPlan': return CHAPTER_PLAN_SYS;
     case 'chapter': return longChapterSys();
     case 'subplot': return SUBPROGRESS_UPDATE_SYS;
     case 'glossary': return GLOSSARY_EXTRACT_SYS;
+    case 'dictmaster': return DICTMASTER_SYS;   // 阶段3/3.3：词典达人新 AI
     case 'strip': {
       const ctx = AIBus.get('strip', extra);
       const target = ctx.targetZhs || 300;
@@ -3691,19 +4181,18 @@ function getSystemPrompt(kind, extra){
 }
 
 // 4.8 旗舰版（第 4 章 4.3）：prompt 组装统一路由——所有 AI 的 user 都经 buildAIPrompt(kind, extra) 产出
-// 适配说明（相对 md 原码）：titles/chapterPlan/chapter 复用项目 4.7 已有组装函数（titlesGenUser/chapterPlanUser/buildChapterUser）；
+// 适配说明（相对 md 原码）：titles/chapter 复用项目 4.7 已有组装函数（titlesGenUser/buildChapterUser）；
 // idea/recipe/outline/subplot/glossary/strip 由下方新增的 build*User(ctx) 承接（与项目既有内联拼装等价）。
+// v1.0.285：chapterPlan 分支已随旧 JSON 节拍表退役移除（节拍表走 buildBeatsSys + plannerBeatsUser 纯文本直出）。
 function buildAIPrompt(kind, extra){
   const ctx = AIBus.get(kind, extra);
   switch(kind){
     case 'idea': return buildIdeaPolishUser(ctx);
-    case 'recipe': return buildRecipeUser(ctx);
-    case 'outline': return buildOutlineUser(ctx);
     case 'titles': return titlesGenUser(extra);
-    case 'chapterPlan': return chapterPlanUser();
     case 'chapter': return buildChapterUser(extra?.idx, extra);
     case 'subplot': return buildSubplotUser(ctx);
     case 'glossary': return buildGlossaryExtractUser(ctx);
+    case 'dictmaster': return buildDictMasterUser(ctx);   // 阶段3/3.3：词典达人 user 组装
     case 'strip': return buildStripUser(ctx);
     default: throw new Error('未知 AI kind: '+kind);
   }
@@ -3736,17 +4225,6 @@ function buildIdeaPolishUser(ctx){
   if(parts.length) lines.push(`【已选叙事结构】\n${parts.join('\n\n')}`);
   return lines.join('\n\n');
 }
-function buildRecipeUser(ctx){
-  return aiRecipeUser(ctx.idea);
-}
-function buildOutlineUser(ctx){
-  // 与 4.7 Pro（3.2）genOutline 的 user 拼装等价：【用户构想】+【优化构想简报】
-  // v230/1-C：改为无条件调用——formatNavBeaconForOutline 内部自行决定用简报/纯文本优化稿/空（此前门控 ctx.polishBrief 会漏掉纯文本通道）
-  const brief = formatNavBeaconForOutline();
-  // v1.0.186：团队设定注入大纲 AI——让书名/简介/锚点体现团队（非 solo 时才有）
-  const tb = teamShapeBrief();
-  return `【用户构想】\n${ctx.idea}\n\n${brief ? '【优化构想简报】\n' + brief : ''}${tb ? '\n\n' + tb : ''}`;
-}
 function buildSubplotUser(ctx){
   const chIdx = ctx.chapterIdx;
   const body = String(ctx.content || '').trim();
@@ -3774,14 +4252,9 @@ function buildGlossaryExtractUser(ctx){
 function buildStripUser(ctx){
   const chIdx = ctx.chapterIdx;
   const o = state.outline || {};
-  const title = (state.chapters[chIdx] && state.chapters[chIdx].title) || ((o.chapters&&o.chapters[chIdx]&&o.chapters[chIdx].title)) || ('第'+(chIdx+1)+'章');
-  const g = o.glossary || {};
-  const dict = [
-    ...(g.characters||[]).map(x=>'人物『'+((x&&x.name)||'')+'』'+((x&&x.identity)?'－'+x.identity:'')),
-    ...(g.places||[]).map(x=>'地名『'+((x&&x.name)||'')+'』'),
-    ...(g.propernouns||[]).map(x=>'专名『'+((x&&x.name)||'')+'』')
-  ].slice(0,90).join('、');
-  return `${outlineAnchorBlock()?outlineAnchorBlock()+'\n':''}【全书简介】书名：${o.title||''}\n${o.logline||''}\n\n【本章标题】${title}\n\n${dict?`【本章词典（必保不得遗漏）】${dict}\n\n`:''}【本章真实正文】\n${String(ctx.content||'').slice(-50000)}`;
+  const body = String(ctx.content||'').trim();
+  // v1.0.279：章节梗概只注入本章真实正文（其余上下文全部移除）
+  return `【本章真实正文】\n${body.slice(-50000) || '（本章暂无正文）'}`;
 }
 
 /* ==================== 4.8 旗舰版：AI 协作看板与路由层（第 6 章） ==================== */
@@ -3848,19 +4321,19 @@ function langLayerInjection(){
 // ===== v1.0.133 叙事铁律：三大写作要求的统一入口（硬铁律 + 软约束），开关 _narrIron 默认开，作用于正文(System 实际经贸链路) 与 规划师。
 // 保留既有拆分逻辑（禁则清单硬约束 / 语言分层硬+软），仅在这里做入口统一，方便维护与排查。
 const NARRATIVE_IRON_HARD = `〔硬约束 · 铁律，不可逾越，冲突时以此为准〕
-· 禁止直接叙述人物内心情绪。禁止出现直白内心描写；必须改用动作、微表情、下意识小动作来外显情绪。
+· 禁止直接叙述人物内心情绪。禁止出现直白内心描写；必须改用动作、微表情、下意识小动作来外显情绪，但外显所用意象必须克制且不重复：同章内同一种微表情/小动作（如 咬牙、攥拳、拧眉、垂眸、绞手）最多出现一次，全书不得反复堆同一套动作当情绪标签。
 · 禁止频繁使用网文模板词（倏然、眸光、眼底、凤眸、邪魅一笑、轻嗤）。同章内同类模板词必须最多出现一次，能删必修。
 · 对白必须口语化，禁止「端着」的书面腔台词。允许半截话、吐槽、短暂停顿；古风也必须写现代人能读懂的「人话」，例：写「我瞧着这事不妥」，禁止写「吾观此事实为不妥」。
 · 人物行为必须有清晰动机，禁止无故推进剧情。禁止过度美化人物：言行必须与境界相符，允许小瑕疵、怯懦、私心、口误。
 · 书面语是藏起来的底牌：旁白可按题材适度书面，但对白必须口语；书面语必须只在超大高潮、深情告白、终极顿悟时用来「提咖」，禁止在赶路、打斗、系统提示等快节奏场景滥用。`;
 
 const NARRATIVE_IRON_SOFT = `〔软约束 · 尽力而为、随题材微调〕
-· 必须给核心人物绑定 1-2 个专属小动作/口头禅/下意识小习惯，写到自然出现、不刻意。
-· 每章必须至少落地 1-2 处生活化细碎细节作真实毛边。
+· 可给核心人物绑定 1-2 个专属口头禅，写到自然出现、不刻意。
+· 生活化细碎细节（真实毛边）应随情节自然分布：只在能推进氛围/塑造人物时出现，禁止为凑数量而每章硬塞、禁止同一种细节反复复用。
 · 语言底色必须随题材稳定贯穿全书，禁止中途漂移：都市/网游/沙雕→贴近生活口语；仙侠/红楼风→适度书面高级感。
 · 快节奏场景必须优先大白话短句，禁止绕弯长句，保证读者一目十行不卡壳。`;
 
-function narrativeIronBlock(role){
+function narrativeIronBlock(role, opts){
   // C fix: 禁则清单 / 语言分层为独立叙事中间件，各自按其开关与 scope 生效，不再被「叙事铁律总开关」整块吞噬
   const parts = [];
   const ban = banListBlockFor(role);
@@ -3870,6 +4343,13 @@ function narrativeIronBlock(role){
     if(lang) parts.push(lang);
   }
   const sep = '\n\n';
+  opts = opts || {};
+  // v1.0.240：规划向瘦身（节拍表用）——不再注入正文向铁律全文（禁止直白内心/模板词/对白口语化等均只约束正文成稿，对"设计事件"无用），
+  // 只保留禁则清单 + 一行规划纪律摘要；事件动机/不雷同约束已由节拍表系统提示词第 5 条覆盖，不重复注入。
+  if(opts.lean){
+    const head = '【规划纪律（精简）】节拍事件须有清晰动机、禁止无故推进剧情、禁止各章事件雷同或套模板。';
+    return parts.filter(Boolean).length ? sep + head + '\n' + parts.join('\n') : head;
+  }
   if(state._narrIron === false){
     const block = parts.filter(Boolean).join('\n');
     return block ? sep + '【叙事纪律（铁律已关闭，仅保留禁则/语言分层等中间件）】\n' + block : '';
@@ -3886,6 +4366,10 @@ function narrativeIronBlock(role){
   // v1.0.187 章首反机械化：治"每章都拿主角名+动作开头"的把式开场
   if(role === 'chapter'){
     ironFull += '\n【章首铁律】章首开法**必须**有变化：**禁止**全书或连续多章重复同一种开法、**禁止**每章都以同一类人物动作或同一类时间词起句、也**禁止**连续两章雷同，小说整体**禁止**某一种开法超过三成。下面各方式**可以**混用、**必须**轮流换着来：①续写式（优先）：优先从上一章结局未完成的对话/动作/悬念切入（承接细则以该章承接任务书为准）；例："『这话可说不得。』上回话到一半，屋里便只剩扇子敲桌沿的声响。"；②场景/环境式：从能即时带出情绪与冲突的场景细节/物件/光线/动静切入，人物稍后才点名；例："檐角铜铃被夜风拨响时，堂屋的灯还亮着，桌上摊着两封未拆的信。"；③人物开句式：以人物称谓开句**可以**，但须与前后章错开、**禁止**连续两章相同；④时间开句式：以时间词开句**可以**，但**禁止**连续两章都用时间词开句；⑤他人/群像式：从他人口中或反应侧写入物处境，出场人物不占句首；例："『那人的名讳一提就烫嘴。』有人压着嗓子嘀咕。"；⑥悬念回接式：以章末钩子的延续、一句质问或一个反常细节起首；例："那封密信最终会不会落到衙门手中，成了压在每个人心口的石头。"';
+  }
+  // v1.0.258 视角·反剧透铁律（正文 L0 最高优先级）：原正文提示词第 11 条埋在规则深处、存在感不足，提到共享铁律顶层强制
+  if(role === 'chapter'){
+    ironFull += '\n【视角与反剧透铁律】全章以主角的受限感知推进：只写主角能\/看到听到摸到感知到的；想表现他人内心，一律从主角的观察与推断出发，禁止直接钻进路人\/配角\/反派的内心"读心"。禁止提前揭示读者与主角尚不该知道的答案：伏笔只许一笔带过地埋伏笔，不点破、不解释、不揭示答案（不剥夺读者的"侦探权"）。背景\/世界观\/前史情报必须"寄生"在角色的即时感官里（听\/闻\/触）传达，禁止作者跳出来大段广播。仅在章\/节分界明显、或关键时刻"只展示不解释"的客观动作、或悬念兑现时，才可短暂切出并立即回到主角。';
   }
   const head = role === 'chapter'
     ? '【叙事铁律 · 本章写作总纲】'
@@ -3923,49 +4407,46 @@ const REGEN_TITLES_SYS_LEGACY = `你是一位深谙标题艺术与长篇小说�
 const REGEN_TITLES_SYS_PRO = `你是一位资深长篇小说「章节标题策展人」，同时是标题审计师。
 【核心任务】根据给定的小说信息，在【不改变章节数量与顺序】的前提下，为每一章生成一版最终标题。
 
-【必须输出的 JSON 结构】
-{"titles":["第1章 标题","第2章 标题",...]}
+【输出格式（纯文本 · 一个标题一行）】
+第1章 标题
+第2章 标题
+……
+第N章 标题
+（N 为章节总数，由用户提示给定）
 
 【标题生成契约】
-1. titles 数组长度必须严格等于【N】（N 为用户提示中给定的章节总数），一章不多、一章不少。
-2. 每个标题：≤18 字，必须以「第N章」开头（N 为阿拉伯数字），后面接空格，再接章节名。
+1. 每行一个标题，必须以「第N章 」开头（N 为阿拉伯数字），后接空格，再接章节名；行数必须严格等于章节总数，一章不多、一章不少。
+2. 每个标题名 ≤18 字。
 3. 标题必须：贴合本章剧情走向、不剧透后续反转、不泄露结局、不与相邻章标题重名或高度相似。
-4. 标题风格必须贴合【整体情绪基调 tone】与【写作风格】；若风格为「冷峻克制」，标题不得煽情；若风格为「热血燃向」，标题不得过于婉约。
+4. 标题风格必须贴合【所选方案蓝本】中的「风格 / 基调 / 核心词」与【写作风格】；若风格为「冷峻克制」，标题不得煽情；若风格为「热血燃向」，标题不得过于婉约。
 5. 标题中不得引入设定词典以外的新人名/地名/专名。
-6. 只输出上述 JSON，不要 markdown 代码块、不要解释。
+6. 只输出上述纯文本，不要 JSON、不要 markdown 代码块、不要任何解释与前缀后缀。
 
 【输出示例】
-{"titles":["第1章 雾中第七日","第2章 旧信","第3章 退休法医"]}`;
+第1章 雾中第七日
+第2章 旧信
+第3章 退休法医`;
 
 // 4.7 Pro（第7章指令2）：新常量用旧名，引用点零改动自动升级
 const REGEN_TITLES_SYS = REGEN_TITLES_SYS_PRO;
 
 // v10.13 优化构想 AI：把用户粗糙构想优化为结构化高质量构想（通用核心要素 + 自适应分类要素）。
 // 极短输入（<15 字仅题材词）走「骨架展开模式」：给可改草稿 + 显式标注 + 反问清单引导补充独有设定。
-// 4.5：输出结构化 JSON（optimizedIdea/defects/navBeacon/seedCharacters/seedPlaces），配合 validatePolishOutput 校验。
-// 4.7 Pro（3.1/第7章指令2）：旧常量改名为 IDEA_POLISH_SYS_LEGACY 保留回退，新常量用旧名指向 IDEA_POLISH_SYS_PRO。
-const IDEA_POLISH_SYS_LEGACY =  `你是一位深谙网文与影视叙事的构想编辑。
-【核心任务】把用户输入的粗糙故事构想，优化成一段结构化的高质量构想——保留用户全部原始意图，补全可推导的具体细节，让后续大纲 AI 有明确的创作依据。
-【硬性约束】
-0. 输入极短（少于 15 字，仅题材/方向词，如"穿越文""重生复仇""校园"）时：切换到「骨架展开模式」——按该题材的经典类型惯例，展开成一份通用骨架构想（该题材常见的主角设定、典型主线阶段、常见风格落点），必须在文首标注"（基于题材惯例的通用展开，非用户原话）"，并在末尾附一行"💡 建议补充：主角身份？核心设定/金手指？结构阶段？风格基调？——补充后再优化效果更好"；不得把骨架设定表述成用户提供的，也不得声称这是唯一写法。
-1. 绝不删减、篡改用户明确表达的内容（题材/元素/风格都须保留），只能在原意上细化；
-2. 不替用户新增故事设定（不凭空加角色/势力/冲突/金手指），只补全"可推导的通用细节"；
-3. 输出结构 = 通用核心要素（题材 / 主角 / 结构（含阶段比例） / 风格（含落地方式） / 目标（读者体验））+ 自适应分类要素（分两层）：a. 预设类别：出现"系统/金手指/异能/穿越"→补「金手指（机制与限制）」；"爱情/CP"→补「感情线（关系与阻碍）」；"悬疑/推理/谜案"→补「谜题（核心悬念与线索布局）」；"权谋/宫斗/战争"→补「势力格局（阵营与博弈）」；"群像/家族/多主角"→补「人物关系网」；b. 开放补充：若构想含预设之外的核心题材词（如无限流/种田/娱乐圈/末世/星际/恐怖等），自行命名一个贴合该题材的分类要素（如「世界规则（副本形式/生存规则）」「资源系统（经济来源/发展目标）」「舞台体系（平台/流量/作品）」「生存法则」「科技体系」「恐惧来源」等）并给出关键内容，补充类别必须与该题材词直接对应；c. 用户构想中没有的类别一律不得输出（如无金手指的故事绝不写"金手指"要素）；自适应分类合计不超过 3 项，避免输出膨胀；
-4. 若用户构想含风格基调（轻松/诙谐/深沉/热血等），必须明确写出"风格"要素并给出 2-3 个落地方式；
-5. 篇幅 150-300 字，用简洁条目式，不要解释、不要 markdown 代码块、不要输出 JSON。
-【自由发挥区】核心要素的措辞、自适应分类的选择与颗粒度、补充方向由你把握，让优化稿读起来具体、可执行、贴合用户原意。`;
+// v1.0.249：递归清除「优化构想」冗余——旧的「结构化 JSON 简报」链路（defects/navBeacon/seedCharacters/seedPlaces 附加）
+// 与遗留常量 IDEA_POLISH_SYS_LEGACY、POLISH_SINGLE_MODE 均无任何引用点，一并删除；现行统一走 IDEA_POLISH_SYS_PRO（字段化简报 / 纯文本多方案）。
 
 // 4.7 Pro（3.1）优化构想 AI 新系统提示词：资深长篇策划编辑 + 故事诊断师，输出结构化故事简报（含缺陷清单）
 const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想编辑。
-【核心任务】把用户输入的粗糙故事构想，优化成一份"字段化简报"——按下面固定的 7 个字段逐项列出，保留用户全部原始意图、补全可推导的具体细节，让后续大纲 AI 能逐字段直接引用、零翻译损耗。
+【核心任务】把用户输入的粗糙故事构想，优化成一份"字段化简报"——每版都必须先给出一个可直接使用的书名，再按下面固定的 7 个字段逐项列出，保留用户全部原始意图、补全可推导的具体细节，让后续大纲 AI 能逐字段直接引用、零翻译损耗。
 【硬性约束】
 0. 输入极短（少于 15 字，仅题材/方向词，如"穿越文""重生复仇""校园"）时：切换到「骨架展开模式」——按该题材经典类型惯例，仍按下述 7 字段框架生成一份通用化报，必须在该报最上方标注"（基于题材惯例的通用展开，非用户原话）"，末尾附一行"💡 建议补充：主角身份？核心设定/金手指？结构阶段？风格基调？——补充后再优化效果更好"；不得把骨架表述成用户提供的、不得声称唯一写法。
 1. 绝不删减、篡改用户明确表达的内容（题材/元素/风格都须保留），只能在原意上细化；
 2. 不替用户新增故事设定（不凭空加角色/势力/冲突/金手指），只补全"可推导的通用细节"；
-3. 严格按下述【输出格式】的 7 个字段分点输出：固定标签、固定顺序，每字段占一行"标签：内容"，不要新增其它大标题；每字段须给出具体、可执行的实质内容，禁止留空、禁止笼统一句话；"核心词"字段必须收列用户在构想里用引号标出的专名与固定短语（无则写"无"）；
+3. 严格按下述【输出格式】的 8 个字段分点输出：固定标签、固定顺序，每字段占一行"标签：内容"，不要新增其它大标题；首项「书名」必须具体可直接用作最终书名（若你更有把握，可在同一行内用 / 另列 2-3 个备选），且须切中本作的题材与核心冲突/主角钩点、避免《重生之xxx》《xxx系统》《xxx的xxx》这类高频套路名；每字段须给出具体、可执行的实质内容，禁止留空、禁止笼统一句话；"核心词"字段必须收列用户在构想里用引号标出的专名与固定短语（无则写"无"）；
 4. 若用户构想含风格基调（轻松/诙谐/深沉/热血等），"风格"字段必须写清基调并给出 2-3 个落地方式；
-5. 全报告 180-320 字：除下述 7 个字段外，不要解释、不要引子、不要 markdown 代码块、不要输出 JSON；末尾可附一行以"💡"开头的编辑建议（可选，不计入字段）。
+5. 全报告 180-360 字：除下述 8 个字段外，不要解释、不要引子、不要 markdown 代码块、不要输出 JSON；末尾可附一行以"💡"开头的编辑建议（可选，不计入字段）。
 【输出格式】
+书名（全书标题：1 个主选即可，可用 / 在同行附 2-3 个备选；≤12 字；须切中题材与核心冲突/主角钩点，避免《重生之xxx》《xxx系统》《xxx的xxx》高频套路名；直接可用作最终书名）：…
 题材（时代/类型基调）：…
 主角（身份/目标/核心缺陷/钩点）：…
 核心冲突（全书的引擎：谁与什么冲突、为何难解）：…
@@ -3979,14 +4460,16 @@ const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想�
 // 4.7 Pro（第7章指令2）：新常量用旧名——所有既有引用点（polishIdea 等）自动升级为 PRO 提示词
 const IDEA_POLISH_SYS = IDEA_POLISH_SYS_PRO;
 
-// v10.13 优化构想·输出模式后缀：单稿（4.5：与多方案同一 JSON 契约，仅不带 options 包装）
-const POLISH_SINGLE_MODE = `\n\n【本次输出模式：单稿】严格只输出一个完整 JSON（与【输出格式】完全一致，不要解释、不要 markdown 代码块）。`;
-
 // v1.0.121 优化构想·输出模式后缀：多方案 —— v230/1-B 重写为与新 PRO 同构的纯文本多方案（旧 JSON options 指令与新 PRO"不要输出 JSON"矛盾，已废弃）；
 // 展示层 showPolishResult 会按「━━ 方案N」分隔符切卡（splitPolishMultiText），切不出 ≥2 张时整体降级单卡。
-const POLISH_MULTI_MODE = `\n\n【本次输出模式：多方案】在上述要求基础上，一次性给出 2~3 个不同方向的优化构想。
-每个方案用一行分隔符开头：「━━ 方案N：方案名 ━━」，随后是按上述结构的一段条目式构想，并在方案末尾加一行「推荐理由：…（这个方案给谁、适合什么口味）」。
-方案之间方向要明显拉开（如稳健商业向 / 高概念反差向 / 情感人物向），仍不要输出 JSON、不要 markdown 代码块。`;
+const POLISH_MULTI_MODE = `\n\n【本次输出模式：多方案】在上述要求基础上，围绕一个固定的「五个方向候选池」来设计优化构想。五个方向定义如下：
+· 稳健商业向——市场验证过的爽点结构，节奏稳、可长期追读；卖点是"稳"且"爽"。
+· 高概念反差向——一个强反差的核心设定/金手指撑起全篇；卖点是概念本身的新奇（身份、世界观与常规预期的错位）。
+· 情感人物向——以人物情感、羁绊、成长为核心驱动；卖点是"人"与"情"的浓度。
+· 悬疑智斗向——靠信息差与严密逻辑链制造"颅内高潮"，读者追更想看主角怎么破局；卖点是烧脑解谜。
+· 轻松日常/沙雕向——解压的情绪按摩，靠反差萌与吐槽感让人嘴角上扬；卖点是轻松解压、适合短视频化传播。
+
+每一版都必须足够具体、可执行，并尽量贴合用户原意。请从这五个方向中，选择与本书题材/构想真正契合的方向各写一版：一般 3~5 版，契合几个就给几版；明显不适配该题材的方向可跳过不给；若确有五个方向都覆盖不了的极契合新方向，允许额外补一版新方向。每个方案用一行分隔符开头：「━━ 方案N：方案名 ━━」，随后是按上述结构的一段条目式构想（必须先以「书名：…」开头给出该版书名，再依次列其余字段），并在方案末尾加一行「推荐理由：…（这个方案给谁、适合什么口味；若该方向偏小众或门槛高——如悬疑智斗极费脑、轻松沙雕易同质——请如实点明其取舍）」。方案之间方向要明显拉开，各版书名务必各不相同、切中该方向；仍不要输出 JSON、不要 markdown 代码块。`;
 
 // v8c 词典增量补全：从已生成章节正文中提取「现有词典未收录」的新人物/新地名/新专名，去重后并入词典。
 // 供批量生成章节后的自动补全与词典卡片的「📥 提取新增」共用；人物字段对齐词典契约（age/gender 必填）。
@@ -3994,16 +4477,16 @@ const POLISH_MULTI_MODE = `\n\n【本次输出模式：多方案】在上述要�
 // 4.7 Pro（3.8/第7章指令2）：旧常量改名 GLOSSARY_EXTRACT_SYS_LEGACY 保留回退，新常量用旧名指向 GLOSSARY_EXTRACT_SYS_PRO。
 const GLOSSARY_EXTRACT_SYS_LEGACY = `你是长篇小说设定整理助手。给定【本章正文】与【现有词典】，提取正文中出现但现有词典【未收录】的新人物、新地名、新专名。
 请严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{"characters":[{"name":"人名","identity":"身份/职业/社会身份","age":"岁数/年龄","gender":"性别","appearance":"外貌特征","hobby":"爱好/习惯","mannerism":"习惯小动作/口头禅","relation":"与该人的血缘/人际关联","trait":"性格要点"}],"places":[{"name":"地名","type":"类型","note":"设定要点"}],"propernouns":[{"name":"专名","note":"含义"}]}
+{"characters":[{"name":"人名","identity":"身份/职业/社会身份","age":"岁数/年龄","gender":"性别","appearance":"外貌特征","hobby":"爱好","catchphrase":"口头禅","relation":"与该人的血缘/人际关联","trait":"性格要点"}],"places":[{"name":"地名","type":"类型","note":"设定要点"}],"propernouns":[{"name":"专名","note":"含义"}]}
 规则：
 1. 只提取正文中真实出现、且有明确所指（被命名）的实体；纯叙述性泛指不提取。
 2. 必须与现有词典逐名去重：同名条目一律不再输出。
-3. ★【人物必须输出全部 8 个字段：identity / age / gender / appearance / hobby / mannerism / relation / trait】
+3. ★【人物必须输出全部 8 个字段：identity / age / gender / appearance / hobby / catchphrase / relation / trait】
    · 禁止只输出人名、禁止缺字段、禁止省略任何字段；
-   · 从正文中提取该人物的身份、年龄、性别、外貌、爱好、习惯小动作/口头禅、关系、性格等信息，正文未明说的字段按上下文合理推断后填写；
+   · 从正文中提取该人物的身份、年龄、性别、外貌、爱好、口头禅、关系、性格等信息，正文未明说的字段按上下文合理推断后填写；
    · 实在无法推断的字段填「未知」，不得留空、不得删除该字段；
-   · mannerism（习惯小动作/口头禅）：正文出现该人物的专属小动作/口头禅就写具体内容（如「手指敲桌｜口头禅'稳了'」），判定其没有就填「无」；
-   · relation 与 identity 务必区分：身份词（捕快/市长/船女）归 identity；带"谁的"的人际关联（XX的妹妹/她的仆人）归 relation。
+   · catchphrase（口头禅）：正文出现该人物的专属口头禅就写具体内容（如「口头禅'稳了'」），判定其没有就填「无」；
+   · relation 与 identity 务必区分：身份词（捕快/市长/船女）归 identity；带"谁的"的人际关联（XX的妹妹/她的仆人）归 relation；relation 只写一句话关系摘要（≤20字），与他人多组关系的逐条明细由「人物关系表」承载，禁止堆砌多组关系。
    · ★推断须自洽：填写的 age 与履历/居住年限类设定不得矛盾（如"在此已住30年"却23岁、"18岁却已当官5年"）；子代须小于亲代；转世/穿越/长生/修仙等特殊预设可豁免，但需有对应标注。
 4. 无明显新实体时输出 {"characters":[],"places":[],"propernouns":[]}。`;
 
@@ -4012,13 +4495,13 @@ const GLOSSARY_EXTRACT_SYS_PRO = `你是一位资深长篇小说「设定审计�
 【核心任务】给定本章正文与现有词典，提取正文中出现但现有词典未收录的新人物、新地名、新专名，并做字段自洽审查。
 
 【必须输出的 JSON 结构】
-{"characters":[{"name":"人名","identity":"身份/职业/社会身份","age":"岁数/年龄","gender":"性别","appearance":"外貌特征","hobby":"爱好/习惯","mannerism":"习惯小动作/口头禅","relation":"与该人的血缘/人际关联","trait":"性格要点"}],"places":[{"name":"地名","type":"类型","note":"设定要点"}],"propernouns":[{"name":"专名","note":"含义"}]}
+{"characters":[{"name":"人名","identity":"身份/职业/社会身份","age":"岁数/年龄","gender":"性别","appearance":"外貌特征","hobby":"爱好","catchphrase":"口头禅","relation":"与该人的血缘/人际关联","trait":"性格要点"}],"places":[{"name":"地名","type":"类型","note":"设定要点"}],"propernouns":[{"name":"专名","note":"含义"}]}
 
 【硬性约束】
 1. 只提取正文中真实出现、且有明确所指（被命名）的实体；纯叙述性泛指不提取。
 2. 与现有词典逐名去重：同名条目一律不再输出。
-3. 人物必须输出全部 8 个字段：identity / age / gender / appearance / hobby / mannerism / relation / trait；禁止缺字段、留空；无法推断的字段填「未知」。mannerism（习惯小动作/口头禅）并非人人都有：正文出现其专属小动作/口头禅就写具体内容，判定没有则填「无」。
-4. relation 与 identity 区分：身份词（捕快/市长/船女）归 identity；带"谁的"的人际关联归 relation。
+3. 人物必须输出全部 8 个字段：identity / age / gender / appearance / hobby / catchphrase / relation / trait；禁止缺字段、留空；无法推断的字段填「未知」。catchphrase（口头禅）并非人人都有：正文出现其专属口头禅就写具体内容，判定没有则填「无」。
+4. relation 与 identity 区分：身份词（捕快/市长/船女）归 identity；带"谁的"的人际关联归 relation；relation 只写一句话关系摘要（≤20字），与他人多组关系的逐条明细由「人物关系表」承载，禁止在 relation 里堆砌多组关系。
 5. 字段自洽：age 与履历/居住年限不得矛盾；子代须小于亲代；特殊预设（转世/穿越/长生/修仙）可豁免但需标注。
 6. 无明显新实体时输出 {"characters":[], "places":[], "propernouns":[]}。
 7. 只输出上述 JSON，不要 markdown 代码块、不要解释。`;
@@ -4030,7 +4513,7 @@ const GLOSSARY_EXTRACT_SYS = GLOSSARY_EXTRACT_SYS_PRO;
 function validateGlossaryExtract(j){
   if(!j) return {ok:false, code:'EMPTY'};
   for(const c of (j.characters || [])){
-    const missing = ['name','identity','age','gender','appearance','hobby','mannerism','relation','trait'].filter(k => !String(c[k]||'').trim());
+    const missing = ['name','identity','age','gender','appearance','hobby','catchphrase','relation','trait'].filter(k => !String(c[k]||'').trim());
     if(missing.length) return {ok:false, code:'CHAR_FIELD_MISSING', details: c.name};
     const nameViol = nmNameRuleViolation(String(c.name||'').trim());
     if(nameViol) return {ok:false, code:'CHAR_NAME_RULE', details: nameViol};
@@ -4055,12 +4538,12 @@ const SUBPROGRESS_UPDATE_SYS_LEGACY = `你是长篇小说副线追踪助手。�
 8. 与既有进度冲突时以既有进度为准，不得改写或推翻旧进度；note 只记录本章新增内容。
 9. 本章无任何副线推进时输出 {"subplots":[]}。`;
 
-// 4.7 Pro（3.7 原码）：资深副线审计师
+// 4.7 Pro（3.7 原码）：资深副线审计师（v1.0.280：伏笔网已移除，不再审计伏笔埋设/回收）
 const SUBPROGRESS_UPDATE_SYS_PRO = `你是一位资深长篇小说「副线审计师」。
-【核心任务】阅读本章正文，判断本章推进、新建或收束了哪些副线；同时审计本章**新埋设的伏笔**与**回收的旧伏笔**，并以严格的 JSON 输出。
+【核心任务】阅读本章正文，判断本章推进、新建或收束了哪些副线，并以严格的 JSON 输出。
 
 【必须输出的 JSON 结构】
-{"subplots":[{"name":"副线名","status":"进行中|搁置|已收束","question":"该副线提出的核心问题（必填，≤60字）","arc":{"from":"起点状态","to":"当前状态"},"pivot":"对主线的影响（有才填，没有就空字符串）","note":"本章进展一句话，只写本章新增，≤60字"}],"foreshadowing":{"planted":[{"text":"伏笔文本（≤40字）","expectedCh":"预计兑现章号（数字）"}],"resolved":["已回收的旧伏笔文本"]}}
+{"subplots":[{"name":"副线名","status":"进行中|搁置|已收束","question":"该副线提出的核心问题（必填，≤60字）","arc":{"from":"起点状态","to":"当前状态"},"pivot":"对主线的影响（有才填，没有就空字符串）","note":"本章进展一句话，只写本章新增，≤60字"}]}
 
 【硬性约束】
 1. 只输出本章确有推进或新建的副线；未触碰的一律不出现。
@@ -4069,10 +4552,8 @@ const SUBPROGRESS_UPDATE_SYS_PRO = `你是一位资深长篇小说「副线审�
 4. arc.from / arc.to 必须能体现状态跃迁；没有变化时两者可相同。
 5. pivot 只在确实影响主线时才填；没有就空字符串，禁止硬造。
 6. 与既有进度冲突时以既有进度为准，不得改写旧进度。
-7. 伏笔 planted 只收录本章**首次埋设**、且明显指向未来章节的线索（道具、异常对话、未解事件、人物背景暗示等）；一次性交代或本章即解释的信息不要收录。
-8. resolved 只收录本章**明确回收/解答**的旧伏笔文本；未明确回收的不要硬填。
-9. 本章无任何副线推进且无任何新伏笔/回收时输出 {"subplots":[],"foreshadowing":{"planted":[],"resolved":[]}}。
-10. 只输出 JSON，不要 markdown 代码块、不要解释。`;
+7. 本章无任何副线推进时输出 {"subplots":[]}。
+8. 只输出 JSON，不要 markdown 代码块、不要解释。`;
 
 // 4.7 Pro（第7章指令2）：新常量用旧名，引用点零改动自动升级
 const SUBPROGRESS_UPDATE_SYS = SUBPROGRESS_UPDATE_SYS_PRO;
@@ -4094,76 +4575,10 @@ function validateSubplotOutput(j){
 // v225/P5-C：TITLE_FINALIZE_SYS（正文回填标题提示词）已随 finalizeChapterTitle 一并移除。
 
 // v1.0.144：原 CHAPTER_PLAN_FREE_SYS / STRUCTURE_MAIN_SYS / STRUCTURE_PLAN_SYS 三个「结构章节分组」契约常量
-// 已随 structure（subLines/hiddenLine/chapterPlan）彻底移除——全书拍子改为纯节奏指导注入（见 buildOutlineSys），不再要求 AI 输出任何 structure 字段。
+// 已随 structure（subLines/hiddenLine/chapterPlan）彻底移除——全书拍子改为纯节奏指导注入，不再要求 AI 输出任何 structure 字段。
 
-// 4.7 Pro（3.2）大纲 Sys 组装改造：PRO 提示词 + 防套路 + 简介字数约束（N 未填按默认 30 章）
-function buildOutlineSys(){
-  const parts = [];
-  parts.push(OUTLINE_GEN_SYS_PRO);          // 新书目+简介+结构
-  // v1.0.164：忠实度硬约束——用户在构想里加引号/书名号的自造专名与固定设定短语是"词义关键瓣膜"，
-  // 必须逐字原样进入书名/简介/锚点，禁止改写为同义词或增减字数（从源头降低忠实度闸的改写误杀与真实丢词）。
-  parts.push(`\n\n【用户核心设定词 · 必须原样保留】
-用户在【用户构想】中用引号或书名号标出的专名与固定短语（如「被贬马夫」「社稷倾覆」），属于该作者自造或明确定义的核心词，含义与拼写唯一。
-必须：逐字原样写入书名/简介/叙事锚点等任一可见位置，一字不改，禁止改写为同义词或换字换序。
-禁止：弃用该词、擅自改名、或把多个核心词揉成模糊表达。`);
-  const lr = state.loglineRange;
-  const _m = Number.isFinite(lr&&lr.min)?Math.max(1,Math.floor(lr.min)):100;
-  const _x = Number.isFinite(lr&&lr.max)?Math.min(5000,Math.max(1,Math.floor(lr.max))):300;
-  const _lo = Math.min(_m,_x), _hi = Math.max(_m,_x);
-  const N = chapterCountVal();              // v235/E1：未填时不取默认 30，避免"30 章"提示词污染（AI 误以为真是 30 章）
-  // 全书拍子与防套路疲劳约束（v1.0.143：structure 已移除，改为纯节奏指导，不再要求输出结构字段）
-  const bbCfg = currentBookBeatCfg();
-  // v1.0.151：少章数小说（章数 < 拍段数，如 6 章配 十二/十五拍）时，按演算规则把全书拍子合并为符合章数的阶段段，
-  // 避免「15 拍塞进 6 章、每个阶段都要一个高潮」这种 AI 无法满足的矛盾指令。bookStagePlan(0) → []，未设章数时走原逻辑。
-  const _bplan = bookStagePlan(N);
-  const _bStageSeq = _bplan.length ? _bplan.map(p=>p.name).join(' → ') : '';
-  const _ai = bbCfg.ai || {};
-  const _stages = beatStageNames();
-  const _duties = beatStageDuties();
-  const _dutyList = _duties.map((d,i)=>`${i+1}.「${_stages[i]||''}」：${d}`).join('\n');
-  let _beatBlk = `\n\n【全书拍子 · ${bbCfg.label}】本书采用「${bbCfg.label}」共 ${_stages.length} 个阶段，按下列顺序逐级升格推进：\n${_dutyList||'（阶段职责见下）'}\n${_ai.must||''}\n${_ai.forbid||''}`;
-  if(_bplan.length) _beatBlk += `\n（全书共 ${N} 章、少于拍段数：已把「${bbCfg.label}」的 ${bbCfg.id} 个拍子按序合并为 ${_bplan.length} 个阶段推进，每阶段 1 章：${_bStageSeq}。）`;
-  parts.push(_beatBlk);
-  // v1.0.146：大纲不再注入章节微拍（微三/微五/微七/双拍）——那是规划师每章 3000 字级的微观节奏，
-  // 不属于全书阶段性节奏，注入只会干扰大纲；微观节拍完全交给规划师节拍表步骤。
-  parts.push(`\n\n【防套路疲劳 · 全书层约束】
-1. 主角每次遇到困难的解决方式不能都一样：不同阶段的高潮事件必须是不同性质的收获/代价/认知转变。
-2. 允许在主要推进阶段之间插入「缓冲/情感休整段」：该段没有大转折、没有大燃点，只用于人物关系、生活细节或情绪沉淀。
-3. 约 70% 的章节走标准推进节奏，30% 的章节允许使用变形结构（视角切换、缓冲、合并、跳拍）。`);
-  parts.push(`\n\n【简介字数约束】本作小说简介总字数必须控制在 ${_lo}—${_hi} 字之间，严格遵守区间，不得超出。` + (N
-    ? `全书共 ${N} 章，章节标题将在后续独立步骤生成，不得在此输出 chapters 字段。`
-    : `用户尚未确定全书总章数，不要预设具体章数。`));
-  const banNote = banListBlockFor('outline');
-  if(banNote) parts.push(banNote);
-  return parts.join('\n\n');
-}
-// 遵从度 → 喂给 AI 的要求（v8：与 adherenceHint 的语义一一对应，供模型判断遵循程度）
-function adherenceSys(a, allowFill){
-  if(a>=100) return '遵从度为 100%（铁律）：词典中已有的人名/地名/专名必须逐字沿用，禁止改拼写或另造别名，仅允许按本作大纲新增角色。';
-  if(a>=80)  return `遵从度为 ${a}%（基准）：尽量沿用既有命名，允许个别因新情节做小幅调整。`;
-  if(a>=60)  return `遵从度为 ${a}%（主要参照）：核心人物保留原名，地名/专名可按新剧情调整。`;
-  if(a>=30)  return `遵从度为 ${a}%（灵感来源）：可适度大改命名，仅保留题材与语感。`;
-  return `遵从度为 ${a}%（几乎放弃）：仅作背景语感参考，允许完全重新构建设定${allowFill?'，可自由创新命名。':''}`;
-}
-// v8 阶段3：大纲提示词词典块（双轨关键）。有 pendingGlossary 时生成「权威复用词典块」，
-// 把导入词典作为一致性底稿回填给模型；无导入时返回默认 GLOSSARY_SYS，主轨完全不受影响。
-function outlineGlossaryInject(g){
-  if(!g || !sourceHasGlossary(g)) return GLOSSARY_SYS;
-  const cs=(g.characters||[]).map(c=>{
-    const head=[c.identity||'',(c.age?`${c.age}岁`:''),c.gender||''].filter(Boolean).join('·');
-    const tail=[c.appearance?`外貌:${c.appearance}`:'',c.hobby?`爱好:${c.hobby}`:'',(c.mannerism&&c.mannerism!=='无')?`小动作/口头禅:${c.mannerism}`:'',c.relation?`关系:${c.relation}`:'',c.trait?`性格:${c.trait}`:''].filter(Boolean).join('｜');
-    return `${c.name}${(head||tail)?`（${head}${tail?'｜'+tail:''}）`:''}`;
-  }).join('； ');
-  const ps=(g.places||[]).map(p=>`${p.name}${p.type?`（${p.type}）`:''}${p.note?`｜${p.note}`:''}`).join('； ');
-  const pn=(g.propernouns||[]).map(p=>`${p.name}${p.note?`（${p.note}）`:''}`).join('； ');
-  const fill = state.glossAllowFill ? '\n允许并鼓励你在不在底稿中的新设定上自由新增人物/地名/专名。' : '\n除非必要，避免无谓地新增与底稿无关的实体。';
-  return `\n\n【复用词典 · 权威一致性底稿（v8）】以下是既有的权威词典，请在返回 JSON 顶层照常追加 glossary 字段，并以本底稿为主集：${adherenceSys(state.glossAdherence, state.glossAllowFill)}
-"glossary":{"characters":[{"name":"人物姓名","identity":"身份/职业/社会身份","age":"岁数/年龄","gender":"性别","appearance":"外貌特征","hobby":"爱好/习惯","mannerism":"习惯小动作/口头禅（判定没有填「无」）","relation":"与该人的血缘/人际关联（妹妹/姐姐/朋友/仆人等）","trait":"性格要点"}],"places":[{"name":"地名","type":"类型","note":"设定"}],"propernouns":[{"name":"专名","note":"含义"}]}
-人物：${cs||'（无）'}
-地点：${ps||'（无）'}
-专名：${pn||'（无）'}
-底稿中已有人名/地名/专名一律沿用，不得推倒重造一套；只按本作大纲补充新增条目，新增条目 schema 与该类别保持一致。新增/沿用人物均须区分 relation（血缘/人际关联，带"谁的"，如「林晚的妹妹」「她的仆人」）与 identity（职业/社会身份，可独立成句，如「捕快」「市长」），禁止把身份词写进 relation。mannerism 记录习惯小动作/口头禅，判定没有则填「无」。${fill}`;
-}
+
+// v1.0.245：outlineGlossaryInject 及依赖（GLOSSARY_SYS / adherenceSys）随「大纲无 AI 化」成为死代码，已清理。
 // v8 阶段3：本体词典块（章节正文共同复用）。取合并后的大纲词典，生成「严格服从」一致性基准。
 // v8b（建议1）：正文也全量带词典详情（人物关系/身份/外貌/爱好/性格、地点类型/说明、专名含义），
 // 不再做瘦身上限——详情对提高重生成的上下文一致性收益大于其微小 token 开销（约 +300~500 token/章）。
@@ -4212,15 +4627,30 @@ function glossaryDupNoteHtml(){
 
 // 每次生成新章节时，向 AI 提供「全局创作上下文」：
 // B) 【设定词典】——人物/地点/专名（完整保留、分类排序、同名仅提示不删）。仅当词典有条目时注入，避免空标签浪费 token。
-function chapterGlossaryBlock(curN){
+function chapterGlossaryBlock(curN, opts){
   const o = state.outline;
   if(!o) return '';
+  opts = opts || {};
+  const lean = !!opts.lean;   // v1.0.240：规划向瘦身（节拍表用）——人物只保留 名称（身份·关系），正文细节字段（外貌/爱好/口头禅/岁数/性别）不注入
+  // v1.0.241：标题向极简（names）——只输出 人物/地名/专名 名称清单，无任何细节字段/关系表/世界观/副线；标题仅需防"引入词典外新名"。
+  if(opts.names){
+    const g = (o && o.glossary) || {};
+    if(!sourceHasGlossary(g)) return '';
+    const rf = glossaryForAI();
+    const cs = rf.characters.map(c=>String(c.name||'').trim()).filter(Boolean).join('、');
+    const ws = (g.walkons||[]).map(w=>String(w.name||'').trim()).filter(Boolean).join('、');
+    const ps = rf.places.map(p=>String(p.name||'').trim()).filter(Boolean).join('、');
+    const pn = rf.propernouns.map(p=>String(p.name||'').trim()).filter(Boolean).join('、');
+    return `【设定词典（名称清单，标题不得引入清单外的新人名/地名/专名）】\n人物：${cs||'（无）'}\n路人龙套：${ws||'（无）'}\n地点：${ps||'（无）'}\n专名：${pn||'（无）'}`;
+  }
   // v10.61 章节正文不注入"长篇结构设计"卡片数据；结构走向由节拍表承接，词典单独注入。
-  let body = `\n\n【全局创作上下文（严格服从，禁止自造新名）】`;
+  let body = `\n\n【全局创作上下文（严格服从：有台词/有戏份、或贯穿反复出现的重要人地专名不得自造、须取用词典保持全书一致；仅作氛围的临时路人/小地名/小专名允许现场点缀一次、不入词典）】`;
   const g = (o && o.glossary) || {};
   if(sourceHasGlossary(g)){
     const rf = glossaryForAI();
-    const cDetail = c => [c.identity?`身份:${c.identity}`:'', c.age?`岁数:${c.age}`:'', c.gender?`性别:${c.gender}`:'', c.appearance?`外貌:${c.appearance}`:'', c.hobby?`爱好:${c.hobby}`:'', (c.mannerism&&c.mannerism!=='无')?`小动作/口头禅:${c.mannerism}`:'', c.relation?`关系:${c.relation}`:'', c.trait?`性格:${c.trait}`:''].filter(Boolean).join('；');
+    const cDetail = lean
+      ? c => [c.identity?`身份:${c.identity}`:'', c.relation?`关系:${c.relation}`:''].filter(Boolean).join('；')
+      : c => [c.identity?`身份:${c.identity}`:'', c.age?`岁数:${c.age}`:'', c.gender?`性别:${c.gender}`:'', c.appearance?`外貌:${c.appearance}`:'', c.hobby?`爱好:${c.hobby}`:'', (c.catchphrase&&c.catchphrase!=='无')?`口头禅:${c.catchphrase}`:'', c.relation?`关系:${c.relation}`:'', c.trait?`性格:${c.trait}`:''].filter(Boolean).join('；');
     const pDetail = p => [p.type?`类型:${p.type}`:'', p.note?`说明:${p.note}`:''].filter(Boolean).join('；');
     const cs = rf.characters.map(c=> `${c.name}${cDetail(c)?`（${cDetail(c)}）`:''}`).join('、');
     const ps = rf.places.map(p=> `${p.name}${pDetail(p)?`（${pDetail(p)}）`:''}`).join('、');
@@ -4235,7 +4665,22 @@ function chapterGlossaryBlock(curN){
     const repeatNote = repeatNotes.length ? `\n【词典同名提示（非删除，仅供知悉）】以下名称在同一类别中出现多次，均按原样保留：${repeatNotes.join('；')}` : '';
     // 追加·跨类同名提示：让 AI 识别「同一实体分属多类」，而非当作重复避免自造新名
     const crossNote = rf.cross.length ? `\n【跨类同名提示】以下名称在多类中出现（系同一实体分属多类，原样保留，不要当成两条新增，也不要据此另造新名）：${rf.cross.map(x=>`${x.name}（${x.cats.join('+')}）`).join('、')}` : '';
-    body += `\n·【设定词典】（给定的人/地/专名，正文一律采用，人名/地名/专名不可自造新名，人物关系/性格、地点类型、专名含义按此保持统一）\n人物：${cs||'（无）'}\n地点：${ps||'（无）'}\n专名：${pn||'（无）'}${repeatNote}${crossNote}`;
+    body += `\n·【设定词典】（给定的人/地/专名，正文一律采用：凡有台词/有戏份、或贯穿反复出现的人地专名务必取用本词典并保持全书一致，禁止另起炉灶自造核心名；仅作氛围的临时路人/小地名/小专名不在此限——可现场点缀一次、不入词典。人物关系/性格、地点类型、专名含义按此统一）\n人物：${cs||'（无）'}\n地点：${ps||'（无）'}\n专名：${pn||'（无）'}${repeatNote}${crossNote}`;
+    // v1.0.274 词典充实：把「路人 / 龙套」轻量清单注入正文——只说一句台词/只露一个镜头的闲人，正文按场景随手选用，
+    // 可让正文"人丁兴旺"、不再因主角独角戏而干瘪；路人无需九维，只需名字 + 何时何地做什么。
+    const wk = (g.walkons||[]).filter(w=>String(w&&w.name||'').trim()).map(w=>`${String(w.name).trim()}${String(w&&w.note||'').trim()?`（${String(w.note).trim()}）`:''}`).join('、');
+    if(wk) body += `\n·【路人龙套】（词典充实新增的闲人：只说一句台词、只露一个镜头即可，无需塑造九维；写到相关场景（街市/酒肆/夜巡/围观/办事）时就近选用登场，让群像鲜活，避免整章主角独角戏。此清单之外，允许正文为个别氛围当场自拟"临时闲人"——规则见正文【临时闲人】段）\n${wk}`;
+    // v1.0.203 阶段3/3.5：正文注入【全量万物词典】——除人/地/专名单外，追加词典达人产出的
+    // 人物关系表 / 地名关联表 / 专名关联表 / 世界观规则（有真实关联/规则才列；正文人物关系、地域往来、专名用法、世界逻辑须与此一致）。
+    const relTable = validAssoc(g._relationshipTable,'a','b').map(x=>`${x.a} ←${x.relation||'？'}→ ${x.b}${x.note?`（${x.note}）`:''}`).filter(Boolean).join('；');
+    const pcTable  = validAssoc(g._placeContacts,'from','to').map(x=>`${x.from} ↔ ${x.to}${x.relation?`（${x.relation}）`:''}${x.note?`：${x.note}`:''}`).filter(Boolean).join('；');
+    const prcTable = validAssoc(g._properContacts,'from','to').map(x=>`${x.from} ↔ ${x.to}${x.relation?`（${x.relation}）`:''}${x.note?`：${x.note}`:''}`).filter(Boolean).join('；');
+    if(relTable) body += `\n·【重要人物关系】（正文人物关系/立场须与此一致）\n${relTable}`;
+    if(pcTable)  body += `\n·【地名关联表】（地域往来/通行逻辑须与此一致，只列地名与地名之间的关联）\n${pcTable}`;
+    if(prcTable) body += `\n·【专名关联表】（专名与专名、专名用法须与此一致，只列专名与专名之间的关联）\n${prcTable}`;
+    // v1.0.210：正文注入【世界观规则】——本书世界实际如何运转的具体规则，正文一律遵守、不得违背该世界逻辑
+    const wrTable = (g._worldRules||[]).map(fmtWR).filter(Boolean).join('；');
+    if(wrTable) body += `\n·【世界观规则】（本书世界实际如何运转的具体规则，正文据此写作、不得违背该世界逻辑：劳动作息/社会制度/力量体系/金钱物价/地理交通/秩序法则等）\n${wrTable}`;
   }
   body += subplotProgressBlock(curN);   // v1.0.113 副线进度块（无副线则返回空串，不占 token）
   return body;
@@ -4296,13 +4741,13 @@ function checkGlossaryCoverage(){
   scan(g.propernouns, summary.props);
   return summary;
 }
-// v2.4 人物字段契约（与大纲词典 GLOSSARY_SYS 完全一致：name + 8 字段〔v1.0.197 增 mannerism〕）；词典卡字段检查共用
-const CHAR_FIELDS = ['identity','age','gender','appearance','hobby','relation','trait','mannerism'];
-const CHAR_FIELD_LABEL = { identity:'身份', age:'岁数', gender:'性别', appearance:'外貌', hobby:'爱好', relation:'关系', trait:'性格', mannerism:'小动作/口头禅' };
-// v2.4 提取结果补全：空字段一律填「未知」（mannerism 判无则填「无」——并非人人都有专属小动作/口头禅），保证新人物字段齐全再入库（禁止"只有名字的新人物"）
+// v1.0.253 人物九维契约（name + 8 字段 identity/age/gender/appearance/hobby/relation/trait/catchphrase）；v1.0.253 移除「小习惯与习惯性动作(habit)」维——避免正文 AI 机械贴「这是他…的习惯」标签；口头禅( catchphrase)保留。词典卡字段检查共用
+const CHAR_FIELDS = ['identity','age','gender','appearance','hobby','relation','trait','catchphrase'];
+const CHAR_FIELD_LABEL = { identity:'身份', age:'岁数', gender:'性别', appearance:'外貌', hobby:'爱好', relation:'关系', trait:'性格', catchphrase:'口头禅' };
+// 提取结果补全：空字段一律填「未知」（catchphrase 判无则填「无」——并非人人都有口头禅），保证新人物字段齐全再入库（禁止"只有名字的新人物"）
 function completeCharFields(c){
   CHAR_FIELDS.forEach(k=>{
-    if(c[k]==null || String(c[k]).trim()==='') c[k] = (k==='mannerism') ? '无' : '未知';
+    if(c[k]==null || String(c[k]).trim()==='') c[k] = (k==='catchphrase') ? '无' : '未知';
   });
   return c;
 }
@@ -4377,31 +4822,6 @@ function mergeExtractedGlossary(ext, src){
   n.total = n.c + n.p + n.k;
   return n;
 }
-// v11 规划师初期词典播种：把规划师返回的初始词典合并进权威词典。按 name 去重、同名以现有为准；
-// 不打 _auto 标记（与正文自动增量区分，清理弹窗将按「原始条目」处理，便于保留种子）。返回实际新增条数。
-function mergeSeedGlossary(seed){
-  const o = state.outline; if(!o) return 0;
-  if(!o.glossary) o.glossary = {characters:[], places:[], propernouns:[]};
-  if(!seed || (!Array.isArray(seed.characters) && !Array.isArray(seed.places) && !Array.isArray(seed.propernouns))) return 0;
-  const gl = o.glossary; let added = 0, flagged = 0;
-  const _aliasMap = glossaryAliases();   // v244/914-③：曾用名→现名映射，命中即视为用户已改名，不回灌
-  const mergeArr = (cur, arr, checkName) => {
-    const have = new Set((cur||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
-    (arr||[]).forEach(it=>{
-      const nm = String(it&&it.name||'').trim(); if(!nm || have.has(nm)) return;
-      if(_aliasMap.has(nm)) return;   // v244/914-③：nm 是任一条目曾用名（人名/地名/专名）→ 用户已改名，跳过不回灌
-      // v242/911-Q2：人名规范零阻挡——不再拦截丢弃，全部放行入库；不合规范仅打 _nameFlag 标记（词典卡⚠徽标）
-      const nv = checkName ? nmNameRuleViolation(nm) : '';
-      if(nv){ flagged++; it = { ...it, _nameFlag: nv }; }
-      cur.push(it); have.add(nm); added++;
-    });
-  };
-  mergeArr(gl.characters, seed.characters, true);
-  mergeArr(gl.places, seed.places);
-  mergeArr(gl.propernouns, seed.propernouns);
-  if(flagged) console.warn('规划师播种：'+flagged+' 个人名不合命名规范（已入库并打⚠标记，不再拦截）');
-  return { added, flagged };
-}
 // v11 规划师定稿标题应用：长度必须与当前章节数严格一致才应用，否则保留现有标题并提示防错位。
 // 应用前把当前（步2参考/手动）标题整批入版本栈，保证初稿可一键回退。返回是否成功应用。
 function bindPlannerTitles(newTitles){
@@ -4419,51 +4839,10 @@ function bindPlannerTitles(newTitles){
   }
   return applied > 0;
 }
-// 批量生成章节后的自动补全入口：开关开 + 词典已建立才执行；失败静默不阻塞
-async function autoExtractGlossary(){
-  if(!isLong() || !state.glossAutoFill) return;
-  startBgTask();
-  try{
-    if(!state.outline) return;
-    // v242/911-⑧：死锁修复——词典为空也允许正文提取（此前 sourceHasGlossary 前置导致无种子项目永远无法从正文积累词典）
-    if(!state.outline.glossary) state.outline.glossary = {characters:[], places:[], propernouns:[]};
-    // 只认正式正文（c.content）：已写入正文的章参与提取
-    const written = state.chapters.filter(c=> c && c.content && String(c.content).trim()).map(c=> c.content);
-    if(!written.length) return;
-    const ext = await extractNewGlossary(written);
-    const n = mergeExtractedGlossary(ext, '批量兜底');
-    if(n.total > 0){ persist(); toast(`词典已补全：+${n.c} 人物（含完整设定）、+${n.p} 地名、+${n.k} 专名`); }
-  }catch(e){ /* 静默失败，不阻塞章节生成 */ }
-  finally{ endBgTask(); }
-}
-// v226/8.1 逐章提取（仅正式正文）：c.content 非空才提取。
-// 不走 extractNewGlossary 的 50000 字滚动游标（那是全量兜底链的机制，逐章提取绕开它，避免游标互踩）。
-// 新实体复用既有 7 字段保障链：GLOSSARY_EXTRACT_SYS → sanitizeGlossaryExtract（含 completeCharFields）→ mergeExtractedGlossary（人名过 nmNameRuleViolation 规范闸、同名去重、打 _auto）。
-async function extractGlossaryFromChapter(i){
-  if(!isLong() || !state.glossAutoFill) return;
-  const c = state.chapters[i];
-  const body = String((c && c.content) || '').trim();
-  if(!body || !state.outline) return;
-  // v242/911-⑧：死锁修复——词典为空也允许逐章提取（自动建容器，无种子项目从此可积累词典）
-  if(!state.outline.glossary) state.outline.glossary = {characters:[], places:[], propernouns:[]};
-  // v247/923-Q7A：同一章已有提取在飞则直接复用该 Promise（幂等，防连点重复扣费）
-  state._extractInFlight = state._extractInFlight || {};
-  if(state._extractInFlight[i]) return state._extractInFlight[i];
-  startBgTask(`词典提取（第 ${i+1} 章）`);   // v247/923-Q7A：后台任务带描述，状态条可见
-  const _self = (async()=>{
-    try{
-      const user = buildAIPrompt('glossary', { content: body.slice(0, 50000) });
-      const txt = unwrapAIResult(await callDeepSeek(GLOSSARY_EXTRACT_SYS, user, {maxTokens: clampMaxTokens('glossary'), temperature: resolveActiveSpec().qcTemp, topP: 0.5, taskKey:'glossary'}));   // v242/911-② 词典 8192 档
-      const n = mergeExtractedGlossary(sanitizeGlossaryExtract(parseJson(txt) || {}), i+1);
-      if(n.total > 0){ persist(); toast(`第 ${i+1} 章新增词典：+${n.c} 人物（7字段）/ +${n.p} 地名 / +${n.k} 专名`); }
-    }catch(e){ /* 静默失败，不阻塞正文 */ }
-    finally{ endBgTask(); delete state._extractInFlight[i]; }
-  })();
-  state._extractInFlight[i] = _self;
-  return _self;
-}
+// v274：正文自动回填词典已整体移除——词典改由第5格「词典充实」（dictEnrich）主动喂饱；不再从正文事后提取。
+
 // v1.0.113 副线追踪 —— 事后轻量提取：读「本章正文 + 现有副线进度」，判定推进/新建/收束。
-// 只喂单章正文，保证 note 能精确标章号、AI 能看全进度做判断；与词典提取(extractNewGlossary)完全同构。
+// 只喂单章正文，保证 note 能精确标章号、AI 能看全进度做判断。
 const SUB_STATUSES = ['进行中','搁置','已收束'];
 async function extractSubplotUpdates(chIdx, content){
   const o = state.outline;
@@ -4490,14 +4869,8 @@ async function extractSubplotUpdates(chIdx, content){
     };
     return o2;
   }).filter(Boolean);
-  // 4.8 旗舰版（板块三-1）：解析伏笔埋设/回收
-  const fs = (j && j.foreshadowing && typeof j.foreshadowing === 'object') ? j.foreshadowing : {};
-  const planted = (Array.isArray(fs.planted)?fs.planted:[]).map(p => ({
-    text: String(p.text||'').trim(),
-    expectedCh: Number.isFinite(+p.expectedCh) ? +p.expectedCh : null
-  })).filter(p => p.text);
-  const resolved = (Array.isArray(fs.resolved)?fs.resolved:[]).map(r => String(r||'').trim()).filter(Boolean);
-  return { subplots: norm, foreshadowing: { planted, resolved } };
+  // v1.0.280：伏笔网已移除，不再解析伏笔埋设/回收
+  return { subplots: norm };
 }
 // 把提取结果并入副线进度。Q7：首次新建且无 question 的副线被拦在 merge 层之外（拒绝落库，防无法闭环的孤儿副线）。
 // 返回 {total, newCount, noQuestionCount}。
@@ -4563,8 +4936,6 @@ async function autoUpdateSubplots(){
         const c = state.chapters[i];
         const ext = await extractSubplotUpdates(i, c.content);
         const n = mergeSubplotUpdates(ext, i+1);
-        // 4.8 旗舰版（板块三-1）：同步更新伏笔生命周期账本
-        if(ext.foreshadowing) updateForeshadowLedger(i, ext.foreshadowing);
         noQ += n.noQuestionCount; total += n.total;
         absorbed.push(i);
       }
@@ -4670,23 +5041,21 @@ function openCoveragePanel(){
 function closeCoveragePanel(){ const p=$('#cvPanel'); if(p) p.remove(); }
 // v1.0.175：承接真相源——事后轻量模型从「本章正文末尾」提取本章结束时的支线·时点，作为下一章承接的首选硬真相。
 // 若本章剧情跨越到多个时点，以"本章正文最后一幕"落点的支线·时点为准（正文末段最真实）。
-const TIME_ANCHOR_SYS = `你是长篇小说「章节收束时间锚」提取器。给定【本章正文】（可选附【本章节拍表末尾时间锚】作参考），只判断一件事：本章正文在结尾落幕时，故事落在哪条时间支线、哪个时点。
-只判断【正文最后一幕】真正落到哪里，不依据节拍表猜测；正文确实没写清时点才可参考节拍表。
+const TIME_ANCHOR_SYS = `你是长篇小说「章节收束时间锚」提取器。给定【本章正文】，只判断一件事：本章正文在结尾落幕时，故事落在哪条时间支线、哪个时点。
+只判断【正文最后一幕】真正落到哪里；正文确实没写清时点则按第3条输出空。
 请严格只输出如下 JSON（不要 markdown 代码块、不要解释）：
 {"time":"支线·时点，如 现实·第2天·清晨 / 回忆·主线第1天前 / 梦境·现实第2天夜 / 穿越·主线第7天（≤14字）"}
 约束：
 1. 支线只能取 现实 / 回忆 / 梦境 / 穿越 之一；时点给一个自然语言表述（第N天+时段，或相对锚点）。
-2. 以正文最后一段、最后一幕为准；正文有明确表述就用正文表述，正文含糊才用节拍表兜底。
+2. 以正文最后一段、最后一幕为准；正文有明确表述就用正文表述，正文含糊则按第3条输出空。
 3. 若实在无法判断，输出 {"time":""}。`;
 async function extractChapterEndTime(chIdx, content){
   const o = state.outline;
   const body = String(content||'').trim();
   if(!body) return { time: '' };
-  const plan = (o && Array.isArray(o.chapterPlans) && o.chapterPlans[chIdx]) || {};
-  const _beatHint = (plan && Array.isArray(plan.beats) && plan.beats.length) ? String((plan.beats[plan.beats.length-1]||{}).time||'').trim() : '';
+  // v1.0.285：beats 数组退役——不再附拍级 time 作参考（beatsText 无拍级时间锚），时间锚纯以正文末尾为准
   const user = `【本章正文（第 ${chIdx+1} 章）】
-${String(body).slice(-30000)}
-${_beatHint ? `\n【本章节拍表末尾时间锚（仅参考）】${_beatHint}` : ''}`;
+${String(body).slice(-30000)}`;
   const txt = unwrapAIResult(await callDeepSeek(TIME_ANCHOR_SYS, user, {maxTokens: clampMaxTokens('json'), temperature: 0.2, topP: 0.5, taskKey:'timeAnchor'}));
   const j = parseJson(txt) || {};
   const t = String((j && j.time)||'').trim();
@@ -4710,6 +5079,15 @@ async function autoUpdateTimeAnchors(){
         if(ext.time){
           fc.timeAnchors = fc.timeAnchors.filter(x => x.ch !== i);
           fc.timeAnchors.push({ ch: i, time: ext.time, src: 'ai' });
+          // v1.0.233：把真实章末时点同步回「全局时间线」该章 to（保留原计划于 planTo，标记 realEnd），正文落库后看板不再显示过时计划章末
+          const _gt = o._globalTimeline;
+          if(_gt && Array.isArray(_gt.chapters)){
+            const _gc = _gt.chapters.find(x => Number(x.index) === i);
+            if(_gc && String(_gc.to||'').trim() !== String(ext.time||'').trim()){
+              if(!('planTo' in _gc)) _gc.planTo = String(_gc.to||'');
+              _gc.to = ext.time; _gc.realEnd = true;
+            }
+          }
           updated++;
         }
       }
@@ -4765,90 +5143,38 @@ function openSubplotBoard(){
 function openTimelineBoard(){
   const old = $('#tlBoard'); if(old) old.remove();
   const o = state.outline || {};
-  if(!Array.isArray(o.chapterPlans) || !o.chapterPlans.some(Boolean)){ toast('暂无节拍表'); return; }
-  const nodes = [];
-  o.chapterPlans.forEach((p,i)=>{
-    if(!p || !Array.isArray(p.beats)) return;
-    p.beats.forEach((b,bi)=>{ const t = String((b&&b.time)||'').trim(); if(t) nodes.push({ch:i, bi, branch:_timeBranch(t)||'未支线', time:t}); });
-  });
-  if(!nodes.length){ toast('暂无时间锚（可在节拍表填写，或点「＋ 补时间」由 AI 补齐）'); return; }
-  const groups = {};
-  nodes.forEach(n => { (groups[n.branch] = groups[n.branch]||[]).push(n); });
-  Object.keys(groups).forEach(k=> groups[k].sort((a,b)=> (a.ch-b.ch)||(a.bi-b.bi)));
-  const sections = Object.keys(groups).map(branch=>{
-    const arr = groups[branch];
-    const bad = new Set();
-    for(let k=1;k<arr.length;k++){ if(_timeRewind(arr[k-1].time, arr[k].time)){ bad.add(arr[k-1].ch+':'+arr[k-1].bi); bad.add(arr[k].ch+':'+arr[k].bi); } }
-    const chips = arr.map(n=>{
-      const cid = n.ch+':'+n.bi;
-      const isBad = bad.has(cid);
-      return `<button type="button" class="tl-chip${isBad?' bad':''}" data-tb-goto="${n.ch}" title="${isBad?'⚠ 与相邻节点疑似时间倒流':'第 '+(n.ch+1)+' 章 · 拍 '+(n.bi+1)}">第${n.ch+1}章·拍${n.bi+1}<i>${esc(n.time)}</i>${isBad?'<em class="tl-warn">倒流?</em>':''}</button>`;
-    }).join('');
-    return `<div class="tl-group"><div class="tl-branch">${esc(branch)} <span class="tl-count">${arr.length}</span></div><div class="tl-chips">${chips}</div></div>`;
-  }).join('');
+  const gt = o._globalTimeline;
+  let body = '';
+  const tlText = gt && String(gt.text||'').trim();
+  if(tlText){
+    body = `<div class="so-logline">${renderLoglineHtml(tlText)}</div>`;
+  } else if(gt && Array.isArray(gt.chapters) && gt.chapters.length){
+    // v1.0.273：旧 JSON chapters 兜底——转成纯文本行再按简介样式展示
+    const rows = gt.chapters.map(c=>{
+      const t = cleanChapterTitle((o.chapters[c.index]&&o.chapters[c.index].title)||'');
+      const jt = String(c.jump||'').trim();
+      return `第${c.index+1}章《${t||'?'}》：${String(c.from||'?').trim()} → ${String(c.to||'?').trim()}${jt?`（跳跃：${jt}）`:''}`;
+    });
+    const notes = gt.notes ? `\n【节奏】${gt.notes}` : '';
+    body = `<div class="so-logline">${renderLoglineHtml(rows.join('\n')+notes)}</div>`;
+  } else {
+    toast('暂无全局时间线（请先在④规划师生成全书时间线）');
+    return;
+  }
+  // v1.0.273：时间线看板不再走 JSON「支线分组·时间锚」交互——直接按「小说简介」同款纯文本排版展示全书时间线
   const ov = document.createElement('div'); ov.id='tlBoard'; ov.className='gs-overlay';
   ov.innerHTML = `
     <div class="gs-modal" style="max-width:780px">
-      <div class="gs-modal-head"><b>⏱ 时间线看板（支线分组 · 时间锚）</b><button class="gs-x" data-tb-close>✕</button></div>
+      <div class="gs-modal-head"><b>⏱ 全书时间线</b><button class="gs-x" data-tb-close>✕</button></div>
       <div class="gs-body">
-        <p class="muted" style="margin:0 0 8px">按「支线」分组展示全书每拍的时间锚；同一支线内相邻节点疑似倒流会标红 ⚠。点击某拍可展开并定位到对应章节节拍表。正文落库后，本章真实收尾时点（AI 提取）会据此判断承接。</p>
-        ${sections || '<span class="muted">暂无可显示的时间锚</span>'}
-        <div class="tl-legend"><span class="tl-legend-dot ok">●</span> 正常 <span class="tl-legend-dot bad">●</span> 疑似倒流</div>
+        <p class="muted" style="margin:0 0 8px">全书跨各章的现实时间轴：首章起始 → 末章章末（单调推进）；带大跨度/跨支线的章已括号注明。</p>
+        ${body || '<span class="muted">暂无可显示的时间线</span>'}
       </div>
       <div class="gs-actions"><button class="btn" data-tb-close>关闭</button></div>
     </div>`;
   document.body.appendChild(ov);
   ov.querySelectorAll('[data-tb-close]').forEach(b=> b.onclick = ()=>{ const p=$('#tlBoard'); if(p) p.remove(); });
   ov.addEventListener('click', e=>{ if(e.target===ov){ const p=$('#tlBoard'); if(p) p.remove(); } });
-  ov.querySelectorAll('[data-tb-goto]').forEach(b=> b.onclick = ()=>{
-    const ch = +b.dataset.tbGoto;
-    state.cpCollapsed = false;
-    state.cpBeatOpen = state.cpBeatOpen || {}; state.cpBeatOpen[ch] = true;
-    const card = document.querySelector('[data-cp-item="' + ch + '"]');
-    if(card){ card.scrollIntoView({behavior:'smooth', block:'center'}); card.classList.add('tl-flash'); setTimeout(()=>card.classList.remove('tl-flash'), 1600); }
-  });
-}
-// v1.0.175：为现有节拍表批量补「时间锚」——找出缺 time 的拍，一次请求让 AI 依上下文补写（守护既有 time）
-const TIME_FILL_SYS = `你是一位长篇「节拍时间锚补全师」。给定若干缺少时间锚的节拍（含章节号与该拍事件）与【已标注的时间锚】（承接基准），为每个缺 time 的拍补上「支线·时点」（如 现实·第3天·夜；回忆/梦境/穿越支线独立计时）。
-硬规则：
-1. 时间跨度由情节决定、不由章节序号决定：严禁"第 N 章=第 N 天"的等差死板排期，一部多章小说不可能机械地在 N 天内讲完。节奏须贴合该拍事件真实耗时与临近已标注锚的间隔——同一场景多拍落同一时刻/同一日，带过性时间（赶路/养伤/修炼/等待/多日布局）可整段跨越数日/数旬/数月，紧迫戏压缩到一日内；跳跃要合理、可被事件解释，前后衔接自然。
-2. 现实（主线）支线必须承接前文已标注、全书单调推进，禁止倒退；本拍时间须落在前文标注之后、后续更后面的标注之前（不能越过后面的=再倒流）。
-3. 若缺拍在上文明显是闪回/梦境/穿越，正确归入对应支线，不混入主线顺序。
-4. 时点贴合事件真实耗时（吃饭→同日，负伤昏迷→数日，远行→数日/旬月），并让全书布局自然有节奏，避免机械等差。
-5. time ≤14 字，形如 支线·时点；index 取输入中给出的字符串，一一对应，不要漏、不要多、不要改已标注拍。
-请严格只输出如下 JSON（不要 markdown 代码块、不要解释）：
-{"fills":[{"index":"序号","time":"支线·时点"}]}`;
-async function fillMissingBeatTime(btn){
-  const o = state.outline; if(!o || !Array.isArray(o.chapterPlans)){ toast('暂无可补时间的节拍表'); return false; }
-  const need = [];
-  o.chapterPlans.forEach((p,i)=>{ if(!p || !Array.isArray(p.beats)) return; p.beats.forEach((b,bi)=>{ if(b && !String(b.time||'').trim()) need.push({ idx:(i+1)+'-'+(bi+1), ch:i, bi }); }); });
-  if(!need.length){ toast('所有节拍均已标注时间锚'); return false; }
-  const anchor = [];
-  o.chapterPlans.forEach((p,i)=>{ if(!p || !Array.isArray(p.beats)) return; p.beats.forEach((b,bi)=>{ if(b && String(b.time||'').trim()) anchor.push(`第${i+1}章 拍${bi+1}：${b.time}`); }); });
-  const hint = anchor.length ? anchor.slice(-18).join('\n') : '（暂无已标注，请从 现实·第1天·清晨 起按单调时序排布）';
-  const list = need.slice(0, 60).map(x=> `第${x.ch+1}章 拍${x.bi+1}（index=${x.idx}）：${String(((o.chapterPlans[x.ch]&&o.chapterPlans[x.ch].beats[x.bi])||{}).event||'').slice(0,50)}`).join('\n');
-  const user = `【已标注的时间锚（承接基准）】\n${hint}\n\n【待补拍节拍】\n${list}`;
-  const pb = (btn && btn.closest('.cp-plans-tool')) || null;
-  if(pb) busy(btn, true, '补时间…');
-  try{
-    const cands = await Promise.all([
-      callAIWithContract(callDeepSeek(TIME_FILL_SYS, user, {temperature: resolveActiveSpec().planTemp, topP:0.6, maxTokens: clampMaxTokens('json'), signal:_abortCtl?.signal, taskKey:'timeFill'}), {needJson:true, taskName:'批量补时间-A'}),
-    ]);
-    const best = cands.find(c => c && c.ok);
-    if(!best) throw new Error('AI 未能返回有效补全');
-    const fills = (best.data && Array.isArray(best.data.fills)) ? best.data.fills : [];
-    let wrote = 0;
-    need.forEach(x => {
-      const f = fills.find(f2 => String((f2&&f2.index)||'') === x.idx);
-      if(f && String(f.time||'').trim()){ const p = o.chapterPlans[x.ch]; if(p && p.beats[x.bi]){ p.beats[x.bi].time = String(f.time).trim(); wrote++; } }
-    });
-    persist(); render();
-    toast(wrote ? `已为 ${wrote} 拍补齐时间锚（余 ${need.length-wrote} 拍未匹配，可再次点击重试）` : '本次未匹配到可补拍节，可重试');
-    return true;
-  }catch(e){
-    if(!e || e.name!=='AbortError') toast('批量补时间失败：'+(e&&e.message||e));
-    return false;
-  }finally{ if(pb) busy(btn, false); }
 }
 // 体量提示（拼入章节正文提示词）：强制为每章给出确定性字数目标，保证首写即写足、不依赖后验。
 // v1.0.165：界面已无字数滑条，wordRange 为空时按默认「约 3000 字」锚定；删除"不设上限"宽松口径，
@@ -4869,11 +5195,12 @@ function sizeChapterInjection(){
   return `${total}本章正文目标 ${b.lo.toLocaleString()}—${b.hi.toLocaleString()} 字，硬下限 ${floor.toLocaleString()} 字（一次写完、当场达标，禁止靠事后补字数）。
 【字数铁律 · 首写即达标】
 · 本章必须一次写足到 ≥ ${floor.toLocaleString()} 字才算完成；这是硬性交付标准，禁止写成梗概式短场景、禁止一笔带过、禁止提前收尾。
-· 开写前先把本章目标约 ${b.lo.toLocaleString()} 字按【微拍配比】预铺到各节拍，再按 user 侧【分段达成契约】逐拍分段写满：每拍用五感细节（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围写实写足。
-· 剧情完整的前提下优先增厚铺垫、交锋与余波，禁止把多个节拍挤进一句话带过，也不得堆砌标点/空行凑数。
-· 一边写一边对照：已写篇幅是否足以支撑每拍应得的分量；不足必须继续扩写到位，而不是就此了事。
+· 开写前先按节拍表里每一拍标注的「（约X字）」明确各段分量：**每一拍都要被展开到接近其标注的约X字篇幅**（例如「冲突推进（约800字）」就须写出约800字的正文，而不是150字一带而过），逐拍累加即达本章目标；写正文时把它们自然衔接成一篇连续正文、不拆成独立小节，由上拍剧情引到下拍；某拍在节拍表里素材偏少时，允许在该拍内通过场景铺陈、动作拆解、多轮对话、心理活动与环境氛围的合理扩写来凑足该拍字数；严禁把多个节拍事件挤进一句话带过；每段事件一律用五感细节（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围写实写足。
+· 剧情完整的前提下优先增厚铺垫、交锋与收官，禁止把多个节拍事件挤进一句话带过，也不得堆砌标点/空行凑数。
+· 一边写一边对照：节拍表里每一段事件是否都已写到、是否写足应有的分量；不足必须继续扩写到位，而不是就此了事。
 · 同时设硬顶：成文超过 ${hi.toLocaleString()} 字（上限 ${cap.toLocaleString()} 字）即判超长，达到目标区间就应立即收束本章，禁止无限铺陈、禁止为了"更多字数"再追加内容。
-· 长度以正文落库为准，末尾不输出任何 LEN/字数标记。`;
+· 长度以正文落库为准，末尾不输出任何 LEN/字数标记。
+【厚写展开法 · 防照抄应付（v1.0.270）】禁止把节拍 event 的字面内容"一转述就完事"：正文的实际篇幅必须明显大于节拍事件的字面内容。要写厚，就主动给每段事件叠加这些展开维度（按情节需要选，不必每拍全用）——(a) 前置铺垫：事件发生前，主角进入现场、环境气氛、人物状态的变化；(b) 动作拆解：把"一个动作"写成连续的小步骤与肢体/表情细节；(c) 对话往返回合：同一冲突用一来一回的多轮对话推进，而非一句带过；(d) 感官与环境：光线、声音、气味、触感的具象描写；(e) 延宕与收束：冲突落地后的人物反应、情绪余波与场面收尾。只有把事件展开到"看得见、感得到、有过程"，才算完成本拍，才算达标。`;
 }
 // 更新体量派生提示（页面内）
 function bindSizeHint(){
@@ -4890,17 +5217,27 @@ function bindSizeHint(){
 // 拼装：章节提示词 = 4.7 Pro 执行导演 + 叙事铁律置顶 +（篇幅 × 原创性）
 // v1.0.133：叙事铁律（L0）由 narrativeIronBlock 注入正文 System 之前
 // v1.0.137：正文 System 按所选拍数替换节拍引用（系统模板里写死的 setup/rise/climax/hook 与「四个事件」）
+// v1.0.311（闭卷口令）：前置「学生上课规则」——当 user 出现「本节上课正文」块时，教案是唯一内容体，其余 L1-L4/附录仅作补白、不得据以另编剧情或剧透
 function chapterSysBase(){
   const keys = beatTypeKeys().join(' / ');
   const cnt = beatCnt();
-  return LONG_CHAPTER_SYS_PRO
+  const base = LONG_CHAPTER_SYS_PRO
     .split('setup/rise/climax/hook').join(beatTypeKeys().join('/'))
     .split('setup / rise / climax / hook').join(keys)
     .split('四个事件').join(cnt + ' 段节拍事件');
+  const closedGate = `【学生上课规则·闭卷口令（v1.0.311）】
+你是「学生·执笔作者」，跟着老师上写作课。每章正文是一次随堂作文：
+· 若本节课消息中有「本节上课正文（唯一权威内容体·闭卷作答）」块 → 这是闭卷作文，你必须以该教案块为唯一依据动笔。章节走向、剧情时间、节奏轻重、情绪推进、章间承接一律以教案为准；不得再参考或套用消息中其他「L1/L2/L3/L4/附录/清单」等字样内容改写/另编剧情；教案未写明的已知人物/设定仅许顺手补白（如人物外观用词），不得据此扩展剧情、不得提前展示教案未排到的后续、不得剧透；承接上一章以教案「连续性」字段为准。
+· 骨架执行（推进骨架）：教案「本章推进骨架」是从头到尾的行动路线图。你要按骨架的环节顺序，一个环节一个环节地实打实写过去，每个环节都要写出它该有的过程、动作与体量，把学生的"所见、所感、所做、所言"铺开写透，让整章随之长而完整地推进到收束处——这样正文才不会只写几个段落就干巴巴收尾。同时记住：骨架是"路标"不是"紧箍咒"——环节之间如何连接、每个环节内部写多细、用多少句对话和描写，都由你这位学生的劳作去充盈，写出饱满自然的成稿，而非骨感到只剩骨架。
+· 人物范围（点名制）：闭卷时本章可写的人物，一律以教案「本章出场名单」及随附档案卡为准（名单即报文标注「本章出场名单」），名单外任何人/地/专名不可写、不可提、不可依靠参照。
+· 龙套纪律（第3刀）：当场景自然地需要店小二、摊贩、车夫、茶客、围观者这类只出现这一次的过场闲人时，可现场即兴编一个名字写一句便止，但必须满足四条硬约束：①只做当场氛围，无背景无身世、不给任何设定交代；②不得推动主线剧情、不参与本章主事件、不掌戏份；③不得与名单内或已出场人物/地名/专名重名；④不得写入万物词典、点到即收。非机械化——仅场景真有必要时点缀，多数章无需新增闲人。
+· 若本节课消息中没有该块（未备教案）→ 按下方既有 L1—L4 分层规则自行创作。
+以下为"随堂作文教学大纲"分层规则：
+`;
+  return closedGate + base;
 }
 
-// 4.5：longOutlineSys 已删除，统一使用 buildOutlineSys()
-// 4.5 longChapterSys 新版：强化 L1-L4 五层上下文约束（L1 节拍表/L2 上一章正文/L3 相关词典/L4 滚动摘要）
+// 4.5 longChapterSys 新版：强化 L1-L4 五层上下文约束（L1 节拍表/L2 上一章节拍表(优先)或上一章正文/L3 相关词典/L4 滚动摘要）
 // 4.7 Pro（3.5）：正文 System 改由 LONG_CHAPTER_SYS_PRO 驱动，写作风格说明置顶（供实际生成链路使用）
 const longChapterSys = (styleOverride) => {
   const parts = [];
@@ -4961,6 +5298,7 @@ function render(){
   else if(currentStep===4) v.innerHTML = viewStoryboard();
   else if(currentStep===5) v.innerHTML = viewExport();
   bindView();
+  if(currentStep===1) bindFlowSideNav();   // v1.0.201 5格页码侧边条绑定
   updateWcTotal();
 }
 
@@ -5028,24 +5366,24 @@ const CYBER_HOME_GRID = `
  * v2.0 写作风格选择器：主卡片 + 预设 + 收藏 + 词库管理
  * ========================================================= */
 const WRITE_PRESETS = [
-  { id:'clear',          name:'🧹 默认（无风格）', tags:[], intensity:2 },
-  { id:'preset-humor',   name:'😆 网感轻喜',  tags:['roast','webman','fast'], intensity:2 },
-  { id:'preset-art',     name:'🌸 文艺唯美',  tags:['wenyi','poetic','minimal'], intensity:2 },
-  { id:'preset-classic', name:'🏮 古典文学',  tags:['jinyong','ornate','storyteller'], intensity:3 },
-  { id:'preset-mystery', name:'🕵️ 悬疑压抑',  tags:['suspense2','jifeng','multipov'], intensity:2 },
-  { id:'preset-passion', name:'🔥 热血燃向',  tags:['fast','sliceoflife'], intensity:3 }
+  { id:'clear',          name:'🧹 默认（无风格）', tags:[] },
+  { id:'preset-humor',   name:'😆 网感轻喜',  tags:['roast','webman','fast'] },
+  { id:'preset-art',     name:'🌸 文艺唯美',  tags:['wenyi','poetic','minimal'] },
+  { id:'preset-classic', name:'🏮 古典文学',  tags:['jinyong','ornate','storyteller'] },
+  { id:'preset-mystery', name:'🕵️ 悬疑压抑',  tags:['suspense2','jifeng','multipov'] },
+  { id:'preset-passion', name:'🔥 热血燃向',  tags:['fast','sliceoflife'] }
 ];
-function writeStyleState(){ return state.chapterStyle = state.chapterStyle || { tags:[], intensity:2, collapsed:false }; }
+function writeStyleState(){ return state.chapterStyle = state.chapterStyle || { tags:[], collapsed:false }; }
 // v2.1 主卡「生效确认」：草稿态（内存，不参与生成）vs 生效态（state.chapterStyle）
 let wsDraft = null;   // null=未编辑（与生效一致）；非 null=有草稿待应用
 function wsDraftInit(){
-  if(!wsDraft){ const st = writeStyleState(); wsDraft = { tags:(st.tags||[]).slice(), intensity: st.intensity||2 }; }
+  if(!wsDraft){ const st = writeStyleState(); wsDraft = { tags:(st.tags||[]).slice() }; }
   return wsDraft;
 }
 function wsDraftDirty(d, st){
   const a = ((d&&d.tags)||[]).slice().sort().join(',');
   const b = ((st&&st.tags)||[]).slice().sort().join(',');
-  return a !== b || ((d&&d.intensity)||2) !== ((st&&st.intensity)||2);
+  return a !== b;
 }
 // 局部刷新主卡 UI（不重建 DOM，避免丢焦点）：chips 高亮 / 摘要行双态 / 应用按钮 / 提示行
 function refreshWsUI(){
@@ -5076,25 +5414,25 @@ function refreshWsUI(){
   const hint = $('.ws-dirty-hint');
   if(hint) hint.style.display = dirty ? '' : 'none';
 }
-// 通用 chips / 浓度段选渲染（主卡片与重生成弹窗复用；dataPrefix 区分绑定域）
+// 通用 chips 段选渲染（主卡片与重生成弹窗复用；dataPrefix 区分绑定域）
 // opts.plus：每组末尾加「＋」添加入口；opts.cardFold：主卡启用「章节风格」折叠（默认收拢）
-// v10.19 写作风格三组配色方案：色序固定 [标题(tone), 梗概(texture), 章节(element)]（即上/中/下）
-// 来自用户提供的 11 套三色搭配图；空字符串代表「默认无配色」。存入 cfg.styleCustom.colorScheme（存索引，''=默认）
+// 写作风格配色：v1.0.248 起仅章节风格(element)消费配色，方案收敛为单色（原「标题(tone)/梗概(texture)」通道已退役）；旧三色数据末槽即章节色，读取一律取末槽兼容
+// 来自用户提供的 11 套配色；空字符串代表「默认无配色」。存入 cfg.styleCustom.colorScheme（存索引，''=默认）
 const WS_COLOR_SCHEMES = [
   { id:'none',    name:'默认（无配色）', c:[] },
-  { id:'s1',  name:'活力橙紫青', c:['#f84914','#59187e','#2fb4af'] },
-  { id:'s2',  name:'海洋蓝青',   c:['#1e95d4','#78cede','#b1e4e7'] },
-  { id:'s3',  name:'皇家蓝绛红', c:['#0176bb','#c42536','#dcb582'] },
-  { id:'s4',  name:'蔷薇粉紫',   c:['#f6afad','#c49ee4','#e2d8ef'] },
-  { id:'s5',  name:'绯红玫紫',   c:['#f83177','#c6979c','#fcbed4'] },
-  { id:'s6',  name:'绯红钢青',   c:['#fa2742','#7384af','#f8b79a'] },
-  { id:'s7',  name:'青黄珊瑚',   c:['#54d5c7','#edba38','#f65150'] },
-  { id:'s8',  name:'深蓝明黄',   c:['#17519e','#f7dd2f','#4fcbe9'] },
-  { id:'s9',  name:'薄荷明黄',   c:['#8fedc2','#fdd741','#24b4a5'] },
-  { id:'s10', name:'暖金珊瑚',   c:['#f4d474','#ef5a56','#f9e9da'] },
-  { id:'s11', name:'自然翠金',   c:['#67d47e','#efeb86','#f5b11e'] },
+  { id:'s1',  name:'活力橙紫青', c:['#2fb4af'] },
+  { id:'s2',  name:'海洋蓝青',   c:['#b1e4e7'] },
+  { id:'s3',  name:'皇家蓝绛红', c:['#dcb582'] },
+  { id:'s4',  name:'蔷薇粉紫',   c:['#e2d8ef'] },
+  { id:'s5',  name:'绯红玫紫',   c:['#fcbed4'] },
+  { id:'s6',  name:'绯红钢青',   c:['#f8b79a'] },
+  { id:'s7',  name:'青黄珊瑚',   c:['#f65150'] },
+  { id:'s8',  name:'深蓝明黄',   c:['#4fcbe9'] },
+  { id:'s9',  name:'薄荷明黄',   c:['#24b4a5'] },
+  { id:'s10', name:'暖金珊瑚',   c:['#f9e9da'] },
+  { id:'s11', name:'自然翠金',   c:['#f5b11e'] },
 ];
-/* ===== 配色管理（v10.20）：内置11套 + 我的自定义；支持删除 / 撤销 / 恢复全部 / 新建三色 ===== */
+/* ===== 配色管理（v10.20）：内置11套 + 我的自定义；支持删除 / 撤销 / 恢复全部 / 新建配色 ===== */
 function wsColorCfgOf(c){ c.styleCustom = c.styleCustom || { notes:{},added:[],removed:[] }; c.styleCustom.colorSchemes = c.styleCustom.colorSchemes || { custom:[], removedCustom:[], removedBuiltin:[], undo:[] }; return c.styleCustom.colorSchemes; }
 function wsColorCfg(){ return wsColorCfgOf(getCfg()); }               // 只读访问
 function wsCustomColors(){ return wsColorCfg().custom || []; }        // 未删除的自定义
@@ -5106,7 +5444,7 @@ function wsColorSchemesList(){
   const rm = wsRemovedBuiltin();
   return WS_COLOR_SCHEMES.filter(s=>!rm.includes(s.id)).concat(wsCustomColors());
 }
-// 取某方案的三色（含已删除的自定义，供撤销恢复用）；无配色返回空数组
+// 取某方案的配色（旧数据三色取末槽=章节色；含已删除的自定义，供撤销恢复用）；无配色返回空数组
 function wsSchemeColors(id){
   if(id==='none') return [];
   const s = WS_COLOR_SCHEMES.find(x=>x.id===id) || wsCustomColors().find(x=>x.id===id) || wsRemovedCustom().find(x=>x.id===id);
@@ -5126,16 +5464,16 @@ function wsColorSchemeId(){
   if(wsCustomColors().find(s=>s.id===id)) return id;
   return 'none';
 }
-// 重建「我的自定义」配色的注入 CSS（[data-cs="cu_*"] → 三色变量），供卡片/重生成弹窗即时着色
+// 重建「我的自定义」配色的注入 CSS（[data-cs="cu_*"] → --c-element），供卡片/重生成弹窗即时着色；旧三色数据取末槽=章节色
 function rebuildCustomColorCss(){
   let el = document.getElementById('wsCustomCss');
   if(!el){ el = document.createElement('style'); el.id='wsCustomCss'; document.head.appendChild(el); }
-  el.textContent = wsCustomColors().map(s=>`[data-cs="${s.id}"]{--c-tone:${s.c[0]};--c-texture:${s.c[1]};--c-element:${s.c[2]}}`).join('\n');
+  el.textContent = wsCustomColors().map(s=>{ const col=(s.c&&s.c.length)? s.c[s.c.length-1] : ''; return col ? `[data-cs="${s.id}"]{--c-element:${col}}` : ''; }).filter(Boolean).join('\n');
 }
 function writeStyleChipsHtml(sel, dataPrefix, opts){
   opts = opts || {};
   const lib = writeStyleLib();
-  // v10.19 直接以五大类文风（cat）排列，不再分「标题/梗概/章节」三组
+  // 直接以五大类文风（cat）排列章节风格(element)词条
   const CAT_LABEL = { '语言质感':'① 语言质感', '情绪与张力':'② 情绪与张力', '节奏与网感':'③ 节奏与网感', '叙事技法':'④ 叙事技法', '台词设计':'⑤ 台词设计', custom:'⭐ 我的自定义' };
   const CAT_ORDER = ['语言质感','情绪与张力','节奏与网感','叙事技法','台词设计','custom'];
   const items = lib.filter(s=>s.group==='element');
@@ -5194,7 +5532,7 @@ function writeStyleChipsHtml(sel, dataPrefix, opts){
     ? `<div class="ws-chips">${opts.showTip !== false ? '<span class="ws-group-tip">可多选</span>' : ''}${plus}</div>` : '';
   return `${comboBar}${blocks}${chipsTail}`;
 }
-function writeStyleIntHtml(){} // v2.6 浓度已整体移除，保留空占位避免外部引用误伤
+
 // 风格 chip 切换公共逻辑：五大类词条可多选、可清空
 function toggleWriteTag(sel, id){
   const s = writeStyleById(id); if(!s) return;
@@ -5232,7 +5570,7 @@ function writeStyleCard(){
         <button type="button" class="btn small ghost" data-ws-clear>✕ 清空</button>
       </div>
       <p class="ws-dirty-hint" style="display:${dirty?'':'none'}">⚠️ 当前为草稿（${(draft.tags||[]).length} 项未生效），点「✔ 应用并保存」后开始生效；生成章节读的是已生效配置。</p>
-      <p class="muted" style="margin:6px 0 0;font-size:11px">按五大类文风多选，可同取多个词条叠加效果（如「文艺/范儿」＋「金句」）；浓度默认「中」，生成章节正文时生效。选完点「✔ 应用并保存」才生效。</p>
+      <p class="muted" style="margin:6px 0 0;font-size:11px">按五大类文风多选，可同取多个词条叠加效果（如「文艺/范儿」＋「金句」）；生成章节正文时生效。选完点「✔ 应用并保存」才生效。</p>
     </div>
   </div>`;
 }
@@ -5244,7 +5582,7 @@ function bindWriteStyle(){
     const body = $('.ws-body'); if(body) body.hidden = st.collapsed;
     const ico = head.querySelector('.sc-fold-ico'); if(ico) ico.textContent = st.collapsed?'▸':'▾';
   };
-  // v2.1：chips/浓度/预设/清空 一律改「草稿」→ 局部刷新 → 点「✔ 应用并保存」才生效
+  // v2.1：chips/预设/清空 一律改「草稿」→ 局部刷新 → 点「✔ 应用并保存」才生效
   $$('[data-ws-tag]').forEach(b=> b.onclick = ()=>{
     toggleWriteTag(wsDraftInit(), b.dataset.wsTag);
     refreshWsUI();
@@ -5308,7 +5646,7 @@ function bindWriteStyle(){
   if(ap) ap.onclick = ()=>{
     if(!wsDraft) return;
     const st2 = writeStyleState();
-    st2.tags = wsDraft.tags.slice(); st2.intensity = wsDraft.intensity;
+    st2.tags = wsDraft.tags.slice();
     persist();
     const name = wsDraft.tags.map(id=>{ const s=writeStyleById(id); return s?s.name:id; }).join(' + ') || '无';
     wsDraft = null;
@@ -5323,7 +5661,7 @@ function bindWriteStyle(){
     const cfg = getCfg(); if(!Array.isArray(cfg.stylePresets)) cfg.stylePresets = [];
     const name = prompt('给这个风格组合起个名字：', '我的风格'+(cfg.stylePresets.length+1));
     if(!name || !name.trim()) return;
-    cfg.stylePresets.push({ id:'sp'+Date.now().toString(36), name:name.trim(), tags:cur.tags.slice(), intensity:cur.intensity });
+    cfg.stylePresets.push({ id:'sp'+Date.now().toString(36), name:name.trim(), tags:cur.tags.slice() });
     saveCfg(cfg); render();
     toast('已收藏：'+name.trim());
   };
@@ -5331,7 +5669,7 @@ function bindWriteStyle(){
   if(lb) lb.onclick = (e)=>{ e.stopPropagation(); openStyleLibPanel(); };
   // 清空：只清草稿，点应用才生效（语义统一）
   const cl = $('[data-ws-clear]');
-  if(cl) cl.onclick = ()=>{ const d = wsDraftInit(); d.tags=[]; d.intensity=2; refreshWsUI(); toast('已清空草稿，点「✔ 应用并保存」生效'); };
+  if(cl) cl.onclick = ()=>{ const d = wsDraftInit(); d.tags=[]; refreshWsUI(); toast('已清空草稿，点「✔ 应用并保存」生效'); };
   // v10.22 五大类分类折叠（主卡，事件委托处理动态渲染）：点类标题展开/收起，偏好持久化到 state.chapterStyle.catOpen
   // 兼容重生成面板（.ws-subcat-t 无 role，不响应）；render 重建后 .ws-card 为新节点，dataset 为空会重新绑定一次
   const wsCard = $('.ws-card');
@@ -5434,14 +5772,14 @@ function closeStyleNewDialog(){ const p=$('#wsNewPanel'); if(p) p.remove(); }
 // v2.1 预设 → 填入草稿（不直接生效）
 function applyWritePresetDraft(v){
   const d = wsDraftInit();
-  if(v === 'clear'){ d.tags=[]; d.intensity=2; }
+  if(v === 'clear'){ d.tags=[]; }
   else if(v.indexOf('u:')===0){
     const cfg = getCfg();
     const p = (Array.isArray(cfg.stylePresets)?cfg.stylePresets:[]).find(x=>x.id===v.slice(2));
-    if(p){ d.tags = (p.tags||[]).slice(); d.intensity = p.intensity||2; }
+    if(p){ d.tags = (p.tags||[]).slice(); }
   } else {
     const p = WRITE_PRESETS.find(x=>x.id===v);
-    if(p){ d.tags = p.tags.slice(); d.intensity = p.intensity; }
+    if(p){ d.tags = p.tags.slice(); }
   }
   refreshWsUI();
 }
@@ -5477,7 +5815,7 @@ function openStyleLibPanel(){
   const mine = (Array.isArray(cfg.stylePresets)?cfg.stylePresets:[]).map((p,i)=>`
     <div class="ws-lib-item">
       <div class="ws-lib-name">⭐ ${esc(p.name||'未命名')}</div>
-      <span class="muted" style="font-size:11px">${(p.tags||[]).map(id=>{const s=writeStyleById(id); return s?s.name:id;}).join('+')||'无'} · ${['','轻','中','重'][p.intensity]||'中'}</span>
+      <span class="muted" style="font-size:11px">${(p.tags||[]).map(id=>{const s=writeStyleById(id); return s?s.name:id;}).join('+')||'无'}</span>
       <button type="button" class="btn small ghost del" data-sp-del="${i}">删</button>
     </div>`).join('') || '<p class="muted">暂无收藏。</p>';
   // v10.50 全部配方查看：内置🎬 + 我的配方🏷 + AI配方（availableCombos 已合并），展示完整原始信息
@@ -5666,8 +6004,8 @@ function closeStyleLibPanel(){ const p=$('#wsLibPanel'); if(p) p.remove(); }
 /* ---------- 写作风格配方 · 阅读视图（独立函数，复用 gs 浮层 + reader 排版） ---------- */
 function openStyleLibReader(){
   closeStyleLibReader();
-  // v10.55 方案B：阅读器仅展示五大类章节风格 + 我的自定义；过滤内置「标题风格(tone)/梗概风格(texture)」组（用户自定义旧数据已归入 element 组，不受影响）
-  const lib = writeStyleLib().filter(s=> s.group !== 'tone' && s.group !== 'texture');
+  // v10.55 方案B：阅读器展示已收敛为章节风格(element)的五大类 + 我的自定义
+  const lib = writeStyleLib();
   const CAT_LABEL = { '语言质感':'① 语言质感', '情绪与张力':'② 情绪与张力', '节奏与网感':'③ 节奏与网感', '叙事技法':'④ 叙事技法', '台词设计':'⑤ 台词设计', custom:'⭐ 我的自定义' };
   const groups = {};
   lib.forEach(s=>{
@@ -5723,104 +6061,216 @@ function openStyleLibReader(){
 }
 function closeStyleLibReader(){ const p=$('#wsLibReader'); if(p) p.remove(); }
 
+// ==================== v1.0.228 侧边导航（顺序重排） ====================
+// v1.0.228：把原「设/构/典/规/文」5 步侧边条重排为用户指定的 7 个快捷入口，顺序：构→简→典→规→方→万→正。
+// 每项 = [标签, 目标选择器]；仅当页面真实存在该目标时才渲染该按钮（短片等缺失项自动隐藏），点击平滑滚动到对应功能位置。
+// v1.0.306 学校模式：侧边导航按线上顺序（构→节→配→典→充→校→正）
+const FLOW_NAV = [
+  ['构','[data-flow="1"]'],     // 大纲/文案
+  ['节','[data-flow="2"]'],     // 全书节拍
+  ['配','[data-flow="3"]'],     // 写作配方（AI配方助手 + 写作风格）
+  ['典','[data-flow="4"]'],     // 词典达人
+  ['充','[data-flow="5"]'],     // 词典充实
+  ['校','[data-flow="6"]'],     // 校长/学校
+  ['正','#longJump']            // 跳到章节
+];
+function flowNavItems(){
+  return FLOW_NAV.filter(([,sel])=>{ try{ return !!(document && document.querySelector(sel)); }catch(e){ return false; } });
+}
+function flowNavHtml(){
+  const items = flowNavItems();
+  return `<div class="flow-sidenav">${items.map(([l])=>`<button type="button" class="fsd-btn" title="跳到「${l}」">${l}</button>`).join('')}</div>`;
+}
+function bindFlowSideNav(){
+  const old = document.querySelector('.flow-sidenav'); if(old && old.parentNode) old.parentNode.removeChild(old);
+  const items = flowNavItems(); if(!items.length) return;
+  const nav = document.createElement('div');
+  nav.className = 'flow-sidenav';
+  items.forEach(([l, sel])=>{
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'fsd-btn'; b.dataset.navSel = sel;
+    b.title = '跳到「'+l+'」'; b.textContent = l;
+    b.onclick = ()=>{ const el = document.querySelector(sel); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); };
+    nav.appendChild(b);
+  });
+  // v1.0.299：侧边导航挂载到 #app（而非 #view）——黑板主题下 #view 带 transform 级联动画
+  // (cascadeDrop)、会成为其内部 position:fixed 子元素的包含块，导致侧边条随动画上下跳动；
+  // #app 为 body 直接子级且无 transform/filter，挂其下 fixed 稳定相对视口（视觉定位不变）。
+  ((document.getElementById('view') ? document.getElementById('view').parentElement : document.body) || document.body).appendChild(nav);
+}
+function flowPlaceholderSec(n, name, note, icon, desc){
+  return `<section class="flow-sec" data-flow="${n}">
+    <div class="flow-sec-head"><span class="fs-no">${n}</span><span class="fs-name">${name}</span><span class="fs-note">${note}</span></div>
+    <div class="dict-master-placeholder">${icon} ${desc}</div>
+  </section>`;
+}
+function openFactCardModal(){ openNeModal('事实与一致性看板', factCardHtml() || '<div class="empty">暂无事实与一致性数据。</div>'); }
+function openRollingSummaryModal(){ openNeModal('滚动摘要', rollingSummaryCardHtml() || '<div class="empty">暂无滚动摘要。</div>'); }
+
+/* ==================== v1.0.204 阶段4/CD-4：一致性自检（词典去重 + 时间线不悬空） ==================== */
+function consistencyReportHtml(){
+  const o = state.outline; const g = (o && o.glossary) || {};
+  const totalN = (o && Array.isArray(o.chapters)) ? o.chapters.length : 0;
+  const rows = [];
+  // 自检A：词典去重（characters/places/propernouns 同名不得出现两次）
+  const dupGroups = [];
+  ['characters','places','propernouns'].forEach(k=>{
+    const byName = {};
+    (g[k]||[]).forEach(x=>{ const n=String(x&&x.name||'').trim(); if(!n) return; (byName[n]=byName[n]||[]).push(x); });
+    Object.keys(byName).forEach(n=>{ if(byName[n].length>1) dupGroups.push({cat:k, name:n, count:byName[n].length, list:byName[n]}); });
+  });
+  if(dupGroups.length){
+    rows.push(`<div class="chk-item bad">✗ 词典存在同名重复（${dupGroups.length} 组）</div>`);
+    dupGroups.forEach(d=>{
+      const src = d.list.map(x=> x._dictmaster?'词典达人' : (x._auto?'逐章提取':'手工')).join('、');
+      rows.push(`<div class="chk-sub">【${d.cat==='characters'?'人物':(d.cat==='places'?'地名':'专名')}】「${esc(d.name)}」×${d.count}（来源：${esc(src)}），应仅保留高优先级一份。</div>`);
+    });
+  } else {
+    rows.push(`<div class="chk-item ok">✓ 词典无同名重复（人物 ${(g.characters||[]).length} · 地名 ${(g.places||[]).length} · 专名 ${(g.propernouns||[]).length}）</div>`);
+  }
+  // 自检B：时间线 & 章节拍 不悬空（v1.0.285：beats 数组退役，改查 beatsText 编排纯文本）
+  const noBeat = [];
+  for(let i=0;i<totalN;i++){
+    const p = (Array.isArray(o.chapterPlans) && o.chapterPlans[i]) || null;
+    if(!String(p && p.beatsText || '').trim()) noBeat.push(i+1);
+  }
+  if(noBeat.length) rows.push(`<div class="chk-item bad">✗ 章节拍悬空：第 ${noBeat.join('、')} 章节拍表为空（缺节拍）</div>`);
+  else if(totalN) rows.push(`<div class="chk-item ok">✓ 全部 ${totalN} 章均有节拍表，无悬空</div>`);
+  const tl = (o && o._globalTimeline) || null;
+  const tlText = tl && String(tl.text||'').trim();
+  if(!tl || (!tlText && !Array.isArray(tl.chapters))){
+    rows.push(`<div class="chk-item warn">△ 全局时间线未生成（可为规划师③步后补），时间锚悬空无法校验</div>`);
+  } else if(tlText){
+    // v1.0.273：纯文本时间线已内联全书每章时点，无法逐章拆锚——仅确认已生成，跳过逐章单调校验
+    rows.push(`<div class="chk-item ok">✓ 全局时间线已生成（纯文本，每章时点已内联，正文据此承接）</div>`);
+  } else {
+    const anchors = tl.chapters;
+    const covered = new Set(anchors.map(a=>a&&a.index).filter(n=>Number.isFinite(n)));
+    const missCh = [];
+    for(let i=0;i<totalN;i++){ if(!covered.has(i)) missCh.push(i+1); }
+    const mono = [];
+    const sorted = anchors.slice().sort((a,b)=>(a.index-b.index));
+    for(let k=1;k<sorted.length;k++){
+      const prevT = sorted[k-1].to, curT = sorted[k].from;   // 上一章结尾 vs 本章开头
+      if(!prevT || !curT) continue;
+      const a = normTimeW(prevT), b = normTimeW(curT);
+      if(a!=null && b!=null && b < a) mono.push(`第${sorted[k-1].index+1}章末「${esc(prevT)}」→ 第${sorted[k].index+1}章初「${esc(curT)}」`);
+    }
+    if(mono.length) rows.push(`<div class="chk-item bad">✗ 时间锚疑似回退（${mono.length} 处）：${mono.slice(0,3).join('；')}${mono.length>3?'…':''}</div>`);
+    else rows.push(`<div class="chk-item ok">✓ 时间锚未发现明显回退</div>`);
+    if(missCh.length) rows.push(`<div class="chk-item warn">△ 全局时间表未覆盖章节：第 ${missCh.join('、')} 章（可点规划师③步重排补落位）</div>`);
+    else if(totalN) rows.push(`<div class="chk-item ok">✓ 全局时间表每章均有落点（${anchors.length} 锚 / ${totalN} 章）</div>`);
+  }
+  // 无章节时提示
+  if(!totalN) rows.push(`<div class="chk-item warn">△ 尚无章节，无法做节拍/时间线自检</div>`);
+  const hasDup = dupGroups.length>0, hasBeat = noBeat.length>0, hasMono = /✗ 时间锚/.test(rows.join(''));
+  rows.push(`<div class="chk-summary">累计：${hasDup||hasBeat||hasMono ? '发现问题，请按提示修正后重跑。' : '各项通过 ✓'}</div>`);
+  return `<div class="chk-wrap">${rows.join('')}</div>`;
+}
+function normTimeW(t){
+  const s = String(t||'').trim(); if(!s) return null;
+  if(/^[\d.]+$/.test(s)){ const f=parseFloat(s); return Number.isFinite(f)?f:null; }
+  const digits = s.replace(/[^0-9]+/g,''); if(digits.length){ const n=+digits; return Number.isFinite(n)?n:null; }
+  return null;
+}
+function openConsistencyCheck(){ openNeModal('一致性自检（阶段4）', consistencyReportHtml() || '<div class="empty">暂无数据。</div>'); }
+
+// 初始态渲染真实卡片时的兜底：某一卡模板在空大纲下异常时不拖垮整页（降级为空卡，其余正常）
+function safeCard(fn, fb){
+  try{ return fn(); }catch(e){ console.error('[safeCard]', e); return fb || ''; }
+}
+
 function viewStory(){
   if(!state.outline){
     const homeSub = isLong()
       ? `用几句话描述你的长篇构想（世界观、主角、核心冲突都行）。AI 会按你设定的章节数与全书拍子扩写成大纲，之后按「生成章节」逐步写完。`
       : '用几句话描述你的点子（世界观、主角、核心冲突都行）。AI 会扩写成完整故事大纲与章节。';
     return CYBER_HOME_GRID + `
-    <div class="card">
-      <h3>① 全书设定</h3>
-      <p class="sub">先定死全书章节数与全书拍子，再写故事构想，最后生成大纲。</p>
-      ${ isLong() ? `
-      <div class="tw-panel" style="margin-bottom:10px">
-        <div class="poly-head"><span class="poly-ic">📐</span><b>全书章节数</b><span class="poly-rule">必填 · 1-200 整数</span></div>
-        <div class="tw-row">
-          <input type="number" id="chapterCountIn" class="tw-in cc-in" min="1" max="200" step="1" inputmode="numeric" placeholder="如 30" value="${chapterCountVal()||''}" />
-          <span class="tw-unit">章</span>
-          ${chapterCountVal()?`<span class="pill tag-ok">${chapterCountHint()}</span>`:''}
+    <div class="flow-wrap">
+      <section class="flow-sec" data-flow="1">
+        <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">大纲 / 文案</span><span class="fs-note">先定章节数与拍子 → 用户构想 → 优化 → 生成大纲</span></div>
+        <div class="card">
+          <p class="sub">先定死全书章节数与全书拍子，再写故事构想，最后生成大纲。</p>
+          ${ isLong() ? `
+          <div class="tw-panel" style="margin-bottom:10px">
+            <div class="poly-head"><span class="poly-ic">📐</span><b>全书章节数</b><span class="poly-rule">必填 · 1-200 整数</span></div>
+            <div class="tw-row">
+              <input type="number" id="chapterCountIn" class="tw-in cc-in" min="1" max="200" step="1" inputmode="numeric" placeholder="如 30" value="${chapterCountVal()||''}" />
+              <span class="tw-unit">章</span>
+              ${chapterCountVal()?`<span class="pill tag-ok">${chapterCountHint()}</span>`:''}
+            </div>
+          </div>
+          ${ bookBeatHtml() }
+          ` : '' }
+          <h4 style="margin:18px 0 6px">叙事主体<em style="font-weight:400;font-style:normal;color:#8b95a7;font-size:12px">（默认 主角线；团队线会全链路落实团队设定）</em></h4>
+          <div class="team-pick" id="teamPick">
+            ${TEAM_OPTIONS.map(o=>`
+            <label class="team-item ${o.id===currentTeamShape().id?'sel':''}" data-team="${o.id}" title="${esc(o.desc)}">
+              <span class="team-ic">${o.id==='solo'?'👤':o.id==='dual'?'👫':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span>
+              <span class="team-txt"><b>${esc(o.label)}</b><i>${esc(o.desc)}</i></span>
+              <input type="radio" name="teamShape" value="${o.id}" style="display:none" ${o.id===currentTeamShape().id?'checked':''}>
+            </label>`).join('')}
+          </div>
         </div>
-      </div>
-      ${ bookBeatHtml() }
-      ${ loglineRangeHtml() }
-      ` : '' }
-      <h4 style="margin:18px 0 6px">叙事主体<em style="font-weight:400;font-style:normal;color:#8b95a7;font-size:12px">（默认 主角线；团队线会全链路落实团队设定）</em></h4>
-      <div class="team-pick" id="teamPick">
-        ${TEAM_OPTIONS.map(o=>`
-        <label class="team-item ${o.id===currentTeamShape().id?'sel':''}" data-team="${o.id}" title="${esc(o.desc)}">
-          <span class="team-ic">${o.id==='solo'?'👤':o.id==='dual'?'👫':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span>
-          <span class="team-txt"><b>${esc(o.label)}</b><i>${esc(o.desc)}</i></span>
-          <input type="radio" name="teamShape" value="${o.id}" style="display:none" ${o.id===currentTeamShape().id?'checked':''}>
-        </label>`).join('')}
-      </div>
-      <h4 style="margin:18px 0 6px">故事构想</h4>
-      <div class="idea-row">
-        <textarea id="ideaInput" placeholder="">${esc(state.idea)}</textarea>
-      </div>
-      <div class="btn-row">
-        <button id="btnPolishIdea" class="btn ghost" title="把构想优化成结构化高质量版本">✨ 优化构想</button>
-        <label class="pol-multi" title="构想不完整时，生成 2-6 份不同方向的构想供选择"><input type="checkbox" id="chkPolishMulti" checked> 多方案</label>
-      </div>
-      <div id="polishBox" class="pol-box" style="display:none">
-        <div class="pol-head"><b>✨ 优化稿（点「采用此方案」即导入上方构想输入框）</b>
-          <span class="pol-tools">
-            <button id="btnPolishDiscard" class="btn small ghost">✕ 收起</button>
-          </span>
+        <div class="card">
+          <h4 style="margin:0 0 6px">用户构想</h4>
+          <div class="idea-row">
+            <textarea id="ideaInput" placeholder="">${esc(state.idea)}</textarea>
+          </div>
+          <div class="btn-row">
+            <button id="btnPolishIdea" class="btn ghost ${polishIdle()?'first':''}" title="${polishIdle()?'🚀 第一步：把粗糙构想优化为结构化高质量版本（含书名/简介/结构）':'把构想再优化一版'}">${polishIdle()?'🚀 第一步-优化构想':'✨ 优化构想'}</button>
+            <label class="pol-multi" title="构想不完整时，从五个方向（商业/反差/情感/悬疑智斗/轻松日常）中按契合度生成 3~5 份方向的构想供选择"><input type="checkbox" id="chkPolishMulti" checked> 多方案</label>
+          </div>
+          <div id="polishBox" class="pol-box" style="display:none">
+            <div class="pol-head"><b>✨ 优化稿（点「采用此方案」即导入上方构想输入框）</b>
+              <span class="pol-tools">
+                <button id="btnPolishDiscard" class="btn small ghost">✕ 收起</button>
+              </span>
+            </div>
+            <div id="polishCards" class="pol-cards"></div>
+          </div>
+          ${ polishKeepBar() }
+          <div class="btn-row">
+            <button id="btnGenOutline" class="btn primary block" ${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'disabled title="请先点「✨ 优化构想」生成方案，再生成大纲"':''}>${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'📋 待优化构想后生成':(isLong()?'📚 生成大纲':'✨ 生成故事大纲')}</button>
+          </div>
+          <p id="outlineStatus" class="status"></p>
         </div>
-        <div id="polishCards" class="pol-cards"></div>
-      </div>
-      ${ polishKeepBar() }
-      <div class="quick-brief" style="display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:12px 0 2px">
-        <label class="qt-outline-toggle" id="quickOutlineToggle" title="默认关闭。打开后点「生成大纲」将跳过 3 个候选角度选择，直接生成并落地 1 个默认大纲；关闭则保持一次给 3 个候选供比选。">
-          <input type="checkbox" id="chkQuickOutline" ${state.quickOutline?'checked':''} />
-          <span class="qt-sw"><span class="qt-check">✓</span></span>
-          <span class="qt-tx">只生成一个默认大纲（跳过 3 选）</span>
-        </label>
-      </div>
-      <div class="btn-row">
-        <button id="btnGenOutline" class="btn primary block">${isLong()?'📚 生成长篇大纲':'✨ 生成故事大纲'}</button>
-      </div>
-      <p id="outlineStatus" class="status"></p>
-      ${ outlineCandidatesHtml() }
-    </div>`;
-  }
-  // 大纲已生成
-  const o = state.outline;
-  let html = `
-    ${ origIdeaCard() }
-    ${ outlineCandidatesHtml() }
-    <div class="card">
-      <div class="card-head-row">
-        <h3 style="margin:0">📋 故事大纲</h3>
-        ${hasOutlineHistory()?`<button type="button" class="btn small ghost" id="btnOutlineHist" title="查看并恢复历史大纲版本">📚 大纲版本(${outlineHistoryCount()})</button>`:''}
-        ${titleManagerHtml()}
-      </div>
-      <div class="so-fold-head" data-so-toggle role="button" tabindex="0" title="展开/收起小说简介" style="display:flex">
-        <span class="so-fold">${state.soCollapsed?'▸':'▾'}</span><b>📌 小说简介</b>
-        <button type="button" class="btn small ghost" id="btnLoglineEdit" title="编辑小说简介" style="margin-left:auto;padding:1px 8px;font-size:12px">✎ 编辑</button>
-      </div>
-      <p class="sub so-logline" ${state.soCollapsed?'hidden':''}>${esc(o.logline||'')}</p>
-      <div class="btn-row" style="margin-top:6px"><button type="button" class="btn small ghost" id="btnOutlineRegen" title="再生成一批 ${OUTLINE_CANDIDATE_N} 个候选大纲供选择；当前大纲与旧候选自动存入历史版本，不会丢失">🔄 重生成大纲</button></div>
-      ${ isLong() ? anchorEditHtml() : '' }
-      ${ isLong() ? beatStructureCardHtml() : '' }   <!-- v1.0.145 恢复：大纲节拍的结构（本地按全书拍子映射章节阶段），位于 小说简介 与 章节标题 之间 -->
-      ${ chapterTitleBlock() }
-      ${ isLong() ? aiRecipeCard() : '' }   <!-- v11 卡片顺序：AI配方助手 移到 章节标题 与 全书规划师 之间 -->
-      ${ writeStyleCard() }
-      ${ state.outlineConfirmed ? `
-        ${ isLong() ? chapterPlanBlock() : '' }
-        ${ isLong() ? glossaryCardHtml() : '' }
-        ${ isLong() ? factCardHtml() : '' }
-        ${ isLong() ? rollingSummaryCardHtml() : '' }
+      </section>
+      <section class="flow-sec" data-flow="2">
+        <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书拍子把章节划分为剧情阶段（本地映射）</span></div>
+        ${ safeCard(()=> isLong() ? beatStructureCardHtml() : '') }
+      </section>
+      <section class="flow-sec" data-flow="3">
+        <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">写作配方</span><span class="fs-note">AI配方助手 → 写作风格 → 全校共享</span></div>
+        ${ safeCard(()=>aiRecipeCard()) }
+        ${ safeCard(()=>writeStyleCard()) }
+      </section>
+      <section class="flow-sec" data-flow="4">
+        <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">词典达人</span><span class="fs-note">生成完整人物 / 地名 / 专名词典与人物关系表 / 世界观规则</span></div>
+        ${ safeCard(()=>dictMasterBlockHtml()) }
+      </section>
+      <section class="flow-sec" data-flow="5">
+        <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典充实</span><span class="fs-note">在万物词典基础上追加更多 人物 / 地名 / 专名</span></div>
+        ${ safeCard(()=>dictEnrichBlockHtml()) }
+      </section>
+      <section class="flow-sec" data-flow="6">
+        <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">学校</span><span class="fs-note">章节微拍 → 校长分组 → 老师备课 → 学生正文</span></div>
+        ${ safeCard(()=>microBeatBlock()) }
+        ${ safeCard(()=>schoolZoneBlock()) }
+      </section>
+      <section class="flow-sec" data-flow="7">
+        <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">学生 · 正文</span><span class="fs-note">按老师教案逐章写出正文</span></div>
+        ${ safeCard(()=>glossaryCardHtml()) }
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
           <label class="long-jump"><span>跳到章节：</span>
           <select id="longJump"><option value="">— 选择章节阅读 —</option>${state.chapters.map((c,i)=>`<option value="${i}">第${i+1}章 ${esc(cleanChapterTitle(c.title))}</option>`).join('')}</select></label>
         </div>` : '' }
-        ${ isLong() ? qualityReportCardHtml() : '' }
+        ${ safeCard(()=>qualityReportCardHtml()) }
         <div class="ch-toolbar">
           <span class="ch-toolbar-t">📚 章节列表（共 ${state.chapters.length} 章，已生成 ${state.chapters.filter(c=>c.content && String(c.content).trim()).length} 章）</span>
         </div>
         <div id="chaptersWrap"></div>
-        ${ isLong() ? fixQueueCardHtml() : '' }
+        ${ safeCard(()=>fixQueueCardHtml()) }
         <div class="btn-row" style="margin-top:12px">
           ${ isLong() ? `<span class="multi-gen">
             <span class="multi-gen-main">
@@ -5849,19 +6299,107 @@ function viewStory(){
         ${ isLong() ? `<div class="long-progress"></div>` : '' }
         <div id="wcTotal" class="wc-total hidden"></div>
         <div class="cyber-pad hidden"></div>
-      ` : `
-        <div class="btn-row">
-          <button id="btnConfirmOutline" class="btn primary">✓ 确认大纲，进入写正文</button>
-          <button id="btnReOutline" class="btn ghost">重生成</button>
-        </div>
-      ` }
+      </section>
     </div>`;
+  }
+  // 大纲已生成
+  const o = state.outline;
+  // v1.0.306 学校模式界面：生成大纲后按 demo「配方→大纲/文案→全书节拍→词典达人→词典充实→校长→学生·正文」顺序排列（规划师撤换）
+  let html = `
+  <div class="flow-wrap">
+    <section class="flow-sec" data-flow="1">
+      <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">大纲 / 文案</span><span class="fs-note">候选方案 · 书名 · 小说简介</span></div>
+      <div class="card">
+        <div class="card-head-row"><h3 style="margin:0">✨ 候选方案比选</h3></div>
+        <div id="polishCards2" class="pol-box" style="display:block"></div>
+        ${ polishKeepBar() }   <!-- v1.0.205 阶段5.5 后悔药：生成大纲后仍可 查看历史优化版本 / 重新优化 / 重新选候选后点下方「生成大纲」重搬（词典达人产出前可反悔） -->
+        <div class="btn-row" style="margin-top:8px">
+          <button data-gen-outline class="btn primary block" ${dictmasterLocked()?'disabled title="词典达人已产出，②方案已锁定"':''}>📚 生成大纲（搬入书名 / 简介 / 节拍）${dictmasterLocked()?'（②已锁定）':''}</button>
+        </div>
+      </div>
+    <div class="card">
+      <div class="card-head-row">
+        <h3 style="margin:0">📋 故事大纲</h3>
+        ${titleManagerHtml()}
+      </div>
+      <div class="so-fold-head" id="soLoglineBox" data-so-toggle role="button" tabindex="0" title="展开/收起小说简介" style="display:flex">
+        <span class="so-fold">${state.soCollapsed?'▸':'▾'}</span><b>📌 小说简介</b>
+        <button type="button" class="btn small ghost" id="btnLoglineEdit" title="编辑小说简介" style="margin-left:auto;padding:1px 8px;font-size:12px">✎ 编辑</button>
+      </div>
+      <div class="so-logline" ${state.soCollapsed?'hidden':''}>${renderLoglineHtml(o.logline||'')||'（暂无简介，点✎编辑或重新生成大纲）'}</div>
+      </div>
+    </section>
+    <section class="flow-sec" data-flow="2">
+      <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书拍子把章节划分为剧情阶段（本地映射）</span></div>
+      ${ isLong() ? beatStructureCardHtml() : '' }
+    </section>
+    <section class="flow-sec" data-flow="3">
+      <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">写作配方</span><span class="fs-note">AI配方助手 → 写作风格 → 全校共享</span></div>
+      ${ aiRecipeCard() }
+      ${ writeStyleCard() }
+    </section>
+    <section class="flow-sec" data-flow="4">
+      <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">词典达人</span><span class="fs-note">生成完整人物 / 地名 / 专名词典与关系表 / 世界观</span></div>
+      ${ dictMasterBlockHtml() }
+    </section>
+    <section class="flow-sec" data-flow="5">
+      <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典充实</span><span class="fs-note">在万物词典基础上追加更多 人物 / 地名 / 专名</span></div>
+      ${ dictEnrichBlockHtml() }
+    </section>
+    <section class="flow-sec" data-flow="6">
+      <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">学校</span><span class="fs-note">章节微拍 → 校长分组 → 老师备课 → 学生正文</span></div>
+      ${ microBeatBlock() }
+      ${ schoolZoneBlock() }
+    </section>
+    <section class="flow-sec" data-flow="7">
+      <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">学生 · 正文</span><span class="fs-note">按老师教案逐章写出正文</span></div>
+        ${ glossaryCardHtml() }
+        ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
+          <label class="long-jump"><span>跳到章节：</span>
+          <select id="longJump"><option value="">— 选择章节阅读 —</option>${state.chapters.map((c,i)=>`<option value="${i}">第${i+1}章 ${esc(cleanChapterTitle(c.title))}</option>`).join('')}</select></label>
+        </div>` : '' }
+        ${ qualityReportCardHtml() }
+        <div class="ch-toolbar">
+          <span class="ch-toolbar-t">📚 章节列表（共 ${state.chapters.length} 章，已生成 ${state.chapters.filter(c=>c.content && String(c.content).trim()).length} 章）</span>
+        </div>
+        <div id="chaptersWrap"></div>
+        ${ fixQueueCardHtml() }
+        <div class="btn-row" style="margin-top:12px">
+          ${ isLong() ? `<span class="multi-gen">
+            <span class="multi-gen-main">
+              <button id="btnGenMany" class="btn blue">⚡ 批量生成多章</button>
+            </span>
+            <span class="gen-stepper">
+              <button type="button" class="gen-step" data-gen-dec title="减少章数">−</button>
+              <output id="genCountOut" class="gen-count-out" aria-live="polite">${genBatchN}</output><span class="gen-unit">章</span>
+              <button type="button" class="gen-step" data-gen-inc title="增加章数">＋</button>
+            </span>
+          </span>` : `<button id="btnGenAllChapters" class="btn primary">⚡ 一键生成全部章节</button><button id="btnReOutline" class="btn ghost">重生成大纲</button>` }
+        </div>
+        ${ isLong() ? `<div class="range-gen">
+          <button id="btnRangeGen" class="btn blue">⚡ 区间生成</button>
+          <label class="rg-label">从第
+            <input id="rgStart" type="number" min="1" max="${state.chapters.length}" value="1" class="rg-input">
+          章</label>
+          <span class="muted" style="font-size:12px">到第</span>
+          <label class="rg-label">
+            <input id="rgEnd" type="number" min="1" max="${state.chapters.length}" value="2" class="rg-input">
+          章</label>
+          <span id="rgStatus" class="muted" style="font-size:11px"></span>
+        </div>` : '' }
+        <p id="chStatus" class="status"></p>
+        <p id="bgTaskIndicator" class="status muted" style="display:none;font-size:12px;margin-top:2px"></p>
+        ${ isLong() ? `<div class="long-progress"></div>` : '' }
+        <div id="wcTotal" class="wc-total hidden"></div>
+        <div class="cyber-pad hidden"></div>
+    </section>
+  </div>`;
   return html;
 }
 
 /* ==================== 4.6 Plus 新增卡片（第 2 章） ==================== */
 
-// —— 2.1 大纲节拍的结构卡 —— v1.0.145 恢复：数据源改为本地按「全书拍子」阶段划分章节
+// —— 2.1 全书节拍卡 —— v1.0.145 恢复：数据源改为本地按「全书拍子」阶段划分章节
 // （structure.chapterPlan 已于 v1.0.144 彻底移除，此处不再依赖 AI 输出任何 structure 字段，
 //   而是根据当前所选全书拍子体系 + 现有章节列表，将各章归入对应阶段展示）。
 function beatStructureCardHtml(){
@@ -5880,12 +6418,12 @@ function beatStructureCardHtml(){
   if(!totalCh || !stageNames.length){
     return `<div class="card bs-card">
       <div class="bs-head" role="presentation">
-        <h3 style="margin:0">📐 大纲节拍的结构</h3>
+        <h3 style="margin:0">📐 全书节拍</h3>
         <span class="bs-head-stat">${esc(bb.label)} · ${stageNames.length} 段</span>
       </div>
       <div class="bs-body">
         <p class="muted" style="margin:0 0 4px;font-size:12px">当前大纲暂无章节列表，这里暂时留空。</p>
-        <p class="muted" style="margin:0;font-size:12px">长篇模式下章节由「全书章节数 + 全书规划师②章节标题」生成：请在下方「全书章节数」填入 1-200 的整数，进入规划师产出标题后，这里会按「${esc(bb.label)}」把各章归入对应阶段展示。</p>
+        <p class="muted" style="margin:0;font-size:12px">长篇模式下章节由「全书章节数 + 全书规划师④章节标题」生成：请在「全书章节数」填入 1-200 的整数，进入规划师产出标题后，这里会按「${esc(bb.label)}」把各章归入对应阶段展示。</p>
       </div>
     </div>`;
   }
@@ -5911,17 +6449,28 @@ function beatStructureCardHtml(){
   });
   const fwSeq = plan.map(p=>p.name).join(' → ');
   const mergeNote = totalCh < stageNames.length
-    ? `当前章节较少，已将「${esc(bb.label)}」的 ${stageNames.length} 个拍子按序合并为 ${plan.length} 个阶段（每阶段 1 章），确保结尾燃点/收束完整。`
+    ? `当前章节较少，已将「${esc(bb.label)}」的 ${stageNames.length} 个拍子按序合并为 ${plan.length} 个阶段（每阶段 1 章），确保结尾高潮/收束完整。`
     : '';
+  // v1.0.201 阶段2.2：全书节拍 单方案整体折叠；100 章以上按拍段省略显示（如「第 1—33 章：铺垫」）
+  const foldId = 'bsFold';
+  const beambody = beams.map((b, i)=>{
+    // 章节数较多（≥100章）时压缩为「第 X—Y 章：阶段名」省略，避免超长刷屏
+    if(totalCh >= 100){
+      const m = b.match(/第 (\d+)—(\d+) 章[\s·]+(\d+) 章/);
+      if(m) return `<div class="bs-beam bs-beam-fold"><span class="bs-beam-idx">${i+1}</span><span class="bs-beam-k">${m[3] ? m[3]:''}</span><span class="bs-beam-meta">第 ${m[1]}—${m[2]} 章</span></div>`;
+    }
+    return b;
+  }).join('');
   return `<div class="card bs-card">
-    <div class="bs-head" role="presentation">
-      <h3 style="margin:0">📐 大纲节拍的结构</h3>
+    <div class="bs-head" role="presentation" style="cursor:pointer" onclick="document.getElementById('${foldId}').hidden=!document.getElementById('${foldId}').hidden;this.nextElementSibling.style.display=document.getElementById('${foldId}').hidden?'none':''" title="点击折叠/展开全书节拍">
+      <span id="bsFoldTri" style="display:inline-block;width:1em;transition:transform .15s;color:var(--muted)">▾</span>
+      <h3 style="margin:0">📐 全书节拍<em style="font-weight:400;font-style:normal;color:#8b95a7;font-size:11px;margin-left:4px">（点击折叠/展开）</em></h3>
       <span class="bs-head-stat">${esc(bb.label)} · ${plan.length} 段 · ${totalCh} 章</span>
     </div>
-    <div class="bs-body">
+    <div id="${foldId}" class="bs-body">
       <div class="bs-fw"><span class="bs-fw-chip">${esc(bb.label)}</span><span class="bs-fw-seq">${fwSeq}</span></div>
-      <div class="bs-beams">${beams.join('')}</div>
-      <p class="muted" style="margin:6px 0 0;font-size:11px">章节按所选「全书拍子」划分为阶段（本地映射，随章节列表自动更新）。切换拍数后用「🔄 重生成大纲」生效。</p>
+      <div class="bs-beams">${beambody}</div>
+      <p class="muted" style="margin:6px 0 0;font-size:11px">章节按所选「全书拍子」划分为阶段（本地映射，随章节列表自动更新）。${totalCh>=100?'章节较多已按拍段省略显示。':''}切换拍数后用「🔄 重生成大纲」生效。</p>
       ${mergeNote ? `<p class="muted" style="margin:4px 0 0;font-size:11px;color:var(--accent)">${mergeNote}</p>` : ''}
     </div>
   </div>`;
@@ -5933,7 +6482,7 @@ function beatStageDuties(){ const a=currentBookBeatCfg().ai; return (a && a.duty
 
 // —— 2.4 事实与一致性看板 ——
 function factCardHtml(){
-  const fc = (state.outline && state.outline._factCard) || { characters:{}, timeline:[], unresolvedHooks:[], lastScene:'' };
+  const fc = (state.outline && state.outline._factCard) || { characters:{}, timeline:[], lastScene:'' };
   const chars = Object.entries(fc.characters || {}).map(([name, st])=>`
     <div class="fc-char-row">
       <input type="text" class="fc-name" data-fc-char-name="${esc(name)}" value="${esc(name)}" placeholder="人名">
@@ -5946,13 +6495,6 @@ function factCardHtml(){
     <div class="fc-tl-row">
       <span class="pill">第 ${t.ch+1} 章</span>
       <span>${esc(t.event||'')}</span>
-    </div>
-  `).join('');
-  const hooks = (fc.unresolvedHooks || []).map((h,i)=>`
-    <div class="fc-hook-row">
-      <span class="pill">第 ${h.ch+1} 章</span>
-      <input type="text" data-fc-hook="${i}" value="${esc(h.text||'')}" placeholder="伏笔内容">
-      <button type="button" class="btn small ghost" data-fc-hook-resolve="${i}">✓ 已收束</button>
     </div>
   `).join('');
 
@@ -5970,12 +6512,8 @@ function factCardHtml(){
         <div class="fc-sec-head">最近时间线</div>
         ${timeline || '<span class="muted">暂无时间线</span>'}
       </div>
-      <div class="fc-sec">
-        <div class="fc-sec-head">未收束伏笔</div>
-        ${hooks || '<span class="muted">暂无未收束伏笔</span>'}
-      </div>
       <label class="fc-field"><span>最新场景</span><input type="text" id="fcLastScene" value="${esc(fc.lastScene||'')}" placeholder="最后一章结束时的场景/环境"></label>
-      <p class="muted" style="font-size:11px">看板内容可由正文 AI 生成后自动更新，也可手动修正。未收束伏笔会注入后续章节提示词。</p>
+      <p class="muted" style="font-size:11px">看板内容可由正文 AI 生成后自动更新，也可手动修正。</p>
     </div>
   </div>`;
 }
@@ -5988,7 +6526,7 @@ function bindFactCard(){
     const ico = head.querySelector('.sc-fold-ico'); if(ico) ico.textContent = state.fcCollapsed?'▸':'▾';
   };
   const o = state.outline; if(!o) return;
-  o._factCard = o._factCard || { characters:{}, timeline:[], unresolvedHooks:[], lastScene:'' };
+  o._factCard = o._factCard || { characters:{}, timeline:[], lastScene:'' };   // v1.0.280：unresolvedHooks 已随伏笔网移除
   const fc = o._factCard;
 
   // 添加人物
@@ -6008,130 +6546,29 @@ function bindFactCard(){
       persist();
     };
   });
-  // 编辑伏笔
-  $$('[data-fc-hook]').forEach(inp=>{
-    inp.onchange = ()=>{
-      const i = +inp.dataset.fcHook;
-      if(!fc.unresolvedHooks[i]) return;
-      fc.unresolvedHooks[i].text = inp.value.trim(); persist();
-    };
-  });
-  // 收束伏笔
-  $$('[data-fc-hook-resolve]').forEach(btn=>{
-    btn.onclick = ()=>{
-      const i = +btn.dataset.fcHookResolve;
-      const hook = fc.unresolvedHooks[i];
-      if(hook) hook.resolvedIn = 'manual';
-      fc.unresolvedHooks.splice(i,1); persist(); render();
-    };
-  });
   // 最新场景
   const ls = $('#fcLastScene');
   if(ls) ls.onchange = ()=>{ fc.lastScene = ls.value.trim(); persist(); };
 }
 
-// 4.8 旗舰版（板块三-1）：伏笔生命周期账本更新。i 为 0 基章索引，fs 来自副线审计师输出。
-function updateForeshadowLedger(i, fs){
-  const o = state.outline; if(!o) return;
-  const ledger = o._foreshadowLedger = o._foreshadowLedger || { planted:[], resolved:[], overdue:[] };
-  const total = (o.chapters && o.chapters.length) || 1;
-  // 新埋设
-  (fs.planted || []).forEach(p => {
-    if(!p.text) return;
-    const exists = ledger.planted.find(x => x.text === p.text);
-    if(!exists){
-      // v1.0.140：章号统一 0 基钳制。AI 返回的 expectedCh 是 1 基章号，先转 0 基，再钳制到 (i, total-1]
-      const maxCh = total - 1;
-      let ec = Number.isFinite(+p.expectedCh) ? Math.round(+p.expectedCh) - 1 : NaN;
-      if(!Number.isFinite(ec) || ec <= i) ec = Math.min(maxCh, Math.round(i + total * 0.25));
-      ec = Math.max(i + 1, Math.min(maxCh, ec));
-      if(ec <= i) ec = i;   // 植入章已是最后一章时兜底
-      ledger.planted.push({
-        id: 'fs_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-        text: p.text,
-        chPlanted: Math.max(0, Math.min(maxCh, i)),
-        expectedCh: ec
-      });
-    }
-  });
-  // 已回收：从未埋设的也按 text 记录，避免重复报警
-  (fs.resolved || []).forEach(r => {
-    const t = String(r).trim(); if(!t) return;
-    const p = ledger.planted.find(x => x.text === t);
-    if(p && !ledger.resolved.some(x => x.text === t)){
-      ledger.resolved.push({ id:p.id, text:t, chPlanted:p.chPlanted, chResolved:i });
-      ledger.planted = ledger.planted.filter(x => x.text !== t);
-    } else if(!ledger.resolved.some(x => x.text === t)){
-      ledger.resolved.push({ text:t, chResolved:i });
-    }
-  });
-  // 逾期：当前章号超过 expectedCh 仍未回收
-  ledger.overdue = ledger.planted.filter(p => i >= p.expectedCh && !ledger.resolved.some(r => r.id === p.id));
-  persist();
-}
-// 新卡片界面：伏笔看板操作辅助函数
-function resolveForeshadow(idx, ch){
-  const o=state.outline; if(!o) return;
-  const ledger=o._foreshadowLedger=o._foreshadowLedger||{planted:[],resolved:[],overdue:[]};
-  const p=ledger.planted[idx]; if(!p) return;
-  ledger.resolved.push({id:p.id,text:p.text,chPlanted:p.chPlanted,chResolved:ch});
-  ledger.planted=ledger.planted.filter((_,i)=>i!==idx);
-  ledger.overdue=ledger.planted.filter(x=>ch>=x.expectedCh);
-  persist(); toast('已标记伏笔回收');
-}
-function delayForeshadow(idx){
-  const o=state.outline; if(!o) return;
-  const ledger=o._foreshadowLedger=o._foreshadowLedger||{planted:[],resolved:[],overdue:[]};
-  const p=ledger.planted[idx]; if(!p) return;
-  const total=(o.chapters&&o.chapters.length)||1;
-  const ext=Math.max(1,Math.round(total*0.1));
-  p.expectedCh=Math.min(total-1,p.expectedCh+ext);
-  ledger.overdue=ledger.planted.filter(x=>p.chPlanted>=x.expectedCh);
-  persist(); toast('已延后回收预期');
-}
-function deleteForeshadow(idx){
-  const o=state.outline; if(!o) return;
-  const ledger=o._foreshadowLedger=o._foreshadowLedger||{planted:[],resolved:[],overdue:[]};
-  ledger.planted=ledger.planted.filter((_,i)=>i!==idx);
-  ledger.overdue=ledger.planted.filter(x=>x.chPlanted>=x.expectedCh);
-  persist(); toast('已删除伏笔');
-}
-function resolveOverdueForeshadow(idx){
-  const o=state.outline; if(!o) return;
-  const ledger=o._foreshadowLedger=o._foreshadowLedger||{planted:[],resolved:[],overdue:[]};
-  const p=ledger.overdue[idx]; if(!p) return;
-  ledger.resolved.push({id:p.id,text:p.text,chPlanted:p.chPlanted,chResolved:state.chapters.length-1});
-  ledger.planted=ledger.planted.filter(x=>x.id!==p.id);
-  ledger.overdue=ledger.overdue.filter((_,i)=>i!==idx);
-  persist(); toast('已回收逾期伏笔');
-}
+// 4.8 旗舰版（板块三-1）：v1.0.279 伏笔生命周期账本已随「伏笔网」功能整体移除（含 updateForeshadowLedger / 看板辅助 / 逾期注入）
 function updateFactCardFromChapter(i, text){
   const o = state.outline; if(!o) return;
-  const fc = o._factCard = o._factCard || { characters:{}, timeline:[], unresolvedHooks:[], lastScene:'' };
-  const plan = (o.chapterPlans && o.chapterPlans[i]) || {};
+  const fc = o._factCard = o._factCard || { characters:{}, timeline:[], lastScene:'' };   // v1.0.280：unresolvedHooks 已随伏笔网移除
   // 时间线：按 ch 幂等去重，重写一章只保留最新摘要
   fc.timeline = fc.timeline || [];
   fc.timeline = fc.timeline.filter(x => x.ch !== i);
   fc.timeline.push({ ch:i, event:`第 ${i+1} 章正文` });
   if(fc.timeline.length > 50) fc.timeline = fc.timeline.slice(-50);
-  // 伏笔：从 beats 的 foreshadowing 提取；已存在同名 hook 更新 plantedIn，不重复Push
-  if(plan.beats) plan.beats.forEach(b => {
-    (b.foreshadowing || []).forEach(h => {
-      if(!h) return;
-      const found = fc.unresolvedHooks.find(x => x.text === h);
-      if(found){ found.plantedIn = i; return; }
-      fc.unresolvedHooks.push({ ch:i, plantedIn:i, text:h, resolvedIn:null });
-    });
-  });
+  // v1.0.280：从 beats 提取伏笔入账（unresolvedHooks 管线）已随伏笔网移除
   // v246/920-②：lastScene 自动提取——取本章最后一个非空自然段（≤120 字）作「上一章结尾状态」，
   // 全书每章落库即更新，【衔接事实】块不再显示「（未记录）」；结尾状态本应随最新正文走，故自动值覆盖手填值。
   const paras = String(text||'').split(/\n+/).map(s => s.trim()).filter(Boolean);
   if(paras.length) fc.lastScene = paras[paras.length-1].slice(0, 120);
-  // v1.0.175：承接真相源（beat 基线）——记录本章末尾时间锚（取末拍 time 作即时兜底；AI 事后提取会覆盖为 src:'ai'）
+  // v1.0.175：承接真相源——本章末尾时间锚由 AI 事后提取（autoUpdateTimeAnchors，src:'ai'）负责；
+  // v1.0.285：beats 数组退役——不再写「末拍 time」beat 基线兜底（拍级 time 无数据源）
   fc.timeAnchors = fc.timeAnchors || [];
-  const _lastBeatT = (plan && Array.isArray(plan.beats) && plan.beats.length) ? String((plan.beats[plan.beats.length-1]||{}).time||'').trim() : '';
   fc.timeAnchors = fc.timeAnchors.filter(x => x.ch !== i);
-  if(_lastBeatT) fc.timeAnchors.push({ ch: i, time: _lastBeatT, src: 'beat' });
   persist();
 }
 
@@ -6235,12 +6672,23 @@ function bindFixQueueCard(){
 
 /* ==================== 4.6 Plus 新增卡片结束 ==================== */
 
-// v10.2 原始构想只读卡：故事页最顶部展示生成大纲时的用户构想原文（快照 outline.userIdea，
-// 缺省回退当前 state.idea）。只读不可编辑、可复制；默认收缩，点击展开。纯前端、无 AI 参与。
+// v10.2 原始构想只读卡：故事页最顶部展示用户构想的原文快照。只读不可编辑、可复制；默认收缩，点击展开。纯前端、无 AI 参与。
+// v1.0.265 实时同步「原始构想」卡片文本（词库未产出时跟随输入框；产出后锁定，不再被输入覆盖）
+function syncOrigIdeaCard(){
+  const t = $('.orig-text'); if(!t) return;
+  if(state.dictmasterRan){ t.value = String(state.originalIdeaSnapshot || state.idea || '').trim() || '（尚未生成万物词典）'; }
+  else { t.value = String(state.idea || '').trim() || '（尚未生成万物词典）'; }
+}
+
+// v1.0.203 阶段3/3.7：该卡内容源从「生成大纲时的 outline.userIdea」改为「用户录入框内容、从未被优化稿覆盖的文本」——
+// 具体地，词典达人生成万物词典前为空（占位提示）；触发词典达人生成（genDictMaster 锁存 originalIdeaSnapshot）后才展示这段原始构想，作为词典的不可变蓝本。
+// v1.0.265 修复「原始构想」未显示输入框内容：词库未产出前实时反映优化构想输入框（state.idea）最新内容；
+// 词库产出后（dictmasterRan）切换为词典达人生成那一刻锁存的原始快照（originalIdeaSnapshot，不可变蓝本）。
 function origIdeaCard(){
   const o = state.outline;
-  const idea = (o && typeof o.userIdea === 'string' && o.userIdea.trim())
-    ? o.userIdea : (state.idea || '');
+  const show = state.dictmasterRan
+    ? (String(state.originalIdeaSnapshot || '').trim() || String(state.idea || '').trim())
+    : String(state.idea || '').trim();
   return `<div class="card orig-card">
     <div class="orig-head" role="button" tabindex="0" data-orig-toggle title="展开/收起">
       <span class="orig-t">📝 原始构想</span>
@@ -6248,7 +6696,7 @@ function origIdeaCard(){
       <button type="button" class="btn small ghost gs-tool" data-orig-copy title="复制构想原文">📋 复制</button>
     </div>
     <div class="orig-body" hidden>
-      <textarea readonly class="orig-text" spellcheck="false">${esc(idea || '（无构想记录）')}</textarea>
+      <textarea readonly class="orig-text" spellcheck="false">${esc(show || '（尚未生成万物词典）')}</textarea>
     </div>
   </div>`;
 }
@@ -6258,6 +6706,7 @@ function bindOrigIdea(){
   const og = $('[data-orig-toggle]');
   if(og) og.onclick = (e)=>{
     if(e.target.closest('[data-orig-copy]')) return;   // v1.0.162：标题行里的复制按钮不触发展开/收起
+    syncOrigIdeaCard();   // v1.0.265 展开时刷新为最新内容
     const body = $('.orig-body'); if(!body) return;
     const on = !body.hidden;
     body.hidden = on;
@@ -6298,7 +6747,7 @@ function bindLoglineEdit(){
     if(!p) return;
     const ta = document.createElement('textarea');
     ta.className = 'logline-ta';
-    ta.value = String((state.outline||{}).logline||'');
+    ta.value = stripStructureFromIntro(String((state.outline||{}).logline||''));
     ta.rows = 4;
     ta.style.width = '100%';
     ta.style.marginTop = '6px';
@@ -6325,76 +6774,6 @@ function bindLoglineEdit(){
     };
   };
 }
-// v1.0.116 小说核心锚点辅助：下游 AI 提示词统一「锚点在前、完整简介在后」；(anchor/thesis) 为可空字段
-function outlineAnchorBlock(){
-  const o = state.outline||{};
-  const a = String(o.anchor||'').trim(), t = String(o.thesis||'').trim();
-  if(!a && !t) return '';
-  return `【核心定位】${a||'未提取'}\n【深层主题】${t||'未提取'}`;
-}
-// 长度兜底裁剪，防止手填/AI 输出超长反噬下游 AI 焦点
-function clampAnchor(str, max){
-  str = String(str||'').trim();
-  return str.length>max ? str.slice(0,max) : str;
-}
-// v1.0.116 懒惰提取：仅当简介字数 > 阈值才自动调用（短文下游 AI 直接读懂，省这次轻量请求）
-const ANCHOR_LEN_MIN = 200;
-async function extractStoryAnchors(opts){
-  opts = opts || {};
-  const o = state.outline; if(!o || !isLong()) return;
-  const body = String(o.logline||'').trim();
-  if(!body){ toast('尚无小说简介'); return; }
-  if(!opts.force && body.length <= ANCHOR_LEN_MIN) return;   // 短文：跳过
-  const btn = opts.btn;
-  if(btn){ btn.disabled = true; busy(btn,true,'提取中…'); }
-  try{
-    const txt = unwrapAIResult(await callDeepSeek(ANCHOR_EXTRACT_SYS, `【完整简介】\n${body}`, {temperature:resolveActiveSpec().auditTemp, topP:0.5, signal:_abortCtl?.signal, maxTokens:clampMaxTokens('json'), taskKey:'audit'}));   // 4.8 旗舰版（板块二-2/3）：JSON 窄采样 + 限长
-    const j = parseJson(txt) || {};
-    const a = clampAnchor(j.anchor, 60), t = clampAnchor(j.thesis, 120);
-    if(!a && !t){ if(!opts.silent) toast('未提取到有效核心定位/深层命题'); return; }
-    o.anchor = a; o.thesis = t;
-    persist();
-    const i1 = $('#soAnchor'); if(i1) i1.value = a;
-    const i2 = $('#soThesis'); if(i2) i2.value = t;
-    if(!opts.silent) toast('核心定位已更新');
-  }catch(e){
-    if(e.name !== 'AbortError' && !opts.silent) toast('提取核心定位失败：'+e.message);
-  }finally{
-    if(btn){ btn.disabled = false; busy(btn,false); }
-  }
-}
-// 简介区可复核小面板：anchor(一句话定位) + thesis(深层命题) 两行可编辑 + 重新提取
-function anchorEditHtml(){
-  const o = state.outline || {};
-  return `<div class="so-anchor" ${state.soCollapsed?'hidden':''}>
-    <div class="so-anchor-row">
-      <span class="so-anchor-t" title="题材+主角+核心冲突，一句话内定位">核心定位</span>
-      <input type="text" id="soAnchor" class="so-anchor-in" maxlength="60" placeholder="题材+主角+核心冲突（≤50字）" value="${esc(o.anchor||'')}">
-    </div>
-    <div class="so-anchor-row">
-      <span class="so-anchor-t" title="作品要探讨的核心主题/情感内核">深层命题</span>
-      <input type="text" id="soThesis" class="so-anchor-in" maxlength="120" placeholder="作品探讨的核心主题/情感内核（≤80字）" value="${esc(o.thesis||'')}">
-    </div>
-    <div class="so-anchor-foot">
-      <button type="button" class="btn small ghost" id="btnAnchorExtract" title="从小说简介重新提炼核心定位/深层命题">↺ 重新提取</button>
-      <span class="muted so-anchor-note">供标题/规划师/正文等 AI 快速抓重点；可手动删减复核</span>
-    </div>
-  </div>`;
-}
-// 简介区锚点面板绑定：输入即存（用户有最终编辑权）+ 重新提取按钮
-function bindAnchors(){
-  const a1 = $('#soAnchor'), a2 = $('#soThesis');
-  const save = ()=>{
-    const o = state.outline; if(!o) return;
-    o.anchor = clampAnchor(a1 ? a1.value : o.anchor, 60);
-    o.thesis = clampAnchor(a2 ? a2.value : o.thesis, 120);
-    persist();
-  };
-  if(a1) a1.addEventListener('input', save);
-  if(a2) a2.addEventListener('input', save);
-  const b = $('#btnAnchorExtract');
-  if(b) b.onclick = ()=> extractStoryAnchors({ btn:b });
-}
 // v10.30 AI 配方助手绑定（事件委托到容器，容动态渲染的候选/缺口；仅长篇小说模式有该容器）
 function bindAiRecipe(){
   const card = $('.ai-recipe-card'); if(!card) return;
@@ -6403,8 +6782,7 @@ function bindAiRecipe(){
   const clr = card.querySelector('[data-ai-recipe-clear]');
   if(clr) clr.onclick = ()=>{
     const ta = $('#aiReDesc'); if(ta) ta.value = '';
-    const nm = card.querySelector('[data-ai-upload-name]'); if(nm) nm.textContent = '';
-    aiRp = null; aiSource = 'desc';
+    aiRp = null;
     const out = card.querySelector('[data-ai-recipe-out]'); if(out) out.innerHTML = aiRecipeResultHtml();
   };
   // v10.31 卡片折叠：点头部整卡展开/收起，状态持久化到 cfg.aiRecipeCollapsed（默认折叠）
@@ -6419,26 +6797,6 @@ function bindAiRecipe(){
   // v10.57 书本图标：打开 AI 配方历史弹层（徽标随快照数更新）
   const histBtn = card.querySelector('[data-ai-recipe-hist]');
   if(histBtn) histBtn.onclick = ()=>{ openAiHistPanel(); };
-  // v1.0.62 上传主线简述 TXT：圆形加号 → FileReader.readAsText → AI 通读提炼配方
-  const fIn = $('#aiReFile');
-  const readOutline = (f)=>{
-    if(!f) return;
-    if(!/\.txt$/i.test(f.name)){ toast('请上传 .txt 文本'); return; }
-    const r = new FileReader();
-    r.onload = ()=>{
-      const txt = String((r.result)||'').trim();
-      if(!txt){ toast('文件内容为空'); return; }
-      const nm = card.querySelector('[data-ai-upload-name]'); if(nm) nm.textContent = f.name;
-      _aiOutlineFname = f.name;   // v10.57 供快照标记来源
-      aiRecipeFromOutline(txt);
-    };
-    r.onerror = ()=> toast('读取文件失败');
-    r.readAsText(f);
-  };
-  if(fIn) fIn.onchange = ()=>{ const f = fIn.files && fIn.files[0]; readOutline(f); fIn.value=''; };
-  const openPick = ()=>{ if(fIn) fIn.click(); };
-  const fileBtn = card.querySelector('[data-ai-recipe-file]');
-  if(fileBtn) fileBtn.onclick = openPick;
   // 事件委托：选用候选 / 加入缺口词条（点选候选后内部 render()，事件需在容器上重查）
   card.addEventListener('click', (e)=>{
     const pick = e.target.closest('[data-ai-recipe-pick]');
@@ -6447,11 +6805,14 @@ function bindAiRecipe(){
     if(save){ aiRecipeSave(+save.dataset.aiRecipeSave); return; }
     const ag = e.target.closest('[data-ai-recipe-addgap]');
     if(ag){ aiRecipeAddGap(ag.dataset.aiRecipeAddgap); return; }
+    const aga = e.target.closest('[data-ai-recipe-addgapall]');
+    if(aga){ aiRecipeAddGapAll(+aga.dataset.aiRecipeAddgapall); return; }   // v1.0.256 一键全部加入
   });
 }
 // —— v10.57 AI 配方历史弹层（书本图标；读持久化快照，与瞬时 aiRp 解耦）——
-function aiHistCandHtml(c, idx){
+function aiHistCandHtml(c, idx, ei){
   if(!c) return '';
+  const pendAll = Array.isArray(c.gap) && c.gap.some(g => !((c.tags||[]).includes(g.id) || libHas(g.id)));
   return `<div class="ai-recipe-cand" style="margin-top:6px">
     <div class="ai-recipe-cand-head">
       <b>${esc(c.name||('候选'+(idx+1)))}</b>
@@ -6463,12 +6824,14 @@ function aiHistCandHtml(c, idx){
     <div class="ai-recipe-sec"><span class="ar-lab">适用场景</span>${esc(wiseWhyText(c.scenario||''))}</div>
     <div class="ai-recipe-gap">
       ${ Array.isArray(c.gap) && c.gap.length
-        ? `<div class="ar-gaptitle">⚠️ 词条缺口（${c.gap.length} 项）</div>` + c.gap.map(g=>`
+        ? `<div class="ar-gaptitle">⚠️ 词条缺口（${c.gap.length} 项）</div>` + c.gap.map((g,gi)=>`
             <div class="ai-recipe-gapitem">
               <div class="ar-gaphead"><b>${esc((g&&g.name)||'')}</b><span class="muted" style="font-size:11px">${ (AI_CAT_LABEL[(g&&g.cat)||'']||((g&&g.cat)||'custom')) }</span></div>
               <div class="ar-gapwhy">${esc((g&&g.reasons)||'')}</div>
               ${gapFiveHtml(g)}
+              <button type="button" class="btn small ghost" data-ah-addgap="${ei}__${idx}__${gi}" ${ (c.tags||[]).includes(g.id)|| libHas(g.id) ? 'disabled' : '' }>＋ 加入词库</button>
             </div>`).join('')
+            + (c.gap.length>1 ? `<div style="margin-top:6px"><button type="button" class="btn small primary" data-ah-addgapall="${ei}__${idx}" ${pendAll?'':'disabled'} title="仅加入尚未入库的新词条；已入库的自动跳过">＋ 全部加入词库</button></div>` : '')
         : `<span class="ar-ok">✓ 现有词库即可覆盖，无需新词条</span>` }
     </div>
     <div style="margin-top:6px"><button type="button" class="btn small primary" data-ah-candpick="${idx}" title="恢复此候选并应用到写作风格">✔ 恢复为此候选</button></div>
@@ -6490,7 +6853,7 @@ function openAiHistPanel(){
           <button type="button" class="btn small ghost" data-ah-export="${ei}" title="导出该批配方为 JSON（自动附带其引用的自定义词条与 gap 新词条，导入方即可正常使用）">⬇ 导出</button>
           <button type="button" class="btn small ghost" data-ah-del="${ei}">删</button>
         </div>
-        ${ (Array.isArray(e.list)&&e.list.length) ? e.list.map((c,i)=>aiHistCandHtml(c,i)).join('<hr style="margin:6px 0;opacity:.2">') : '<p class="muted">无候选。</p>' }
+        ${ (Array.isArray(e.list)&&e.list.length) ? e.list.map((c,i)=>aiHistCandHtml(c,i,ei)).join('<hr style="margin:6px 0;opacity:.2">') : '<p class="muted">无候选。</p>' }
       </div>
     </div>`;
   };
@@ -6524,6 +6887,10 @@ function openAiHistPanel(){
     if(apply){ const ei=+apply.dataset.ahApply; const entry=hist[ei]; if(entry&&Array.isArray(entry.list)&&entry.list.length){ applyChosenCandidate(entry.list[0], {render:false}); refreshAiHistBadge(); close(); } return; }
     const candpick = e.target.closest('[data-ah-candpick]');
     if(candpick){ const ci=+candpick.dataset.ahCandpick; const grp=candpick.closest('.ws-lib-group'); const fold=grp&&grp.querySelector('[data-ah-fold]'); const ei=fold?+fold.dataset.ahFold:-1; const entry=hist[ei]; const c=(entry&&Array.isArray(entry.list))?entry.list[ci]:null; if(c){ applyChosenCandidate(c, {render:true}); refreshAiHistBadge(); close(); } return; }
+    const ahAdd = e.target.closest('[data-ah-addgap]');
+    if(ahAdd){ const p=(ahAdd.dataset.ahAddgap||'').split('__'); if(p.length===3){ const ei=+p[0], ci=+p[1], gi=+p[2]; aiHistAddGap(ei, ci, gi); refreshAiHistBadge(); } return; }
+    const ahAddAll = e.target.closest('[data-ah-addgapall]');
+    if(ahAddAll){ const p=(ahAddAll.dataset.ahAddgapall||'').split('__'); if(p.length===2){ aiHistAddGapAll(+p[0], +p[1]); refreshAiHistBadge(); } return; }
     const del = e.target.closest('[data-ah-del]');
     if(del){ const ei=+del.dataset.ahDel; const a=getAiHist(); if(a[ei]){ a.splice(ei,1); setAiHist(a); } refreshAiHistBadge(); const p=$('#aiHistPanel'); if(p) p.remove(); openAiHistPanel(); return; }
     const clr = e.target.closest('[data-ah-clear]');
@@ -6890,7 +7257,6 @@ function chapterTitleBlock(){
     </div>
     <div class="ct-row2">
       <button type="button" class="btn small ghost" data-ct-batch title="查看并可整批回退「重生成全部标题」的历史版本">版本(${chTitleBatches().length}/50)</button>
-      <button type="button" class="btn small ghost" data-ct-raw title="手动提取 AI 原始响应数据，当自动更新失败时使用">🔧</button>
     </div>
     ${nIn}
     <div class="ct-list">${rows}</div>
@@ -6911,10 +7277,9 @@ function bindChapterTitles(){
   if(ch) ch.onclick = ()=> openChTitleHistoryPanel();
   const ctb = $('[data-ct-batch]');
   if(ctb) ctb.onclick = ()=> openChTitleBatchPanel();
-  const rawT = $('[data-ct-raw]');
-  if(rawT) rawT.onclick = ()=> openTitlesRawPanel();
   // v225/P5-B：AI 生成类入口与绑定已移除——重生成/优化建议/建议历史/正文回填开关不再挂在卡片上，
-  // 标题生成只归「全书规划师」（genPlannerTitles）；✎ 手动编辑、📋 复制、单历/版本/🔧 原始响应属展示与人工微调，保留。
+  // 标题生成只归「全书规划师」（genPlannerTitles）；✎ 手动编辑、📋 复制、单历/版本属展示与人工微调，保留。
+  // v1.0.286：🔧 原始响应手动救急整体移除（只解析旧 JSON {titles:[...]}，与逐行纯文本标题不兼容且入口已失效）。
   $$('[data-ct-edit]').forEach(btn=>{
     btn.onclick = ()=>{
       const i = +btn.dataset.ctEdit;
@@ -7211,30 +7576,14 @@ function titlesGenUser(opts){
   opts = opts || {};
   const o = state.outline || {};
   const parts = [];
-  const anchor = outlineAnchorBlock();
-  parts.push(anchor ? `${anchor}\n【小说标题】${o.title||''}\n【小说简介】${o.logline||''}` : `【小说标题】${o.title||''}\n【小说简介】${o.logline||''}`);
-  parts.push(`【原始构想】${o.userIdea||state.idea||''}`);
-  parts.push(`【整体情绪基调】${o.tone || '未指定'}`);
-  // v1.0.141：断掉旧 structure(acts/mainLine/pivotPlan) 注入，改为注入「大纲节拍的结构」阶段列表
-  const _btStg = chapterPlanStages(o);
-  if(_btStg.length){
-    const _btTxt = _btStg.map(s=>`第 ${s.first}—${s.last} 章「${s.name}」`).join('；');
-    parts.push(`【大纲节拍的结构】全书按本节拍阶段推进：${_btTxt}。每章标题须落在其所属阶段内、符合该阶段叙事职责，不在本阶段的剧情不得出现在标题与本章。`);
-  }
-  parts.push(`【设定词典】${chapterGlossaryBlock()}`);
-  // 注入风格说明
-  const styleNote = chapterStyleNote();
-  if(styleNote) parts.push(styleNote);
-  // B fix: 禁则清单注入标题出口，使「生效范围→标题」选项真正生效（banListBlockFor('title') 内部已按 scope/开关/长篇门控）
-  const _banTitle = banListBlockFor('title');
-  if(_banTitle) parts.push(_banTitle);
-  if(opts.n){
-    parts.push(`请生成恰好 ${opts.n} 个章节标题（第1章…第${opts.n}章）。只输出如下 JSON：{"titles":["第1章 标题",...,"第${opts.n}章 标题"]}。标题数量必须严格等于 ${opts.n}，每个标题≤18字。`);
-  } else {
-    const existing = (o.chapters||[]).map((c,i)=>`第${i+1}章 ${(c&&c.title)||''}`).join(' / ');
-    if(existing) parts.push(`【现有章节标题】${existing}`);
-    if(opts.req) parts.push(`【重生成要求】${opts.req}`);
-    parts.push(`请重生成全部 ${o.chapters.length} 个章节标题。只输出如下 JSON：{"titles":["第1章 标题",...]}。数量必须严格等于 ${o.chapters.length}。`);
+  // v1.0.280：标题生成只注入「②优化构想所选方案」专线（与词典达人同源蓝本），其余上下文（现有标题/重生成要求等）全部移除
+  const cand = selectedPolishCandidate();
+  const txt = String((cand && cand.text) || '').trim();
+  parts.push(`【蓝本：②优化构想所选方案】${(cand && cand.name) ? ('方案『' + cand.name + '』') : '（所选方案）'}`);
+  parts.push(`【所选方案完整原文（作为唯一蓝本，其中已有信息不可改动）】\n${txt || '（所选方案为空）'}`);
+  const n = opts.n || ((o.chapters || []).length) || 0;
+  if(n){
+    parts.push(`请生成恰好 ${n} 个章节标题，每个标题一行、含章号前缀，形如：\n第1章 标题\n第2章 标题\n…\n第${n}章 标题\n行数必须严格等于 ${n}，每个标题名≤18字。只输出纯文本，不要 JSON、不要 markdown 代码块、不要解释。`);
   }
   return parts.join('\n\n');
 }
@@ -7304,61 +7653,142 @@ function pickBestTitles(cands, expectedN){
 // v225/P5-B：genAllTitles（卡片"生成全部章节标题"入口）已整体移除——填完章节数直接进规划师（ensureChaptersPlaceholder 占位 + genPlannerTitles 生成）。
 
 // v10.19 全书规划师区块：暗红渐变色卡片，独立设计通用于所有主题
+// v1.0.273 纯文本化：把 AI 生成的「章节编排」丰满纯文本（beatsText）渲染成可读的卡片内容——
+// 识别「承接点/场景链/逐拍推进/情绪弧/必须实体/埋设伏笔/收束」等小节标题并突出显示，其余按行排版。
+function renderBeatsTextHtml(txt){
+  txt = cleanBeatDividerTrailer(txt);   // v1.0.302：兜底剔除历史脏数据章末尾残留的「===== 第N章 =====」分隔行
+  const secRe = /^(承接点|场景链与切换|场景链|逐拍推进|情绪弧|心情弧|情绪基调|必须实体|出场实体|埋设伏笔|收束设计|收束|承接|设定)[：:]/;
+  const hasSec = String(txt||'').split('\n').some(ln=>secRe.test(ln.trim()));
+  const lines = String(txt||'').split('\n');
+  const body = [];
+  let openList = false;
+  lines.forEach(ln=>{
+    const s = ln.trim();
+    if(!s){ return; }
+    if(secRe.test(s)){
+      if(openList){ body.push('</div>'); openList = false; }
+      body.push(`<div class="bs-t-sec">${esc(s)}</div>`);
+      if(/逐拍推进|场景链|承接点/.test(s)){ body.push('<div class="bs-t-lines">'); openList = true; }
+      return;
+    }
+    // 形如 "1. " / "1）" / "① " 的编排编号行，或缩进明细
+    if(/^(\d+[\.、:：\)）]|[-•·]\s|[①-⑩])/.test(s)){
+      if(!openList){ body.push('<div class="bs-t-lines">'); openList = true; }
+      body.push(`<div class="bs-t-li">${esc(s)}</div>`);
+      return;
+    }
+    if(openList){ body.push('</div>'); openList = false; }
+    body.push(`<div class="bs-t-ln">${esc(s)}</div>`);
+  });
+  if(openList) body.push('</div>');
+  // 全文无小节/编号（可能是旧碎片）——按纯文本整块展示
+  if(!hasSec && !body.some(x=>x.startsWith('<div class="bs-t-sec">'))){
+    return `<div class="bs-beats-text bs-beats-plain"><pre>${esc(txt||'')}</pre></div>`;
+  }
+  return `<div class="bs-beats-text">${body.join('')}</div>`;
+}
+// v1.0.30y：章节微拍独立卡（从「规划师」卡拆出，放在「学校·校长」卡之前；四个微拍节奏自成一张卡）
+function microBeatBlock(){
+  return `<div class="card cp-card beat-card">
+    <div class="cp-head" style="cursor:default">
+      <div class="cp-head-top">
+        <div class="cp-head-left">
+          <h3>🎬 章节微拍</h3>
+        </div>
+      </div>
+    </div>
+    <div class="cp-body">
+      <div class="cp-micropick">
+        <div class="cp-micropick-title">选择章节微拍节奏</div>
+        <div class="cp-micropick-opts">
+          ${BEAT_OPTIONS.map(b=>`
+            <label class="cp-micropick-item ${b.id===currentBeatId()?'sel':''}" data-micropick="${b.id}" title="${esc(b.desc||'')}">
+              <span class="cp-micropick-ic">${b.emoji||'🥁'}</span>
+              <span class="cp-micropick-txt">
+                <b>${esc(b.label)}</b>
+                <i>${esc(b.desc||'')}</i>
+              </span>
+              <input type="radio" name="cpMicroPick" value="${b.id}" ${b.id===currentBeatId()?'checked':''} style="display:none">
+            </label>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// v1.0.30y：学校卡（规划师撤换）——校内只承载「校长下达命令管理老师 → 各位老师教正文 AI 怎么写本章」；
+// 词典达人/词典充实 已在上方前置区（flow 4/5），这里不再内嵌；一键开学仍串起整条链。
+// v1.0.307 跨板块「备料 → 开学」链式进度条：达人→充实→校长→全部老师，按 scDone 逐段亮起
+function schoolPipelineProgress(){
+  const groups = schoolStageGroups();
+  const total = 3 + groups.length;
+  const keys = ['dictMaster','dictEnrich','principal', ...groups.map((g,i)=>'t'+i)];
+  const done = keys.filter(scDone).length;
+  const pct = total ? Math.round(done/total*100) : 0;
+  const allTeach = groups.length ? groups.every((g,i)=>scDone('t'+i)) : false;
+  return `<div class="sc-pipeline">
+    <div class="sc-pipe-top"><span class="sc-pipe-t">⏳ 备料 → 开学</span><span class="sc-pipe-m">${done}/${total} 步就绪 · ${pct}%</span></div>
+    <div class="sc-pipe-bar"><span class="sc-pipe-in" style="width:${pct}%"></span></div>
+    <div class="sc-pipe-steps">
+      <span class="sc-ps s-${scDone('dictMaster')?'ok':'no'}">📖 词典达人</span>
+      <span class="sc-ps s-${scDone('dictEnrich')?'ok':'no'}">🗂 词典充实</span>
+      <span class="sc-ps s-${scDone('principal')?'ok':'no'}">👑 校长</span>
+      <span class="sc-ps s-${allTeach?'ok':'no'}">🎓 全部老师</span>
+    </div>
+  </div>`;
+}
+
+function schoolZoneBlock(){
+  const groups = schoolStageGroups();
+  const tBody = groups.length
+    ? groups.map((g,i)=> schoolTeacherBtn(g,i)).join('')
+    : `<div class="sc-teachers-ph">🎓 老师区：填写「全书章节数」后，将按《全书节拍》自动分为若干组，每组对应一位老师（这里会展示各位老师卡，可逐位备课）。</div>`;
+  return `<div class="card cp-card school-card">
+    <div class="cp-head">
+      <div class="cp-head-top">
+        <div class="cp-head-left">
+          <h3>🏫 学校</h3>
+        </div>
+      </div>
+    </div>
+    <div class="cp-body">
+      <div class="school-zone">
+        <div class="school-zone-head">
+          <span>👑 校长 → 🎓 老师 → ✍️ 正文 AI</span>
+          <em class="school-zone-tip">${(()=>{ const s=schoolStageGroups(); return s.length? (`按《全书节拍》分组 → ${s.length} 位老师`):'先填章节数'; })()}</em>
+        </div>
+        ${schoolPipelineProgress()}
+        <div class="school-steps">
+          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成">⚡ 一键开学</button>
+          <span class="sc-teacher-cell">${schoolStepBtn('principal','👑','校长','校长：给各组下达命令，在既有《全书节拍》上分组 + 组级框架 + 标题总表，派生老师）')}<button type="button" class="sc-plan-btn" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表（未生成前为空，先生成校长即可阅读）">📋 读校长产出</button></span>
+        </div>
+        <div class="school-teachers">
+          ${tBody}
+        </div>
+      </div>
+      <!-- 完成声音 + 音量：单个完成 / 全部完成 的音色在顶部 🎨 主题面板挑选，这里只留开关与音量 -->
+      <div class="cp-sound-tool">
+        <label class="cps-switch" title="某一步完成响「单个完成」音；学校一键全跑完响「全部完成」音">
+          <input id="cpsSoundDone" type="checkbox">
+          <span class="cps-wrap"><i>🔔</i><b>完成声音</b></span>
+        </label>
+        <label class="cps-vol" title="提醒音音量">
+          <span>🔊</span>
+          <input id="cpsSoundVol" type="range" min="0" max="100" step="5" value="80">
+          <em id="cpsSoundVolLb" class="muted">80%</em>
+        </label>
+      </div>
+    </div>
+  </div>`;
+}
+
 function chapterPlanBlock(){
   const o = state.outline;
   const plans = (o && Array.isArray(o.chapterPlans)) ? o.chapterPlans : [];
   const hasPlans = plans.some(Boolean);
   const collapsed = !!state.cpCollapsed;
-  const items = plans.map((p,i)=>{
-    // 4.6 Plus（2.2）：items 渲染改造为节拍表版（normalizeOutline 已保证 p 为对象）
-    const beats = (p && Array.isArray(p.beats)) ? p.beats : [];
-    const beatHtml = beats.map((b, bi)=>`
-      <div class="bs-beat" data-bs-beat="${i}:${bi}">
-        <div class="bs-beat-top">
-          <span class="bs-type" title="${esc(beatNoteFor(b.type))}">
-            <span class="bs-type-idx">${bi+1}</span>${esc(beatLabelFor(b.type))||'（待定拍）'}
-          </span>
-          <span class="bs-beat-hint">${beatNoteFor(b.type)?esc(beatNoteFor(b.type)):''}</span>
-        </div>
-        <textarea class="bs-event" data-bs-event="${i}:${bi}" rows="2" placeholder="本节拍事件：在这段节奏里发生什么">${esc(b.event||'')}</textarea>
-        <div class="bs-beat-meta">
-          <label class="bs-meta bs-meta-time" title="时间锚：支线·时点（如 现实·第2天·清晨；回忆/梦境/穿越支线独立计时）"><span class="bs-meta-ic">🕒</span><input type="text" class="bs-time" data-bs-time="${i}:${bi}" value="${esc(b.time||'')}" placeholder="时间锚（支线·时点）"></label>
-          <label class="bs-meta"><span class="bs-meta-ic">😐</span><input type="text" class="bs-emo" data-bs-emo="${i}:${bi}" value="${esc(b.emotional||'')}" placeholder="情绪基调"></label>
-          <label class="bs-meta"><span class="bs-meta-ic">👤</span><input type="text" class="bs-ent" data-bs-ent="${i}:${bi}" value="${esc((b.requiredEntities||[]).join('、'))}" placeholder="必须实体（顿号分隔）"></label>
-          <label class="bs-meta bs-meta-fore"><span class="bs-meta-ic">🧵</span><input type="text" class="bs-fore" data-bs-fore="${i}:${bi}" value="${esc((b.foreshadowing||[]).join('、'))}" placeholder="伏笔（顿号分隔）"></label>
-        </div>
-      </div>
-    `).join('');
-    // v1.0.159：长书优化——每章节拍表默认折叠成一行（折叠态只显示表头），点开才渲染该章节拍卡片；顶部提供「全部展开/收起」
-    const _beatOpen = state.cpBeatOpen || {};
-    const open = !!_beatOpen[i];
-    // v1.0.175：章节时间承接提示条（上一章末拍时间 → 本章首拍时间，疑似倒流标红）
-    const _prevP2 = i>0 ? plans[i-1] : null;
-    const _prevT2 = (_prevP2 && Array.isArray(_prevP2.beats) && _prevP2.beats.length) ? String((_prevP2.beats[_prevP2.beats.length-1]||{}).time||'').trim() : '';
-    const _curT2 = beats.length ? String((beats[0]||{}).time||'').trim() : '';
-    const _rewind2 = _timeAnchorOn() && _timeRewind(_prevT2, _curT2);
-    const _bridge = (i>0 && _timeAnchorOn() && (_prevT2 || _curT2)) ? `<div class="bs-timebride${_rewind2?' conflict':''}" title="${_rewind2?'⚠ 疑似主线时间倒流：上章末拍时间晚于本章首拍 —— 正文会按「以上章真实结尾为准」正确处理；请在节拍表修正时间锚。':'章节间时间承接锚点：上章末拍时间应早于或衔接本章首拍时间。'}">
-      <span class="bs-tb-label">承接</span><span class="bs-tb-val">${_prevT2?esc(_prevT2):'<i>未标注</i>'}</span><span class="bs-tb-arrow">→</span><span class="bs-tb-val">${_curT2?esc(_curT2):'<i>未标注</i>'}</span>${_rewind2?'<span class="bs-tb-warn">⚠ 疑似时间倒流</span>':''}
-    </div>` : '';
-    return `
-      <div class="cp-item" data-cp-item="${i}">
-        <span class="cp-no">${i+1}</span>
-        <div class="cp-body-col">
-          <div class="bs-block">
-            <div class="bs-head ${beats.length? 'fold' : 'empty'} ${open?'open':''}" data-cp-beat-toggle="${i}" role="button" tabindex="0" title="点击展开/收起本章节拍表">
-              <span class="bs-arrow">${open?'▾':'▸'}</span>
-              <b class="bs-head-title">📋 节拍表（${currentBeatCfg().label}）</b>
-              <span class="bs-head-stat ${beats.length>=beatCnt()?'done':''}">${beats.length}/${beatCnt()} 段</span>
-              <button type="button" class="btn small ghost" data-bs-add="${i}">＋ 补全${beatCnt()}段</button>
-            </div>
-            ${_bridge}
-            <div class="bs-beats-wrap"${open?'':' hidden'}>
-            ${beatHtml || '<span class="muted">暂无节拍，可点上方「补全'+beatCnt()+'段」由 AI 补齐</span>'}
-            </div>
-          </div>
-        </div>
-      </div>`;
-  }).join('');
+  // v1.0.28y：规划区不再铺开任何节拍表内容（手风琴卡片 / 摘要列表均不显示）；内容全部收进「📖 阅读节拍表」界面。
   return `<div class="card cp-card">
     <div class="cp-head" data-cp-fold role="button" tabindex="0" title="展开/收起">
       <div class="cp-head-top">
@@ -7382,7 +7812,7 @@ function chapterPlanBlock(){
               <span class="cp-micropick-ic">${b.emoji||'🥁'}</span>
               <span class="cp-micropick-txt">
                 <b>${esc(b.label)}</b>
-                <i>${esc(b.desc||'')}${b.wc?`（${b.wc}）`:''}</i>
+                <i>${esc(b.desc||'')}</i>
               </span>
               <input type="radio" name="cpMicroPick" value="${b.id}" ${b.id===currentBeatId()?'checked':''} style="display:none">
             </label>
@@ -7390,31 +7820,49 @@ function chapterPlanBlock(){
         </div>
       </div>
       <div class="cp-micropick-actions">
-        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键五步</button>
+        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键四步</button>
       </div>
       <div class="cp-stagebar">
         ${PLANNER_STAGES.map(st=>{
           const done = plannerStageDone(st.id);
-          // v250/933-T1A：伏笔网完成态显示条数（用户反馈：只看到 ✓ 不知道生成了什么）
-          const _fsN = (st.id==='foreshadow' && state.outline._foreshadowLedger) ? (state.outline._foreshadowLedger.planted||[]).length : 0;
-          const _dot = done ? (st.id==='foreshadow' && _fsN ? '✓'+_fsN : '✓') : '·';
-          return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；五步可任意顺序单独点击，无需按顺序完成">
+          const _dot = done ? '✓' : '·';
+          return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；四步可任意顺序单独点击，无需按顺序完成">
             <i class="cp-dot">${_dot}</i>${st.num}${st.label}
           </button>`;
         }).join('')}
-      </div>
-      <div class="cp-stage-hint muted">先在上方挑选「章节微拍节奏」，再点「⚡ 一键五步」或五步中的任一步；五步可任意顺序单独点击。切换微拍后，规划师节拍表、AI 生成内容与章节正文均随之变化。</div>
-      ${hasPlans ? `<div class="cp-plans-tool">
-          <button type="button" class="btn small ghost" data-cp-beat-expand title="展开全部章节的节拍表">▾ 全部展开</button>
-          <button type="button" class="btn small ghost" data-cp-beat-collapse title="收起全部章节的节拍表（长书默认）">▸ 全部收起</button>
-          <label class="gs-autofill cp-time-toggle" title="时间锚（默认开）：规划师为每拍给定「支线·时点」，正文据此承接章节/支线时间；关则不生成、不要求时间锚。"><input type="checkbox" data-cp-time-toggle ${state.timeAnchor?'checked':''} /> ⏱ 时间锚</label>
-          <button type="button" class="btn small ghost" data-cp-time-board title="按支线分组纵览全书时间锚，跨章/同支线疑似倒流高亮">⏱ 时间线</button>
-          <button type="button" class="btn small ghost" data-cp-time-fill title="为现有节拍表缺失的时间锚批量补齐（守护已标注拍）">＋ 补时间</button>
-          <span class="cp-plans-tool-tip muted">节拍表默认折叠，点章节表头展开查看/编辑；长书（多章）时划动更省力。</span>
         </div>
-        <div class="cp-list">${items}</div>
-        <p class="muted" style="margin:6px 0 0">节拍表由 AI 分批生成，写正文时注入为【L1 本章节拍表】（硬性执行清单）。</p>`
-        : `<p class="sub">可选步骤：分五步规划全书——①定稿章节标题、②初期万物词典、③每章节拍表（${currentBeatCfg().label}）、④全局时间线、⑤跨章伏笔网。按顺序生成效果最佳，任一步可单独重跑；不做也不影响默认流程。</p>`}
+      ${hasPlans ? `<div class="cp-plans-tool">
+          <button type="button" class="btn small ghost" data-cp-time-board title="纵览全书时间线（来自④全局时间线，纯文本排版）">⏱ 时间线</button>
+        </div>`
+        : ``}
+      <!-- 学校模式 · 校长分组 + 老师按钮（按 ⌈N÷20⌉ 目标、阶段优先的动态分组渲染；老师数=最终分组数） -->
+      <div class="school-zone">
+        <div class="school-zone-head">
+          <span>🏫 学校 · 校长分组</span>
+          <em class="school-zone-tip">${(()=>{ const s=schoolStageGroups(); return s.length? (`按《全书节拍》分组 → ${s.length} 位老师`):'先填章节数'; })()}</em>
+        </div>
+        <div class="school-steps">
+          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成">⚡ 一键开学</button>
+          ${schoolStepBtn('dictMaster','📖','词典达人','词典达人：先给全员备料（16 次自动重试）')}
+          ${schoolStepBtn('dictEnrich','🗂','词典充实','词典充实：与达人平级、补全词典（16 次自动重试）')}
+          <span class="sc-teacher-cell">${schoolStepBtn('principal','👑','校长','校长：分组 + 组级框架 + 标题总表（在既有《全书节拍》上派生老师）')}<button type="button" class="sc-plan-btn" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表（未生成前为空，先生成校长即可阅读）">📋 读校长产出</button></span>
+        </div>
+        <div class="school-teachers">
+          ${schoolStageGroups().map((g,i)=> schoolTeacherBtn(g,i)).join('')}
+        </div>
+      </div>
+      <!-- 完成声音 + 音量（内嵌学校区）：单个完成 / 全部完成 的音色在顶部 🎨 主题面板挑选，这里只留开关与音量 -->
+      <div class="cp-sound-tool">
+        <label class="cps-switch" title="某一步完成响「单个完成」音；学校一键全跑完响「全部完成」音">
+          <input id="cpsSoundDone" type="checkbox">
+          <span class="cps-wrap"><i>🔔</i><b>完成声音</b></span>
+        </label>
+        <label class="cps-vol" title="提醒音音量">
+          <span>🔊</span>
+          <input id="cpsSoundVol" type="range" min="0" max="100" step="5" value="80">
+          <em id="cpsSoundVolLb" class="muted">80%</em>
+        </label>
+      </div>
     </div>
   </div>`;
 }
@@ -7424,7 +7872,7 @@ function bindChapterPlanFold(){
   const head = $('[data-cp-fold]');
   if(!head) return;
   head.onclick = (e)=>{
-    if(e.target.closest('[data-cp-all]') || e.target.closest('[data-cp-stage]') || e.target.closest('[data-cp-raw]') || e.target.closest('.stop-btn')) return;   // v240/906-2：不拦截生成/原始数据/停止按钮（版本按钮已移除）
+    if(e.target.closest('[data-cp-all]') || e.target.closest('[data-cp-stage]') || e.target.closest('[data-cp-enrich]') || e.target.closest('[data-cp-raw]') || e.target.closest('.stop-btn')) return;   // v240/906-2：不拦截生成/原始数据/停止按钮（版本按钮已移除）
     state.cpCollapsed = !state.cpCollapsed;
     persist();
     const body = $('.cp-body'); if(body) body.hidden = state.cpCollapsed;
@@ -7447,7 +7895,7 @@ function bindChapterPlan(){
     state.outline = state.outline || {};
     state.outline.beatCount = +id;
     persist();
-    toast(`已切换为「${currentBeatCfg().label}」微拍（${beatCnt()} 段）；重新生成①节拍表或点「补全${beatCnt()}段」即可生效。`);
+    toast(`已切换为「${currentBeatCfg().label}」微拍（${beatCnt()} 段）；重新生成①节拍表即可生效。`);
     render();
   };
   $$('[data-micropick]').forEach(li=>{
@@ -7455,66 +7903,18 @@ function bindChapterPlan(){
   });
   const rawBtn = $('[data-cp-raw]');
   if(rawBtn) rawBtn.onclick = ()=> openCpRawPanel();
+  bindSchoolSteps();   // 学校模式：校长/老师/一键 按钮绑定
 }
 
-// 4.6 Plus（2.2）节拍表绑定：自动补齐所选拍数 + 四字段编辑即存
+// 4.6 Plus（2.2）节拍表绑定：v1.0.285 起仅剩 时间线看板 + 节拍编排「可编辑 + 后悔药」（旧拍级字段编辑已随 beats 数组退役移除）
 function bindBeatSheet(){
   const o = state.outline; if(!o) return;
-  // 自动补齐所选拍数
-  $$('[data-bs-add]').forEach(btn=>{
-    btn.onclick = ()=>{
-      const i = +btn.dataset.bsAdd;
-      if(!Array.isArray(o.chapterPlans)) return;
-      const p = o.chapterPlans[i] || {};
-      const _keys = beatTypeKeys(), _cnt = beatCnt();
-      if(!p.beats || p.beats.length < _cnt){
-        p.beats = p.beats || [];
-        const types = _keys;
-        for(let k=p.beats.length; k<_cnt; k++){
-          p.beats.push({ type:types[k], event:'', emotional:'', requiredEntities:[], foreshadowing:[], time:'' });
-        }
-        persist(); render();
-      }
-    };
-  });
-  // v1.0.159：章节表头点击折叠/展开（补全按钮、编辑框点击不触发展开收起）
-  $$('[data-cp-beat-toggle]').forEach(h=>{
-    h.addEventListener('click', (e)=>{
-      if(e.target.closest('[data-bs-add]') || e.target.closest('[data-bs-event]') || e.target.closest('[data-bs-emo]') || e.target.closest('[data-bs-ent]') || e.target.closest('[data-bs-fore]') || e.target.closest('[data-bs-time]') || e.target.closest('.stop-btn')) return;
-      const i = +h.dataset.cpBeatToggle;
-      state.cpBeatOpen = state.cpBeatOpen || {};
-      state.cpBeatOpen[i] = !state.cpBeatOpen[i];
-      render();
-    });
-    h.addEventListener('keydown', (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); h.click(); } });
-  });
-  // 批量展开 / 收起
-  const _btEx = document.querySelector('[data-cp-beat-expand]');
-  if(_btEx) _btEx.onclick = ()=>{ const n=(o.chapterPlans||[]).length; const st={}; for(let i=0;i<n;i++) st[i]=true; state.cpBeatOpen=st; render(); };
-  const _btCo = document.querySelector('[data-cp-beat-collapse]');
-  if(_btCo) _btCo.onclick = ()=>{ state.cpBeatOpen={}; render(); };
-  // v1.0.175：时间锚开关 / 时间线看板 / 批量补时间
-  const _tmTg = document.querySelector('[data-cp-time-toggle]');
-  if(_tmTg) _tmTg.onchange = ()=>{ state.timeAnchor = _tmTg.checked; persist(); render(); toast(state.timeAnchor?'时间锚已开启（规划师为每拍给定时间锚）':'时间锚已关闭（不再要求/注入时间锚）'); };
+  // v1.0.175：时间线看板
   const _tmBd = document.querySelector('[data-cp-time-board]');
   if(_tmBd) _tmBd.onclick = ()=> openTimelineBoard();
-  const _tmFl = document.querySelector('[data-cp-time-fill]');
-  if(_tmFl) _tmFl.onclick = ()=> fillMissingBeatTime(_tmFl);
-  // 编辑保存（含 v1.0.175 时间锚字段）
-  $$('[data-bs-event],[data-bs-emo],[data-bs-ent],[data-bs-fore],[data-bs-time]').forEach(inp=>{
-    inp.onchange = ()=>{
-      const k = inp.dataset.bsEvent?'bsEvent':(inp.dataset.bsEmo?'bsEmo':(inp.dataset.bsEnt?'bsEnt':(inp.dataset.bsFore?'bsFore':'bsTime')));
-      const [ii,bbi] = inp.dataset[k].split(':');
-      const idx = +ii, bIdx = +bbi;
-      const p = o.chapterPlans[idx]; if(!p || !p.beats[bIdx]) return;
-      if(inp.dataset.bsEvent) p.beats[bIdx].event = inp.value.trim();
-      if(inp.dataset.bsEmo) p.beats[bIdx].emotional = inp.value.trim();
-      if(inp.dataset.bsEnt) p.beats[bIdx].requiredEntities = inp.value.split(/[,，、]/).map(s=>s.trim()).filter(Boolean);
-      if(inp.dataset.bsFore) p.beats[bIdx].foreshadowing = inp.value.split(/[,，、]/).map(s=>s.trim()).filter(Boolean);
-      if(inp.dataset.bsTime) p.beats[bIdx].time = inp.value.trim();
-      persist(); toast(`第 ${idx+1} 章节拍已保存`);
-    };
-  });
+  // v1.0.285：旧规划区「编排编辑/历史恢复」按钮（data-bs-bt-*）与摘要行「阅读打开」入口（data-bs-read-open）
+  // 已随 v1.0.28y「规划区不再铺开节拍表内容」整体无渲染，处理器一并移除——编辑/历史恢复统一在「📖 阅读节拍表」界面完成
+  bindPlannerSoundTool();   // v1.0.300 内嵌规划师卡的「单个完成声音 + 音量」绑定（与设置弹窗同源同键，_cpsBound 幂等）
 }
 
 // v2.4 词典人物字段检查：7 字段完整性三态（缺失红 / 未知黄 / 齐全 ✅）
@@ -7644,7 +8044,10 @@ function openGlossaryNewPanel(){
   $$('[data-gsn-locate]', ov).forEach(b=> b.onclick = ()=>{
     const r = flat()[+b.dataset.gsnLocate]; if(!r) return;
     closeGlossaryNewPanel();
-    state.gsCatFold = state.gsCatFold || {}; state.gsCatFold[r.type] = false;
+    state.gsCatFold = state.gsCatFold || {};
+    // v1.0.28x：人物拆三类——「char」需同时展开 主要人物+次要配角 两组；其余按原 type 展开
+    if(r.type==='char'){ state.gsCatFold.main = false; state.gsCatFold.support = false; }
+    else state.gsCatFold[r.type] = false;
     persist(); renderGlossaryOnly();
     const box = $(`[data-gs-entry="${r.type}:${r.i}"]`);
     if(box){
@@ -7669,7 +8072,7 @@ function closeGlossaryNewPanel(){ const p=$('#gsNewPanel'); if(p) p.remove(); }
 function glossaryCardHtml(){
   const g = (state.outline && state.outline.glossary) || {characters:[], places:[], propernouns:[]};
   const gl = ()=>state.outline.glossary = state.outline.glossary || {characters:[],places:[],propernouns:[]};
-  const empty = !(g.characters&&g.characters.length) && !(g.places&&g.places.length) && !(g.propernouns&&g.propernouns.length) && !(g.subplots&&g.subplots.length);
+  const empty = !(g.characters&&g.characters.length) && !(g.walkons&&g.walkons.length) && !(g.places&&g.places.length) && !(g.propernouns&&g.propernouns.length) && !(g.subplots&&g.subplots.length);
   const hasBody = state.chapters.some(c=>c && c.content);   // 是否有正文可做覆盖面统计（阶段4）
   // v226/8.2 「🆕 新增」徽标：_srcTs 晚于已读水位线的自动入典条目数（旧存档词条无 _srcTs 恒不标新）
   const seen = Number(state._glossSeenTs) || 0;
@@ -7683,7 +8086,6 @@ function glossaryCardHtml(){
     <button type="button" class="btn ghost gs-tool" data-gs-clean ${hasBody?'':'hidden'} title="清理在全部已生成正文中均未出现的条目（如重生成覆盖后失效的旧人物）">🧹 清理未使用</button>
     <button type="button" class="btn ghost gs-tool" data-gs-export>📤 导出 JSON</button>
     <button type="button" class="btn ghost gs-tool" data-gs-import>📥 导入 JSON</button>
-    <label class="gs-autofill" title="批量生成章节后自动提取新实体入词典"><input type="checkbox" data-gs-autofill ${state.glossAutoFill?'checked':''} /> 自动补全</label>
     <label class="gs-autofill" title="每章生成后自动吸收副线进度；只有章节正文 AI 会新增/推进副线"><input type="checkbox" data-gs-subfill ${state.subAutoFill?'checked':''} /> 副线追踪</label>
     <button type="button" class="btn ghost gs-tool" data-gs-subboard ${(g.subplots&&g.subplots.length)?'':'hidden'} title="列出未收束且消失过久的副线，提示是否安排回归">🧵 副线看板</button>
     <input type="file" id="gsImportFile" accept=".json,application/json" hidden />
@@ -7699,7 +8101,14 @@ function glossaryCardHtml(){
     const newTag = (o._auto && (o._srcTs||0) > (Number(state._glossSeenTs)||0)) ? `<span class="gs-newtag" title="自动入典：${o._srcCh?('来自第 '+o._srcCh+' 章'):esc(o._srcHow||'批量提取')} · ${new Date(o._srcTs||Date.now()).toLocaleString('zh-CN',{hour12:false})}">🆕${o._srcCh?('·第'+o._srcCh+'章'):''}</span>` : '';
     // v242/911-Q2：人名零阻挡——不合命名规范的条目照常入库，仅显示⚠徽标提示（不拦不丢）
     const flagTag = (type==='char' && o._nameFlag) ? `<span class="gs-nameflag" title="命名待核：${esc(o._nameFlag)}（仅提示不拦截；改名为合规姓名后自动消除）">⚠命名</span>` : '';
-    const detail = detailKeys.map(k=>({k, v:o[k]})).filter(x=>x.v).map(x=>`<label class="gs-f"><span>${kLabel(x.k)}</span><input type="text" data-gs-set="${type}" data-gs-idx="${i}" data-gs-key="${x.k}" data-orig="${esc(x.v)}" value="${esc(x.v)}" /></label>`).join('');
+    // 方案丙（relation 去重）：人物卡 relation 只读——只展示一句话摘要（≤20字），逐条明细统一由「人物关系表」维护，避免与关系表重复
+    const relField = (type==='char') ? `<label class="gs-f gs-rel-f"><span>${kLabel('relation')}<span class="muted" style="font-weight:400">（摘要·只读）</span></span><div class="gs-rel-ro"><span class="gs-rel-val">${String(o.relation||'').trim()?esc(String(o.relation).trim()):'<span class="muted">（无摘要）</span>'}</span><button type="button" class="btn ghost gs-tool gs-rel-btn" data-gs-rel-edit title="人物关系的逐条明细统一在「人物关系表」中维护（点击直接打开编辑，正文据此写作）">✏️ 去人物关系表编辑</button></div></label>` : '';
+    // v1.0.28x：人物类别（主要人物/次要配角）——仅 char 类型可调；改后自动按组归位。路人龙套独立存 g.walkons，不在此卡。
+    const tierField = (type==='char') ? `<label class="gs-f"><span>类别</span><select data-gs-set="char" data-gs-idx="${i}" data-gs-key="tier" data-orig="${esc(charTierOf(o))}">
+      <option value="main" ${charTierOf(o)==='main'?'selected':''}>主要人物</option>
+      <option value="support" ${charTierOf(o)==='support'?'selected':''}>次要配角</option>
+    </select></label>` : '';
+    const detail = tierField + relField + detailKeys.filter(k=>k!=='relation').map(k=>({k, v:o[k]})).filter(x=>x.v).map(x=>`<label class="gs-f"><span>${kLabel(x.k)}</span><input type="text" data-gs-set="${type}" data-gs-idx="${i}" data-gs-key="${x.k}" data-orig="${esc(x.v)}" value="${esc(x.v)}" /></label>`).join('');
     // 折叠态：名字 + 简述（可点）；展开态：把名字也变成可编辑 + 全字段
     return `<div class="gs-entry" data-gs-entry="${type}:${i}">
       <div class="gs-head" role="button" tabindex="0" data-gs-toggle="${type}:${i}">
@@ -7714,8 +8123,18 @@ function glossaryCardHtml(){
       </div>
     </div>`;
   };
-  const kLabel = k => ({name:'名称', identity:'身份', age:'岁数', gender:'性别', appearance:'外貌', hobby:'爱好', mannerism:'小动作/口头禅', relation:'关系', trait:'性格', type:'类型', note:'说明', question:'核心问题', pivot:'蝴蝶效应'}[k]||k);
-  const chars = (g.characters||[]).map((c,i)=>entry(c,'char',i,['identity','gender','age'],['name','identity','age','gender','appearance','hobby','mannerism','relation','trait'])).join('');
+  const kLabel = k => ({name:'名称', identity:'身份', age:'岁数', gender:'性别', appearance:'外貌', hobby:'爱好', mannerism:'小动作/口头禅', catchphrase:'口头禅', relation:'关系', trait:'性格', type:'类型', note:'说明', question:'核心问题', pivot:'蝴蝶效应'}[k]||k);
+  // v1.0.28x：词典人物分三类——主要人物 / 次要配角 / 路人龙套。主要+配角存于 g.characters（tier: main/support），
+  // 路人龙套存于 g.walkons（轻量清单，仅 name + note）。三类各自成组展示、各自可折叠。
+  const charEntries = (g.characters||[]);
+  const walkonEntries = (g.walkons||[]).map((w,i)=>entry(w,'walkon',i,['note'],['note'])).join('');
+  const charTierOf = c => (c && c.tier==='support') ? 'support' : 'main';   // 旧存档无 tier → 视作主要人物
+  const grpCharEntries = tierKey => charEntries.map((c,i)=> (charTierOf(c)===tierKey)
+    ? entry(c,'char',i,['identity','gender','age'],['name','identity','age','gender','appearance','hobby','catchphrase','relation','trait'])
+    : '').join('');
+  const grpCharCount = tierKey => charEntries.filter(c=>charTierOf(c)===tierKey).length;
+  const mainChars = grpCharEntries('main');      // 主要人物
+  const supportChars = grpCharEntries('support'); // 次要配角
   const places = (g.places||[]).map((p,i)=>entry(p,'place',i,['type','note'],['name','type','note'])).join('');
   const props = (g.propernouns||[]).map((p,i)=>entry(p,'proper',i,['note'],['name','note'])).join('');
   // v1.0.113 副线条目：名称可编辑 + status 三态 select + question/arc/pivot 可编辑 + 进度只读 + 「回退一步」
@@ -7744,7 +8163,22 @@ function glossaryCardHtml(){
     </div>`;
   }).join('');
   const collapsed = !!state.gsCollapsed;
-  const total = (g.characters||[]).length + (g.places||[]).length + (g.propernouns||[]).length + (g.subplots||[]).length;
+  const total = (g.characters||[]).length + (g.walkons||[]).length + (g.places||[]).length + (g.propernouns||[]).length + (g.subplots||[]).length;
+  // v1.0.211：词典达人四类「关系/关联/世界观规则」查看入口（只读弹窗，数据存于 glossary._relationshipTable/_placeContacts/_properContacts/_worldRules）
+  const vRel=validAssoc(g._relationshipTable,'a','b').length;
+  const vPC=validAssoc(g._placeContacts,'from','to').length;
+  const vPRC=validAssoc(g._properContacts,'from','to').length;
+  const vWR=(g._worldRules||[]).filter(x=>x&&String(x.rule||'').trim()).length;
+  const histN = Array.isArray(g._relTableHistory) ? g._relTableHistory.length : 0;
+  const viewGrid = `<div class="gs-viewgrid">
+    <span class="gs-tools gvt-hist-pos"><button type="button" class="btn ghost gs-tool" data-gvth-badge title="人物关系表 / 地名关联表 / 专名关联表 / 世界观规则 的编辑历史（最多 6 次，可查看并一键还原）">🕘 4表历史${histN?`<b class="gs-check-badge">${histN}/6</b>`:''}</button></span>
+    <div class="gvt-grid-inner">
+    <button type="button" class="btn ghost gs-tool" data-gs-view="rel" title="查看/编辑人物关系表">👥 人物关系表（${vRel}）</button>
+    <button type="button" class="btn ghost gs-tool" data-gs-view="pc" title="查看/编辑地名关联表">🗺️ 地名关联表（${vPC}）</button>
+    <button type="button" class="btn ghost gs-tool" data-gs-view="prc" title="查看/编辑专名关联表">📌 专名关联表（${vPRC}）</button>
+    <button type="button" class="btn ghost gs-tool" data-gs-view="wr" title="查看/编辑世界观规则">⚙️ 世界观规则（${vWR}）</button>
+    </div>
+  </div>`;
   return `<div class="card gs-card${collapsed?' gs-collapsed':''}">
     <div class="gs-card-head">
       <h3 class="gs-card-title" role="button" tabindex="0" data-gs-card-toggle>
@@ -7753,15 +8187,20 @@ function glossaryCardHtml(){
     </div>
     <div class="gs-card-body"${collapsed?' style="display:none"':''}>
     ${tools}
+    ${viewGrid}
     <p class="sub">有改则改</p>
     <div class="gs-panel" id="gsHistory" hidden><div class="gs-panel-title">🕘 历史更改</div><div id="gsHistoryList"></div></div>
-    ${(['char','place','proper','sub']).map(t=>{
+    ${([
+        ['main',   '👤 主要人物', mainChars,    grpCharCount('main')],
+        ['support','🤝 次要配角', supportChars, grpCharCount('support')],
+        ['walkon', '🚶 路人龙套', walkonEntries,(g.walkons||[]).length],
+        ['place',  '🗺️ 地点',     places,       (g.places||[]).length],
+        ['proper', '📌 专名',     props,        (g.propernouns||[]).length],
+        ['sub',    '🧵 副线',     subsHtml,     (g.subplots||[]).length],
+      ]).map(([t,lab,body,cnt])=>{
       const fold = !!(state.gsCatFold && state.gsCatFold[t]);
-      const arr = t==='char'?g.characters:t==='place'?g.places:(t==='proper'?g.propernouns:(g.subplots||[]));
-      const body = t==='char'?chars:t==='place'?places:(t==='proper'?props:subsHtml);
-      const lab = t==='char'?'👤 人物':t==='place'?'🗺️ 地点':(t==='proper'?'📌 专名':'🧵 副线');
       return `<div class="gs-group${fold?' gs-folded':''}" data-gs-type="${t}" data-gs-catfold>
-        <div class="gs-title" role="button" tabindex="0" title="展开/收起">${lab}（${(arr||[]).length}）<span class="gs-cat-ico">${fold?'▸':'▾'}</span></div>
+        <div class="gs-title" role="button" tabindex="0" title="展开/收起">${lab}（${cnt}）<span class="gs-cat-ico">${fold?'▸':'▾'}</span></div>
         ${body||'<span class="muted">（无）</span>'}
       </div>`;
     }).join('')}
@@ -7775,7 +8214,7 @@ function glossaryCardHtml(){
 function bindGlossary(){
   if(!state.outline || !state.outline.glossary) return;
   const g = state.outline.glossary;
-  const getArr = t => t==='char'?(g.characters||[]):t==='place'?(g.places||[]):(t==='proper'?(g.propernouns||[]):(g.subplots||[]));
+  const getArr = t => t==='char'?(g.characters||[]):t==='walkon'?(g.walkons||[]):t==='place'?(g.places||[]):(t==='proper'?(g.propernouns||[]):(g.subplots||[]));
   // 整卡收缩/展开：点击标题栏（与规划师卡一致）；点工具按钮不触发折叠；词条始终保持默认折叠
   const gsHead = $('[data-gs-card-toggle]');
   if(gsHead){
@@ -7855,6 +8294,8 @@ function bindGlossary(){
         }
       }
       persist();                               // 改动即保存（防误操作丢数据）
+      // v1.0.28x：人物「类别」变更 → 立即按新档位归组展示（主要人物/次要配角互移）
+      if(type==='char' && key==='tier'){ renderGlossaryOnly(); return; }
       glossaryHistoryPush(`修改 ${isName?'名称':'字段'}「${type}·${idx}」`); // 追加·历史更改记录
       inp.dataset.orig = newVal;               // 该输入框的 basline 更新
       // 触发「改动透明化」评估：长篇（有正文生成）时弹选择卡
@@ -7873,11 +8314,6 @@ function bindGlossary(){
   $$('[data-gs-extract]').forEach(b=> b.onclick = ()=>{ manualExtractGlossary(); });
   // v8c 清理未使用：弹窗勾选确认删除全部正文零出现的条目
   $$('[data-gs-clean]').forEach(b=> b.onclick = openCleanPanel);
-  // v8c 词典自动补全开关（默认开）：批量生成后自动提取；关则仅保留手动按钮
-  $$('[data-gs-autofill]').forEach(b=> b.onchange = ()=>{
-    state.glossAutoFill = b.checked; persist();
-    toast(state.glossAutoFill ? '词典自动补全已开启（批量生成后自动提取新实体）' : '词典自动补全已关闭（仅保留手动「📥 提取新增」）');
-  });
   // v1.0.113 副线追踪开关（默认开）：每章生成后自动吸收副线进度
   $$('[data-gs-subfill]').forEach(b=> b.onchange = ()=>{
     state.subAutoFill = b.checked; persist();
@@ -7911,7 +8347,182 @@ function bindGlossary(){
     $$('.gs-panel').forEach(p=>{ if(p.id!=='gsHistory') p.hidden = true; }); // 与内容互斥显示
     if(show) b.classList.add('gs-tool-on'); else b.classList.remove('gs-tool-on');
   });
+  // v1.0.211：词典达人四类「人物关系表/地名关联表/专名关联表/世界观规则」查看入口
+  $$('[data-gs-view]').forEach(b=> b.onclick = ()=> openGlossaryTableView(b.dataset.gsView));
+  // 方案丙：人物卡 relation 只读区的「去人物关系表编辑」引导按钮 → 直接打开人物关系表编辑器
+  $$('[data-gs-rel-edit]').forEach(b=> b.onclick = ()=> openGlossaryTableView('rel'));
+  // v1.0.225：4表编辑历史角标
+  $$('[data-gvth-badge]').forEach(b=> b.onclick = openRelTablesHistoryPanel);
   }
+// v1.0.217：世界观规则格式化——把（可选）适用对象 scope 一并呈现，形如 [类别·适用对象] 规则
+function fmtWR(x){
+  if(!x || typeof x !== 'object') return '';
+  const c=String(x.cat||'').trim(), s=String(x.scope||'').trim(), r=String(x.rule||'').trim();
+  const head = `${c?`[${c}]`:''}${s?`·${s}`:''}`.trim();
+  return `${head}${head&&r?' ':''}${r}`.trim();
+}
+// v1.0.213 关联表有效条目：真正的 关系/关联 必须连接两个不同的实体端点（from/a 与 to/b 都非空且不互等），
+// 统一过滤 AI 塞入的「端名空/自身到自身」垃圾条目，保证卡片/弹窗/注入/自检各处计数一致且不再虚高（如 333 条实为填充垃圾）。
+function validAssoc(list, ka, kb){
+  if(!Array.isArray(list)) return [];
+  return list.filter(x=>{
+    if(!x || typeof x !== 'object') return false;
+    const a=String(x[ka]||'').trim(), b=String(x[kb]||'').trim();
+    return !!a && !!b && a!==b;
+  });
+}
+// v1.0.211+ 词典「关系/关联/世界观规则」可编辑弹窗（v1.0.225 升级为可编辑 + 独立历史）
+// 数据存于 glossary._relationshipTable/_placeContacts/_properContacts/_worldRules；
+// 支持增删改行；保存写回 glossary 并 persist，正文生成时每次都读实时 glossary，故重新生成章节即生效。
+const GVT_CFG = {
+  rel: { name:'👥 人物关系表', key:'_relationshipTable', empty:'暂无人物关系记录', fields:[
+    {k:'a',  ph:'人物A'}, {k:'relation', ph:'关系'}, {k:'b', ph:'人物B'}, {k:'note', ph:'备注(可选)'} ],
+    row:x=>`<div class="dm-rel"><b>${esc(x.a||'')}</b> ←${esc(x.relation||'？')}→ <b>${esc(x.b||'')}</b>${x.note?` <span class="muted">· ${esc(x.note)}</span>`:''}</div>` },
+  pc: { name:'🗺️ 地名关联表', key:'_placeContacts', empty:'暂无地名关联记录', fields:[
+    {k:'from', ph:'地名A'}, {k:'to', ph:'地名B'}, {k:'relation', ph:'关联'}, {k:'note', ph:'备注(可选)'} ],
+    row:x=>`<div class="dm-rel">${esc(x.from||'')} ↔ ${esc(x.to||'')} <span class="muted">· ${esc(x.relation||'')}${x.note?('：'+esc(x.note)):''}</span></div>` },
+  prc: { name:'📌 专名关联表', key:'_properContacts', empty:'暂无专名关联记录', fields:[
+    {k:'from', ph:'专名A'}, {k:'to', ph:'专名B'}, {k:'relation', ph:'关联'}, {k:'note', ph:'备注(可选)'} ],
+    row:x=>`<div class="dm-rel">${esc(x.from||'')} ↔ ${esc(x.to||'')} <span class="muted">· ${esc(x.relation||'')}${x.note?('：'+esc(x.note)):''}</span></div>` },
+  wr: { name:'⚙️ 世界观规则', key:'_worldRules', empty:'暂无世界观规则（需词典达人生成）', fields:[
+    {k:'cat', ph:'类别'}, {k:'scope', ph:'适用范围(可选)'}, {k:'rule', ph:'规则内容'} ],
+    row:x=>{ const sc=String(x.scope||'').trim(); return `<div class="dm-wr"><b>${esc(x.cat||'')}${sc?` · ${esc(sc)}`:''}</b><div>${esc(x.rule||'')}</div></div>`; } }
+};
+function openGlossaryTableView(type){
+  const o = state.outline; const g = (o && o.glossary) || {};
+  const c = GVT_CFG[type]; if(!c) return;
+  const list = Array.isArray(g[c.key]) ? g[c.key].map(x=>({...x})) : [];
+  const keyA = type==='rel' ? 'a' : 'from', keyB = type==='rel' ? 'b' : 'to';
+  // 快照：保存前记录旧值，供编辑中临时比对与历史判定
+  const before = JSON.stringify(g[c.key]||[]);
+  const ov = document.createElement('div'); ov.className='gs-overlay';
+  const fieldInputs = (x, idx) => c.fields.map(f=>{
+    const v = x ? (x[f.k]||'') : '';
+    return `<input class="gvt-in" data-gvt-f="${f.k}" data-gvt-i="${idx}" placeholder="${f.ph}" value="${esc(v)}" />`;
+  }).join('');
+  const renderRows = (rows)=>{
+    if(!rows.length) return `<span class="muted">${c.empty}</span>`;
+    return rows.map((x,i)=>{
+      const key = type==='wr' ? (x.rule||'') : (String(x[keyA]||'') + '↔' + String(x[keyB]||''));
+      return `<div class="gvt-row" data-gvt-idx="${i}">
+        <div class="gvt-fields">${fieldInputs(x, i)}</div>
+        <span class="gvt-prev">${c.row(x)}</span>
+        <div class="gvt-ops">
+          <button type="button" class="btn ghost gs-tool gvt-del" data-gvt-del="${i}" title="移除该行">🗑</button>
+        </div>
+      </div>`;
+    }).join('');
+  };
+  const writeBack = ()=>{
+    // 从 DOM 收集当前行值（只收集还剩 input 的行），重建为干净数组
+    const rows = [];
+    ov.querySelectorAll('.gvt-row').forEach(el=>{
+      const nr = {}; let any = false;
+      el.querySelectorAll('[data-gvt-f]').forEach(inp=>{
+        const v = inp.value.trim();
+        if(v){ nr[inp.dataset.gvtF] = v; any = true; }
+        else nr[inp.dataset.gvtF] = '';
+      });
+      if(any){
+        if(type==='wr'){ if(!String(nr.rule||'').trim()) return; }
+        else { if(!String(nr[keyA]||'').trim() || !String(nr[keyB]||'').trim()) return; }
+        rows.push(nr);
+      }
+    });
+    const old = JSON.stringify(g[c.key]||[]);
+    g[c.key] = rows;
+    const changed = old !== JSON.stringify(rows);
+    if(changed){ pushRelTablesHistory(type); persist(); }
+    return changed;
+  };
+  const addRow = ()=>{
+    const rowsEl = ov.querySelector('.gvt-rows');
+    const nr = {}; c.fields.forEach(f=> nr[f.k]='');
+    const el = document.createElement('div'); el.className='gvt-row'; el.dataset.gvtIdx='-1';
+    el.innerHTML = `<div class="gvt-fields">${fieldInputs(nr, -1)}</div><div class="gvt-prev muted">（新行，填好后点「保存」或按需继续增删）</div><div class="gvt-ops"><button type="button" class="btn ghost gs-tool gvt-del" data-gvt-del="-1" title="丢弃该行">🗑</button></div>`;
+    rowsEl.appendChild(el);
+  };
+  const rowsEl = `<div class="gvt-rows">${renderRows(list)}</div>`;
+  ov.innerHTML = `<div class="gs-modal gs-view-modal gvt-modal">
+    <div class="gs-modal-head"><b>${c.name}（<span class="gvt-count">${list.length}</span> 条 · 可编辑）</b><button class="gs-x" data-gvt-close>✕</button></div>
+    <div class="cv-body" style="max-height:60vh;overflow:auto">
+      <p class="muted" style="margin:0 0 8px">直接编辑即可；保存后自动写回万物词典，重新生成正文章节时即套用新值。</p>
+      ${rowsEl}
+      <button type="button" class="btn ghost gs-tool gvt-add">＋ 新增一行</button>
+    </div>
+    <div class="gs-actions"><button type="button" class="btn gvt-save">💾 保存</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = ()=> ov.remove();
+  ov.querySelector('[data-gvt-close]').onclick = close;
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('.gvt-add').onclick = addRow;
+  ov.querySelector('.gvt-save').onclick = ()=>{ writeBack(); const n = (g[c.key]||[]).length; ov.querySelector('.gvt-count').textContent = n; toast(`${c.name}已保存（${n} 条）——重新生成章节即生效`); };
+  ov.addEventListener('click', e=>{
+    const del = e.target.closest('.gvt-del');
+    if(del){ const n=del.dataset.gvtDel; if(n==='-1'){ del.closest('.gvt-row').remove(); return; } const row=del.closest('.gvt-row'); if(row) row.remove(); }
+  });
+}
+// ４表历史：每次「保存」时若内容有变化，就 push 一次 4 表快照；保留 6 次（FIFO）。
+function pushRelTablesHistory(srcType){
+  const g = state.outline && state.outline.glossary; if(!g) return;
+  g._relTableHistory = Array.isArray(g._relTableHistory) ? g._relTableHistory : [];
+  const snap = {
+    ts: Date.now(), from: srcType,
+    rel: (g._relationshipTable||[]).map(x=>({...x})),
+    pc:  (g._placeContacts||[]).map(x=>({...x})),
+    prc: (g._properContacts||[]).map(x=>({...x})),
+    wr:  (g._worldRules||[]).map(x=>({...x}))
+  };
+  // 与最近一条完全相同则不再重复入史
+  const last = g._relTableHistory[0];
+  if(last && JSON.stringify({r:last.rel,p:last.pc,q:last.prc,w:last.wr}) === JSON.stringify({r:snap.rel,p:snap.pc,q:snap.prc,w:snap.wr})) return;
+  g._relTableHistory.unshift(snap);
+  if(g._relTableHistory.length > 6) g._relTableHistory.length = 6;
+  persist();
+}
+// v1.0.225：4表历史查看面板——展示每条快照的4表内容，可「一键还原」到该版本（覆盖当前4表并入库）
+function openRelTablesHistoryPanel(){
+  const g = state.outline && state.outline.glossary; if(!g) return;
+  const hist = Array.isArray(g._relTableHistory) ? g._relTableHistory : [];
+  if(!hist.length){ toast('暂无4表编辑历史'); return; }
+  const fmtTs = ts=>{ const d=new Date(ts); return (d.getMonth()+1)+'-'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const fmtRel = arr=>(arr||[]).map(x=>`<div class="dm-rel"><b>${esc(x.a||'')}</b> ←${esc(x.relation||'？')}→ <b>${esc(x.b||'')}</b>${x.note?` <span class="muted">· ${esc(x.note)}</span>`:''}</div>`).join('')||'<span class="muted">（无）</span>';
+  const render = (h)=>{
+    const wr=(h.wr||[]).map(x=>`<div class="dm-wr"><b>${esc(x.cat||'')}</b><div>${esc(x.rule||'')}</div></div>`).join('')||'<span class="muted">（无）</span>';
+    const pc=(h.pc||[]).map(x=>`<div class="dm-rel">${esc(x.from||'')} ↔ ${esc(x.to||'')} <span class="muted">· ${esc(x.relation||'')}${x.note?('：'+esc(x.note)):''}</span></div>`).join('')||'<span class="muted">（无）</span>';
+    const prc=(h.prc||[]).map(x=>`<div class="dm-rel">${esc(x.from||'')} ↔ ${esc(x.to||'')} <span class="muted">· ${esc(x.relation||'')}${x.note?('：'+esc(x.note)):''}</span></div>`).join('')||'<span class="muted">（无）</span>';
+    const srcName = h.from==='rel'?'人物关系表':h.from==='pc'?'地名关联表':h.from==='prc'?'专名关联表':(h.from==='wr'?'世界观规则':'手动编辑');
+    return `<div class="dm-prev-meta">${fmtTs(h.ts)} · ${esc(srcName)} · 关系表 ${(h.rel||[]).length} · 地名 ${(h.pc||[]).length} · 专名 ${(h.prc||[]).length} · 规则 ${(h.wr||[]).length} 条</div>
+      <div class="dm-tables">
+        <details class="dm-fold"><summary>👥 人物关系表（${(h.rel||[]).length}）</summary><div class="dm-rel-table">${fmtRel(h.rel)}</div></details>
+        <details class="dm-fold"><summary>🗺️ 地名关联表（${(h.pc||[]).length}）</summary><div class="dm-rel-table">${pc}</div></details>
+        <details class="dm-fold"><summary>📌 专名关联表（${(h.prc||[]).length}）</summary><div class="dm-rel-table">${prc}</div></details>
+        <details class="dm-fold"><summary>⚙️ 世界观规则（${(h.wr||[]).length}）</summary><div class="dm-rel-table">${wr}</div></details>
+      </div>
+      <button type="button" class="btn gvt-restore" data-gvt-restore="${hist.indexOf(h)}">↩️ 一键还原到此版本</button>`;
+  };
+  const ov = document.createElement('div'); ov.className='gs-overlay';
+  const idx0 = 0;
+  ov.innerHTML = `<div class="gs-modal gs-view-modal gvt-hist-modal">
+    <div class="gs-modal-head"><b>🕘 4表历史（${hist.length}/6）</b><button class="gs-x" data-gvth-close>✕</button></div>
+    <div class="cv-body" style="max-height:62vh;overflow:auto"><div id="gvthBody" style="display:flex;flex-direction:column;gap:14px">${hist.map((h,i)=>`<div class="gvt-hist-item" data-gvt-item="${i}">${render(h)}</div>`).join('')}</div></div>
+    <div class="muted" style="padding:8px 14px">点「还原」会把所选版本的 4 表整体覆盖到当前词典（含重新生成章节时立即生效）。</div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-gvth-close]').onclick = ()=> ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+  ov.addEventListener('click', e=>{
+    const r = e.target.closest('[data-gvt-restore]');
+    if(!r) return;
+    const i = +r.dataset.gvtRestore; const h = hist[i]; if(!h) return;
+    g._relationshipTable = (h.rel||[]).map(x=>({...x}));
+    g._placeContacts   = (h.pc||[]).map(x=>({...x}));
+    g._properContacts  = (h.prc||[]).map(x=>({...x}));
+    g._worldRules      = (h.wr||[]).map(x=>({...x}));
+    persist(); ov.remove(); toast('已还原 4 表到该历史版本，重新生成章节即生效');
+  });
+}
 
 // 快照（项5）：记录任一条目改动前的整本词典，供「改动透明化弹窗」内的即时回退；最多保留 10 步防无限膨胀
 let gsUndoStack = [];
@@ -7990,7 +8601,7 @@ function sourceHasGlossary(g){
   return g && ((g.characters&&g.characters.length)||(g.places&&g.places.length)||(g.propernouns&&g.propernouns.length)||(g.subplots&&g.subplots.length));
 }
 // v8 阶段3：依遵从度把「导入词典(imported)」与「模型输出词典(modelOut)」合并为新作权威词典。
-// 语义与 adherenceHint/adherenceSys 对齐：a>=50 导入为主，a<50 模型为主，a<30 几乎放弃。
+// 语义与 adherenceHint 对齐：a>=50 导入为主，a<50 模型为主，a<30 几乎放弃。
 // 返回 { glossary, kept, added, rec }。
 function glossaryMerge(imported, modelOut, adherence, allowFill){
   const cat = ['characters','places','propernouns'];
@@ -8188,7 +8799,7 @@ function syncNameEverywhere(oldName, newName){
   if(Array.isArray(o.chapterPlans)) o.chapterPlans.forEach(p => {
     if(!p) return;
     if(Array.isArray(p.requiredEntities)) p.requiredEntities = p.requiredEntities.map(rep);
-    if(Array.isArray(p.beats)) p.beats.forEach(b => { if(b && Array.isArray(b.requiredEntities)) b.requiredEntities = b.requiredEntities.map(rep); });
+    // v1.0.285：beats 数组退役——拍内 requiredEntities 已无数据源，不再迁移
   });
   if(o.navBeacon && typeof o.navBeacon.protagonist === 'string'){
     const pr = o.navBeacon.protagonist;
@@ -8243,7 +8854,7 @@ function openGlossaryPanel(info){
   const scan = scanGlossaryImpact(info);
   const hits = scan.hits || [];
 
-  const labels = {name:'名称', identity:'身份', age:'岁数', gender:'性别', appearance:'外貌', hobby:'爱好', mannerism:'小动作/口头禅', relation:'关系', trait:'性格', type:'类型', note:'说明'};
+  const labels = {name:'名称', identity:'身份', age:'岁数', gender:'性别', appearance:'外貌', hobby:'爱好', mannerism:'小动作/口头禅', catchphrase:'口头禅', relation:'关系', trait:'性格', type:'类型', note:'说明'};
   const kind = info.isName ? `「${info.oldVal||''}」→「${info.newVal||''}」`
     : `「${itemName}」的「${labels[info.key]||info.key||'详情'}」已修改（正文引用该条目 ${scan.word?('出现自 「'+scan.word+'」'):''}）`;
   const hitHtml = hits.length ? hits.map(h=>`
@@ -8427,6 +9038,9 @@ const CH_PAGE_SIZE = 10;
 // v239/905-3：长篇章节卡模板（v240 起供分页切片渲染复用）
 function chCardHtml(c, i){
   const hasC = !!(c.content && c.content.trim());
+  // v1.0.30x：正文每章挂「📖 教案」，点开定位到本章教案（须该章所属老师已备课）
+  const planGi = chapterOfPlan(i);
+  const planBtn = planGi >= 0 ? `<button class="btn ghost" data-plan-ch="${i}" data-plan-gi="${planGi}" title="查看本章教案（老师${planGi+1}）">📖 教案</button>` : '';
   // v238/A：长篇恒展开——无正文的卡片也保留正文框（矮空框+占位提示），不再默认折叠成细标题条藏框；
   // 点标题行仍可手动折叠（data-fold 切换逻辑不变）
   return `<div class="card ch-card" data-ch-card="${i}" style="background:var(--panel);border:1px solid var(--line)">
@@ -8440,6 +9054,7 @@ function chCardHtml(c, i){
           <textarea data-ch="${i}" class="${hasC?'':'ch-ta-empty'}" style="margin-top:8px" ${hasC?'':'placeholder="暂无正文：点击「🔄 重生成」生成，或直接在此输入"'}>${esc(c.content)}</textarea>
           <div class="btn-row">
             <button class="btn ghost" data-regen="${i}" ${state.generating?'disabled':''}>🔄 重生成</button>
+            ${planBtn}
             <button class="btn ghost" data-read="${i}">📖 阅读</button>
             <button class="btn ghost" data-ch-sum="${i}" title="生成本章速读梗概（本章正文压缩至约 1/3，省时阅读）" ${hasC?'':'disabled'}>🏮 本章梗概</button>
             ${hasChVersions(i)?`<button class="btn ghost" data-ver="${i}">📚 版本(${chVersions(i).length})</button>`:''}
@@ -8462,7 +9077,7 @@ function renderChapters(){
       // v241/908-3：撤除第一章空框占位（v240 曾保留）——空态只给一行提示
       const wantN = chapterCountVal();
       wrap.innerHTML = wantN > 0
-        ? `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：确认大纲后这里会出现章节卡。</span></div>`
+        ? `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：大纲生成后这里会出现章节卡。</span></div>`
         : `<div class="ch-pager"><span class="muted">共 0 章：先在第②步生成大纲。</span></div>`;
       return;
     }
@@ -8556,7 +9171,7 @@ function openReader(i){
   if(body0) body0.scrollTop = 0;
   updateReaderProgress();   // v10.42 打开章节即复位进度条（无续读时为 0）
   try{
-    const rp = JSON.parse(localStorage.getItem('fyp_rp_' + (lib.curId||'x') + '_' + i) || 'null');
+    const rp = JSON.parse(localStorage.getItem(nsKey('rp_') + (lib.curId||'x') + '_' + i) || 'null');
     if(rp && rp.top){
       requestAnimationFrame(()=>{ const b=$('#readerBody'); if(b) b.scrollTop = rp.top; updateReaderProgress(); });
     }
@@ -8573,7 +9188,7 @@ function bindReaderScrollSave(){
       _t = null;
       try{
         // fixed8：按 项目id + 章节 分别记忆，每章各自续读上次关闭前位置
-        localStorage.setItem('fyp_rp_' + (lib.curId||'x') + '_' + readerCur, JSON.stringify({ top: b.scrollTop }));
+        localStorage.setItem(nsKey('rp_') + (lib.curId||'x') + '_' + readerCur, JSON.stringify({ top: b.scrollTop }));
       }catch(e){}
       updateReaderProgress();   // v10.42 滚动过程同步阅读进度条 + 悬停气泡
     }, 400);
@@ -8645,7 +9260,7 @@ function bindReader(){
     const item = e.target.closest('[data-toc]'); if(!item) return;
     openReader(+item.dataset.toc);
   };
-  // v1.0.138 底部中央「概」按钮 → 改为优先展示本章节拍表（beats），没有则展示本章速读梗概(strip)，都没有则引导。
+  // v1.0.138 底部中央「概」按钮 → 优先展示本章节拍编排（beatsText），没有则展示本章速读梗概(strip)，都没有则引导。
   const synBtn = $('#readerSynBtn'), synPop = $('#readerSynPop'), synCard = $('#readerSynCard');
   if(synBtn && synPop && synCard){
     synBtn.onclick = (e)=>{
@@ -8655,12 +9270,38 @@ function bindReader(){
       const strip = ch && String(ch.strip||'').trim();
       const plans = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
       const plan = plans[readerCur];
-      const beats = (plan && Array.isArray(plan.beats)) ? plan.beats : [];
+      const btTxt = (plan && typeof plan.beatsText === 'string' && plan.beatsText.trim()) ? plan.beatsText.trim() : '';
+      // v1.0.28y：优先展示「章节编排」纯文本中的 承接点 / 收束设计 两个关键段（正文据此起笔与收束）
+      // v1.0.280：加固——改为段落式切段（标题同行/独占一行/多行内容都识别，遇下一小节标题即止）；
+      // 模型按「自然融入一段文字、不是小标题列表」输出、没有小节标题时，直接展示编排纯文本概览，概览不再空白。
+      const SEC_NAMES = ['承接点','承接','场景链与切换','场景链','逐拍推进','情绪弧','心情弧','情绪基调','必须使用实体','必须实体','出场实体','埋设伏笔','收束设计','收束','设定'];
+      const secOf = (name, alias)=>{
+        const lines = btTxt.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+        const re = new RegExp('^(?:'+(alias?name+'|'+alias:name)+')[：:\\s]*(.*)$');
+        for(let i=0;i<lines.length;i++){
+          const m = lines[i].match(re);
+          if(!m) continue;
+          const buf = [(m[1]||'').trim()].filter(Boolean);
+          for(let j=i+1;j<lines.length;j++){
+            if(SEC_NAMES.some(n=>new RegExp('^(?:'+n+')[：:\\s]').test(lines[j]))) break;   // 下一小节标题即止
+            buf.push(lines[j]);
+          }
+          const v = buf.join('；').replace(/\s+/g,' ').trim();
+          if(v) return v.slice(0, 200);
+        }
+        return null;
+      };
       let title, body;
-      if(beats.length){
-        title = `第${toCnNum(readerCur+1)}章 · 节拍表（${currentBeatCfg().label}）`;
-        const beatRows = beats.map((b,i)=>`<div class="rb-beat"><b>${i+1}. ${esc(beatLabelFor(b.type))}</b> ${esc(b.event||'')} <span class="rb-emo">情绪：${esc(b.emotional||'按上下文')}</span>${(b.requiredEntities||[]).length?` <span class="rb-ent">实体：${esc(b.requiredEntities.join('、'))}</span>`:''}</div>`).join('');
-        body = `<div class="syn-body rb-beats">${beatRows}</div>`;
+      if(btTxt){
+        const cj = secOf('承接点','承接'); const ss = secOf('收束设计','收束');
+        // v1.0.289：时间线精华（tlEssence）——节拍表同源附带，供全书时间线判时；阅读处顺带展示，可预览时间线将注入的内容
+        const _te = _timelineEssenceOf((Array.isArray(o.chapterPlans)?o.chapterPlans[readerCur]:null));
+        title = `第${toCnNum(readerCur+1)}章 · 本章概览`;
+        body = `<div class="syn-body rb-overview">
+          ${_te?`<div class="rb-ov-sec"><b class="rb-ov-lb">⏱ 时间线要点（将注入全书时间线）</b><div>${esc(_te)}</div></div>`:''}
+          ${cj||ss?`<div class="rb-ov-sec"><b class="rb-ov-lb">承接点</b><div>${cj?esc(cj):'<span class="muted">（本章编排未单列承接点）</span>'}</div></div>
+          ${ss?`<div class="rb-ov-sec"><b class="rb-ov-lb">收束设计</b><div>${esc(ss)}</div></div>`:''}`:`<div class="rb-ov-sec"><b class="rb-ov-lb">本章编排</b><div>${esc(clipText(btTxt, 180))}</div></div>`}
+        </div>`;
       } else if(strip){
         title = `第${toCnNum(readerCur+1)}章 · 本章梗概`;
         body = `<div class="syn-body">${esc(strip)}</div>`;
@@ -8716,7 +9357,7 @@ function renderLongProgress(){
 /* ---------- P2 角色 ---------- */
 function viewCharacters(){
   if(!readyForAssets()){
-    return `<div class="center-empty">请先在「故事」里确认大纲并生成章节。<br>角色提示词需要基于完整故事生成。</div>`;
+    return `<div class="center-empty">请先在「故事」里生成大纲并生成章节。<br>角色提示词需要基于完整故事生成。</div>`;
   }
   if(!state.characters.length){
     return `<div class="card">
@@ -8917,7 +9558,7 @@ function coverCardHtml(){
     </div>`;
 }
 function viewScenes(){
-  if(!readyForAssets()) return `<div class="center-empty">请先在「故事」里确认大纲并生成章节。</div>`;
+  if(!readyForAssets()) return `<div class="center-empty">请先在「故事」里生成大纲并生成章节。</div>`;
   // 长篇模式：只需封面提示词，无需"场景/角色/分镜"等视频资产
   if(isLong()) return coverCardHtml();
   const coverCard = coverCardHtml();
@@ -8949,7 +9590,7 @@ function viewScenes(){
 
 /* ---------- P4 分镜 ---------- */
 function viewStoryboard(){
-  if(!readyForAssets()) return `<div class="center-empty">请先在「故事」里确认大纲并生成章节。</div>`;
+  if(!readyForAssets()) return `<div class="center-empty">请先在「故事」里生成大纲并生成章节。</div>`;
   if(!state.storyboard.length){
     return `<div class="card">
       <h3>🎞️ 分镜文字</h3>
@@ -9167,7 +9808,6 @@ function buildLongMarkdown(){
   const o = state.outline;
   let md = `# ${o?.title||'未命名长篇小说'}\n\n`;
   md += `## 一、故事大纲\n**小说简介**：${o?.logline||''}\n\n`;
-  if(o?.anchor) md += `**核心定位**：${o.anchor}\n${o?.thesis?`**深层命题**：${o.thesis}`:''}\n\n`;
   (o?.chapters||[]).forEach((c,i)=>{
     // v1.0.117 导出内容框只保留各章标题：不再含本章梗概(strip)与章节正文（成书全文走 TXT/EPUB/DOCX）
     md += `${i+1}. **${cleanChapterTitle(c.title)||''}**\n`;
@@ -9266,7 +9906,6 @@ function buildMarkdown(){
   const o = state.outline;
   let md = `# 影视前期资产包 · ${o?.title||'未命名'}\n\n> 由「影视前期提示词生成器」生成 · 出图请在即梦用提示词生成\n\n`;
   md += `## 一、故事大纲\n**小说简介**：${o?.logline||''}\n\n`;
-  if(o?.anchor) md += `**核心定位**：${o.anchor}\n${o?.thesis?`**深层命题**：${o.thesis}`:''}\n\n`;
   (o?.chapters||[]).forEach((c,i)=>{
     // v1.0.117 导出内容框只保留各章标题，去掉本章梗概与章节正文（全文走 TXT/EPUB/DOCX）
     md += `${i+1}. **${cleanChapterTitle(c.title)||''}**\n`;
@@ -9324,36 +9963,24 @@ function bindView(){
 
   // P1
   const idea = $('#ideaInput'); if(idea){
-    idea.oninput = ()=> state.idea = idea.value;
-    bindPolishIdea();   // v10.13 优化构想按钮 + 优化区绑定
-    // v1.0.178「默认大纲」开关：打开→单发 1 个默认大纲（跳过 3 选，走 genOutline），关闭→3 候选比选（genOutlineMulti）
-    $('#btnGenOutline').onclick = ()=> (state.quickOutline ? genOutline() : genOutlineMulti($('#btnGenOutline')));
-    const qtTg = $('#chkQuickOutline'); if(qtTg){
-      qtTg.onchange = ()=>{ state.quickOutline = qtTg.checked; persist(); render(); toast(state.quickOutline?'已开启「默认大纲」：生成时将跳过 3 个候选选择，直接生成 1 个默认大纲':'已关闭「默认大纲」：生成时将一次给 3 个候选供比选'); };
-    }
-    // v1.0.186 叙事主体·团队：选中即持久化并整页重渲染（后续构想/大纲/规划/正文全链路按所选团队注入）
+    idea.oninput = ()=>{ state.idea = idea.value; syncOrigIdeaCard(); };
+    // 阶段3/3.2：生成大纲 = 纯搬运函数（before-outline 态也仅在 ideaInput 在场时才有 btnGenOutline）
+    const _go0 = $('#btnGenOutline'); if(_go0) _go0.onclick = ()=> genOutline();
+    // v1.0.186 叙事主体·团队：选中即持久化并整页重渲染
     const tsTg = $('#teamPick'); if(tsTg){
       tsTg.querySelectorAll('[data-team]').forEach(lb=>{
         lb.onclick = (e)=>{ e.preventDefault(); if(state.teamShape === lb.dataset.team) return; state.teamShape = lb.dataset.team; persist(); render(); toast(`叙事主体已切换为「${currentTeamShape().label}」`); };
       });
     }
   }
-  // v11 简介字数范围（生成大纲前、仅长篇）：双数字输入，min>max 自动对调、max 上限 5000
-  const llMin = $('#llMin'), llMax = $('#llMax');
-  if(isLong() && llMin && llMax){
-    const commitLL = ()=>{
-      let mn = Math.floor(Number(llMin.value)), mx = Math.floor(Number(llMax.value));
-      if(!Number.isFinite(mn) || mn<1) mn = 100;   // v230/T4 默认 100–300
-      if(!Number.isFinite(mx) || mx<1) mx = 300;
-      if(mn>5000){ mn = 5000; llMin.value = 5000; }
-      if(mx>5000){ mx = 5000; llMax.value = 5000; }
-      if(mn>mx){ const _t=mn; mn=mx; mx=_t; llMin.value=mn; llMax.value=mx; }   // 兜底：自动对调
-      state.loglineRange = {min:mn, max:mx};
-      persist();
-    };
-    llMin.addEventListener('change', commitLL);
-    llMax.addEventListener('change', commitLL);
-  }
+  // v1.0.205 阶段5.5 修复：大纲已生成视图（后大纲格）不含 ideaInput，原将以下绑定锁在 if(ideaInput) 块内
+  // 导致「后大纲格生成大纲 / 词典达人 / 候选卡采用方案」按钮全部无回调、点击无反应。改为独立判空绑定。
+  bindPolishIdea();   // v10.13 优化构想/提示条/历史等绑定：须与视图无关地无条件执行（原锁 if(ideaInput) 内，后大纲视图会失效）
+  const _goB = $('#btnGenOutline'); if(_goB) _goB.onclick = ()=> genOutline();
+  const _p2 = $('#polishCards2'); if(_p2) renderPolishCards(_p2);
+  $$('[data-gen-outline]').forEach(b=> b.onclick = ()=> genOutline());
+  bindDictMaster();
+  bindDictEnrich();
   // v10.18 结构骨架 / 可复用词典折叠（默认收起，点标题展开）
   $$('[data-rec-fold]').forEach(h=> h.onclick = ()=>{
     const key = h.dataset.recFold;
@@ -9383,8 +10010,8 @@ function bindView(){
         // v225/P5-B：占位态章节数变更——规划师已写过节拍表时显式确认并归档，再按新数量重建占位
         if(_o && Array.isArray(_o.chapters) && _o.chapters.length>0 && _o.chapters.length !== v){
           const _hasPlans = Array.isArray(_o.chapterPlans) && _o.chapterPlans.some(Boolean);
-          if(_hasPlans && !confirm(`规划师已生成过本章锚点/节拍表。章节数改为 ${v} 将按新数量重建章节占位（旧内容先归档入历史版本）。继续？`)){ render(); return; }
-          if(_hasPlans){ snapshotOutline(); _o.chapterPlans = new Array(v).fill(null); }
+          if(_hasPlans && !confirm(`规划师已生成过本章锚点/节拍表。章节数改为 ${v} 将按新数量重建章节占位（旧正文将清空重建）。继续？`)){ render(); return; }
+          if(_hasPlans){ _o.chapterPlans = new Array(v).fill(null); }
           _o.chapters = Array.from({length:v}, ()=>({title:'', summary:''}));
         }
         state.chapterCount = v;
@@ -9403,21 +10030,13 @@ function bindView(){
   bindOrigIdea();     // v10.2 原始构想只读卡绑定
   bindOutlineFold();  // v1.0.107 故事大纲卡「小说简介」折叠绑定
   bindLoglineEdit();  // v235/E4 小说简介笔图标编辑绑定
-  bindAnchors();     // v1.0.116 简介区核心定位/深层命题可编辑 + 重新提取
   bindAiRecipe();     // v10.30 AI配方助手绑定
   bindChapterPlan();  // v10.11 全书规划师区块绑定
   bindChapterPlanFold(); // v10.14 梗概卡折叠绑定
   bindChapterTitles();// v10.14 章节标题编辑 + 复制绑定
-  bindWriteStyle();   // v2.0 写作风格卡片绑定（chips/浓度/预设/收藏/管理/清空）
+  bindWriteStyle();   // v2.0 写作风格卡片绑定（chips/预设/收藏/管理/清空）
   // v241/908-4（A2）：确认大纲时若 state.chapters 与 outline.chapters 数量错位（v225/P5-B 断裂存量），先对齐再置标志
   const btnCO = $('#btnConfirmOutline'); if(btnCO) btnCO.onclick = ()=>{ syncChaptersFromOutline(); state.outlineConfirmed=true; persist(); render(); };
-  const btnOH = $('#btnOutlineHist'); if(btnOH) btnOH.onclick = ()=> openOutlineHistoryPanel();
-  // v230/3.3+3.5：候选大纲 选用/预览 + 「🔄 重生成大纲」
-  $$('[data-cand-adopt]').forEach(b=> b.onclick = ()=> adoptOutlineCandidate(b.dataset.candAdopt));
-  $$('[data-cand-prev]').forEach(b=> b.onclick = ()=> previewOutlineCandidate(b.dataset.candPrev));
-  // v239/905-2：候选区折叠/展开切换（状态随项目持久化）
-  $$('[data-cand-fold]').forEach(b=> b.onclick = ()=>{ state._outlineCandsFolded = !state._outlineCandsFolded; persist(); render(); });
-  const btnRegen = $('#btnOutlineRegen'); if(btnRegen) btnRegen.onclick = ()=> regenOutlineBatch(btnRegen);
   const btnRO = $('#btnReOutline'); if(btnRO) btnRO.onclick = ()=>{ state.outline=null; state.outlineConfirmed=false; state.chapters=[]; persist(); render(); };
   // 短片：一键生成全部章节（从头生成全部，保留原「生成全部」覆盖语义）
   const btnGAShort = $('#btnGenAllChapters'); if(btnGAShort) btnGAShort.onclick = ()=> genManyChapters(state.chapters.length, true);
@@ -9552,9 +10171,10 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
   renderChapters();
   // 用事件委托处理章节区内部点击：分页/折叠会重建部分按钮，委托在 #chaptersWrap 上保证始终生效（Bug2 修复）
   const chaptersDelegate = (e)=>{
-    const t = e.target.closest('[data-regen],[data-toggle],[data-read],[data-fold],[data-page],[data-ver],[data-undo],[data-ch-sum],[data-ne-resume-ch],[data-ne-partial-adopt]');
+    const t = e.target.closest('[data-regen],[data-toggle],[data-read],[data-fold],[data-page],[data-ver],[data-undo],[data-ch-sum],[data-ne-resume-ch],[data-ne-partial-adopt],[data-plan-ch]');
     if(!t) return;
-    if(t.hasAttribute('data-ver')){ openChapterVersionPanel(+t.dataset.ver); }
+    if(t.hasAttribute('data-plan-ch')){ openSchoolPlanReader(+t.dataset.planGi, +t.dataset.planCh + 1); }
+    else if(t.hasAttribute('data-ver')){ openChapterVersionPanel(+t.dataset.ver); }
     else if(t.hasAttribute('data-undo')){ undoChapterEdit(+t.dataset.undo); }
     else if(t.hasAttribute('data-regen')){ openChapterRegenPanel(+t.dataset.regen); }
     else if(t.hasAttribute('data-ch-sum')){ openChapterSummaryPanel(+t.dataset.chSum); }
@@ -9607,103 +10227,9 @@ const lnER = $('#lnExportReader'); if(lnER) lnER.onclick = openExportReader;
 /* =========================================================
  * 生成动作
  * ========================================================= */
-/* ---------- P0-1 大纲版本历史：覆盖前快照 + 📚 弹窗预览/恢复（上限10） ---------- */
-// v230/3.4：快照支持可选 label（如"候选B·未选用""重生成前·原大纲"）；旧数据无 label 照常显示时间，向后兼容
-function snapshotOutlineLabel(o, label){
-  if(!o || typeof o !== 'object') return;
-  const copy = JSON.parse(JSON.stringify(o));
-  const sig = JSON.stringify(copy);
-  // v233 修复：内容去重——历史里已存在完全相同内容的大纲就不再叠加（修复"恢复一个历史就多出一条重复历史、可无限叠加"）；
-  // 旧条目无 _sig 时现场 stringify 对比，新条目缓存 _sig
-  state.outlineHistory = Array.isArray(state.outlineHistory) ? state.outlineHistory : [];
-  if(state.outlineHistory.some(h => h && (h._sig ? h._sig === sig : JSON.stringify(h.outline) === sig))) return;
-  const item = { outline: copy, ts: Date.now() };
-  if(label) item.label = String(label);
-  item._sig = sig;
-  state.outlineHistory.unshift(item);
-  if(state.outlineHistory.length > 50) state.outlineHistory.splice(50);
-}
-function snapshotOutline(label){
-  snapshotOutlineLabel(state.outline, label);
-}
-function hasOutlineHistory(){ return Array.isArray(state.outlineHistory) && state.outlineHistory.length > 0; }
-function outlineHistoryCount(){ return hasOutlineHistory() ? state.outlineHistory.length : 0; }
-function openOutlineHistoryPanel(){
-  closeOutlineHistoryPanel();
-  if(!hasOutlineHistory()){ toast('暂无历史版本'); return; }
-  const fmtTs = ts=>{ const d=new Date(ts); return (d.getFullYear())+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
-  const wc = o => { const s = JSON.stringify(o||{}); return (s.length||0); };
-  const rows = state.outlineHistory.map((h,idx)=>{
-    const o = h.outline || {};
-    const n = (o.chapters||[]).length;
-    return `<div class="cv-row">
-      <div class="cv-meta" style="flex:1;min-width:0"><div class="cv-time">${h.label?`<b style="color:var(--primary,#4a7dff)">${esc(h.label)}</b> · `:''}${fmtTs(h.ts)}</div><div class="cv-t" style="font-size:12px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(o.title||'未命名')} · ${n} 章 · ${wc(o)} 字符</div></div>
-      <div class="cv-actions" style="display:flex;gap:6px;flex-shrink:0">
-        <button type="button" class="btn ghost cv-b" data-ov-prev="${idx}">预览</button>
-        <button type="button" class="btn ghost cv-b" data-ov-restore="${idx}">↩ 恢复</button>
-      </div>
-    </div>`;
-  }).join('');
-  const ov = document.createElement('div'); ov.id='ovPanel'; ov.className='gs-overlay';
-  ov.innerHTML = `
-    <div class="gs-modal">
-      <div class="gs-modal-head"><b>📚 大纲版本历史（${state.outlineHistory.length}/50）</b>
-        <button class="gs-x" data-ov-close>✕</button></div>
-      <div class="cv-body">
-        <div class="cv-row cur"><div class="cv-meta"><span class="cv-time">当前版本</span><span class="cv-wc">${esc((state.outline&&state.outline.title)||'未命名')} · ${(state.outline&&state.outline.chapters||[]).length} 章</span></div></div>
-        <div class="cv-div">历史版本：恢复前会把当前大纲自动存入历史；恢复后章节列表按该版大纲重建（正文清空，已写章节保留在版本内可回退）。</div>
-        ${rows}
-        <div class="cv-preview hidden" id="ovPreview">
-          <div class="cv-prev-head"><b id="ovPrevTitle">版本预览</b><button class="gs-x" data-ov-prev-close>✕</button></div>
-          <div class="cv-pre" id="ovReader"></div>
-        </div>
-      </div>
-    </div>`;
-  document.body.appendChild(ov);
-  ov.querySelector('[data-ov-close]').onclick = closeOutlineHistoryPanel;
-  ov.addEventListener('click', e=>{ if(e.target===ov) closeOutlineHistoryPanel(); });
-  ov.addEventListener('click', e=>{
-    const p = e.target.closest('[data-ov-prev]'); if(!p) return;
-    const h = state.outlineHistory[+p.dataset.ovPrev]; if(!h) return;
-    const o = h.outline||{};
-    const pr=$('#ovPreview'), rd=$('#ovReader'), pt=$('#ovPrevTitle');
-    if(pr && rd){
-      pt.textContent = '预览 · '+fmtTs(h.ts);
-      rd.innerHTML = `<b>${esc(o.title||'')}</b><br><span class="muted">${esc(o.logline||'')}</span><br><br>` +
-        (o.chapters||[]).map((c,i)=>`${i+1}. ${esc((c&&c.title)||'')}`).join('<br>');
-      pr.classList.remove('hidden');
-    }
-  });
-  ov.querySelector('[data-ov-prev-close]').onclick = ()=>{ const pr=$('#ovPreview'); if(pr) pr.classList.add('hidden'); };
-  ov.addEventListener('click', e=>{
-    const rb = e.target.closest('[data-ov-restore]'); if(!rb) return;
-    const h = state.outlineHistory[+rb.dataset.ovRestore]; if(!h) return;
-    if(!window.confirm('恢复该版大纲将覆盖当前大纲（当前大纲自动存入历史，不会丢失）。若新旧章节数一致，已写正文会保留；否则章节列表按该版重建。确定恢复吗？')) return;
-    snapshotOutline();                       // 当前大纲入历史
-    const newOutline = JSON.parse(JSON.stringify(h.outline));
-    const oldOutline = state.outline;
-    state.outline = newOutline;
-    state.outlineConfirmed = false;
-    if(state.chapters.length === (newOutline.chapters||[]).length && oldOutline && (oldOutline.chapters||[]).length === state.chapters.length){
-      // 章节数一致：保留已写正文，仅同步标题（避免恢复大纲把正文冲掉）
-      state.chapters.forEach((c,i)=>{ const oc=newOutline.chapters[i]; if(oc) c.title = oc.title; });
-    } else {
-      state.chapters = (newOutline.chapters||[]).map(c=>({title:(c&&c.title)||'', content:'', strip:'', confirmed:false}));
-    }
-    persist(); closeOutlineHistoryPanel(); render();
-    toast('已恢复历史大纲');
-  });
-}
-function closeOutlineHistoryPanel(){ const p=$('#ovPanel'); if(p) p.remove(); }
-
-// v230/T3+3.3：大纲落盘共用段——genOutline 与多候选「选用此版」两条路共用，避免复制粘贴漂移。
-// 含：章数软检查（T3：仅提示不拦截）、旧标题保留/重建、当前大纲入历史（label 可配）、
-//     旧词典沿用、简介字数 toast（非阻断）、pendingV45 应用、navBeacon 回填、userIdea/chapterPlans 初始化、state.chapters 同步。
-// opts.replacedLabel：当前大纲入历史时的标注（默认'被替换的上一版'）；opts.silent：候选生成阶段静默（不弹章数提示）。
+// v5.0 阶段5.3 清理：删除大纲历史/多候选后，applyOutlineObject（大纲落盘共用段）仅剩纯搬运调用方。
 function applyOutlineObject(o, opts){
   opts = opts || {};
-  // v1.0.144：章数软检查已移除——structure.chapterPlan（维度→章节分组）已彻底清除，章节数以「章节标题」步骤为准。
-  // 保留旧章节标题（如果数量一致）
   const oldChapters = (state.outline && state.outline.chapters) || [];
   const newN = state.chapterCount || oldChapters.length;
   if(newN && oldChapters.length === newN){
@@ -9713,16 +10239,9 @@ function applyOutlineObject(o, opts){
   }
   // 沿用旧词典（4.5 注：在覆盖 state.outline 前读取，否则"沿用旧词典"永远失效）
   const prevGloss = (state.outline && state.outline.glossary && sourceHasGlossary(state.outline.glossary)) ? state.outline.glossary : null;
-  snapshotOutline(opts.replacedLabel || '被替换的上一版');
   state.outline = o;
   normalizeOutline(state.outline);   // 4.6 Plus：outline 防御归一化
   state.outlineConfirmed = false;
-  // 简介字数检查（toast-only 非阻断；v230/T4 默认区间 100–300）
-  const _ll = String(o.logline||'').trim().length;
-  const _lr = state.loglineRange||{};
-  const _lo = Math.min(Number.isFinite(_lr.min)?_lr.min:100, Number.isFinite(_lr.max)?_lr.max:300);
-  const _hi = Math.max(Number.isFinite(_lr.min)?_lr.min:100, Number.isFinite(_lr.max)?_lr.max:300);
-  if(_ll < _lo || _ll > _hi){ toast(`提示：简介当前 ${_ll} 字，目标 ${_lo}—${_hi} 字，未落在区间内。`); }
   if(prevGloss) o.glossary = prevGloss;
   else if(!o.glossary) o.glossary = {characters:[], places:[], propernouns:[]};
   // 4.9 修复：应用「导入设定」暂存的结构化设定（生成大纲前点击导入设定时暂存于 state.pendingV45），
@@ -9731,19 +10250,12 @@ function applyOutlineObject(o, opts){
     applyV45ToOutline(o, state.pendingV45);
     state.pendingV45 = null;
   }
-  // 4.10 修复：大纲 AI 已不再输出 navBeacon。但 navBeacon 仍被 AIBus/规划师/沙盘等下游消费，
-  // 这里用优化构想简报 _lastPolishBrief 回填；若已通过「导入设定」带入 navBeacon 或已存在，则不覆盖。
+  // v1.0.249：navBeacon 已不随大纲 AI 输出，也不再由《_lastPolishBrief》回填（该字段写点已随 v1.0.246 迭代移除，
+  // 此处仅剩孤儿消费分支，恒为假，已清除）。navBeacon 仍被 AIBus/规划师/沙盘等下游消费，
+  // 兜底只剩 v1.0.155 的纯文本构想粗提；若已通过「导入设定」带入 navBeacon 或已存在，则不覆盖。
   if(!o.navBeacon){
-    if(state._lastPolishBrief){
-      const _b = state._lastPolishBrief;
-      o.navBeacon = {
-        genre: String(_b.genre||'').trim(),
-        protagonist: String(_b.protagonist||'').trim(),
-        coreConflict: String(_b.coreConflict||'').trim(),
-        tone: String(_b.style||'').trim()
-      };
-    } else if(String(state.idea||'').trim()){
-      // v1.0.155：无「优化构想」简报时，从纯文本构想粗提导航灯塔，避免题材定位空洞
+    if(String(state.idea||'').trim()){
+      // v1.0.155：无简报时，从纯文本构想粗提导航灯塔，避免题材定位空洞
       const _idea = String(state.idea||'').trim();
       const _grab = (re)=>{ const _m = _idea.match(re); return (_m && _m[1]) ? _m[1].trim() : ''; };
       const _genre = _grab(/(?:题材|类型)[：:]\s*([^\n，。；;,]{1,20})/);
@@ -9752,11 +10264,11 @@ function applyOutlineObject(o, opts){
       o.navBeacon = { genre:_genre, protagonist:_prot, coreConflict:_conf, tone:'' };
     }
   }
-  o.userIdea = state.idea;
+  if(!o.userIdea) o.userIdea = state.idea;   // v5.0 阶段5.3 收紧：不覆盖已存在的 userIdea（原始构想走 3.7 快照）
   if(!Array.isArray(o.chapterPlans)) o.chapterPlans = [];
   // 如果 chapters 已重建，同步 state.chapters
   // v238/B：章节数一致时逐章迁移已写内容（content/strip/confirmed/_titleByAI）——
-  // 换大纲/换候选不再清空正文；数量不一致才重建为空（原大纲与正文已随 snapshotOutline 入历史版本可找回）
+  // 换大纲/换候选不再清空正文；数量不一致才重建为空。
   if(o.chapters.length){
     const _prev = (Array.isArray(state.chapters) && state.chapters.length === o.chapters.length) ? state.chapters : null;
     state.chapters = o.chapters.map((c,ci)=>{
@@ -9803,360 +10315,893 @@ function confirmOutlineContentGuard(){
   if(!s.hasContent) return true;
   const newN = chapterCountVal();
   if(s.curN && newN && s.curN !== newN){
-    return window.confirm(`当前已写正文 ${s.contentN} 章（共 ${s.curN} 章），本次预设章数为 ${newN} 章。章数不同，新大纲生效后正文将无法按章节对应保留（原大纲与正文会存入历史版本，可找回）。继续生成？`);
+    return window.confirm(`当前已写正文 ${s.contentN} 章（共 ${s.curN} 章），本次预设章数为 ${newN} 章。章数不同，新大纲生效后正文将无法按章节对应保留。继续生成？`);
   }
   return true;
 }
 
-// —— v230/3.1：多大纲候选（3 个角度差异化候选，供比选；未选候选入历史可切回） ——
-const OUTLINE_CANDIDATE_N = 3;   // v1.0.194 候选数收敛 6→3（商业/反差/情感；角度池同步缩为 3 个，1:1 无撞角度；1 = 退化为单发行为）
-// state._outlineCandidates = { batchTs, items:[{id,label,outline}], chosenId }（随项目持久化，见 projectSnapshot/applyProject/clearState）
-const OUTLINE_CANDIDATE_ANGLES = [
-  { tag:'商业',   rise:'本候选＝稳扎稳打的大众爽感线：主线清晰、升级可预期、回报即时。必须把「被贬马夫以天象推人事」做成一步一升级、目标明确的逆袭线；禁止使用多线叙诡、禁止开放式留白结尾。', temp:0.75 },
-  { tag:'反差',   rise:'本候选＝反差设定为最高卖点：必须重新赋予一个高概念级别的反差钩子（身份×权力的极端错位、动机的荒诞反转、前提的反直觉设计，择一主用），让读者一句话就想追；禁止平铺直叙复述原设定，必须打破原设定的惯性组合。', temp:0.85 },
-  { tag:'情感',   rise:'本候选＝人物弧光与情感关系为骨：把「哑马夫」的内心、亲子/主仆/守将间的张力作为主线引擎，权谋只作背景；情节必须围绕主角的代价、选择与救赎推进，使结局落在情感落点上；禁止把人物写成推动剧情的工具人。', temp:0.95 }
-];
-// v1.0.169：作者拍板回退「同段一次列 N 个」→ 恢复 N 次独立差异化生成（v1.0.194 起 N=3，见 OUTLINE_CANDIDATE_N）。
-// 回退原因：GLM 单段输出多个候选对象数组经常整批 JSON 解析失败——单点耦合毁掉全部，重试仍败，用户一个候选都拿不到。
-// 独立多调用让单个候选失败只影响自己（自身重试一次后跳过），稳定优先；"角度互相可比"的诉求用温度+差异化需求部分补偿。
-// 差异化改由每个候选独立的强指令（下述 outlineAngleDirective 内的 per-angle 演绎要求）保证，避免退回"多个雷同"老问题。
-function outlineAngleDirective(ang, idx, total){
-  return `【本候选创意角度：${idx+1}/${total} ·「${ang.tag}」】
-你是用「${ang.tag}」这个角度，把用户的构想重新设想成一本书。本批共 ${total} 个候选，各代表完全不同的创作角度：你必须让本候选在 书名、主角设定方式、剧作重心、类型口味 四个维度的组合上，与其他候选形成肉眼可辨的差异，禁止写成只是换了个题目的同一篇。
-· 硬核保真：用户在【用户构想】中加引号/书名号的核心词（如「被贬马夫」「社稷倾覆」）必须逐字原样出现、一字不改。
-· 除硬核外放开重塑：允许按本角度改动主角的身份细节/动机/处境、重写主线的冲突组织与叙事焦点，把故事真正"用这个角度重讲一遍"。
-· 每个候选都必须同时给出 anchor（核心一句话定位：题材+主角+核心冲突，≤50字）与 thesis（深层主题命题，≤80字，点出该角度挖掘的内核）；禁止省略留空——若确实难措辞，anchor 引用 logline 前半、thesis 提炼一句主题，也务必真实给出。
-${ang.rise}`;
-}
- 
- // v230/3.2：多候选生成——串行逐个（沿用 _abortCtl 可中断），角度差异化 + 温度阶梯；
-// 每个候选完整走 callAIGuarded('outline')（内置结构+忠实度双闸校验，v228/P3 闸原样保留）；
-// 单个失败 toast 跳过，≥1 个成功即进入候选选择态，全部失败才报错走修复队列。
-async function genOutlineMulti(btn){
-  const st = $('#outlineStatus');
-  if(st){ st.className='status'; st.textContent=''; }
-  const ideaIn = $('#ideaInput');
-  if(ideaIn) state.idea = ideaIn.value.trim();   // 仅第②步页面有输入框；「重生成大纲」入口直接用已存 state.idea
-  if(!state.idea){ toast('先写几句构想'); return; }
-  if(!canRunAI('outline')){ toast('请先完成上游步骤：优化构想'); return; }
-  // v238/B：已有正文且章节数预设被改动时，生成前明确警示正文无法按章节对应保留
-  if(!confirmOutlineContentGuard()) return;
-  // v230/1-B 修复：移除"建议先优化构想"toast——构想改纯文本后 navBeacon 不再回填，此提示变成每点必弹，
-  // 且被误解为阻断（生成实际继续）；大纲 AI 的构想上下文已由 buildOutlineUser→formatNavBeaconForOutline 的
-  // 纯文本 fallback 注入，无信息损失。允许用户跳过优化构想直接生成大纲。
-  markAIRunning('outline');
-  if(btn) busy(btn,true,'生成候选大纲中…');
-  if(btn && btn.parentNode) showStopBtn(btn.parentNode);
-  const items = [];
-  try{
-    const N = Math.max(1, OUTLINE_CANDIDATE_N|0);
-    for(let i=0;i<N;i++){
-      const ang = OUTLINE_CANDIDATE_ANGLES[i % OUTLINE_CANDIDATE_ANGLES.length];
-      const tag = '候选' + String.fromCharCode(65 + (i % OUTLINE_CANDIDATE_ANGLES.length));
-      if(st){ st.className='status'; st.textContent = `${tag}（${ang.tag}）生成中…（${i+1}/${N}）`; }
-      // v1.0.169：恢复 N 次独立差异化调用（N=OUTLINE_CANDIDATE_N，见上方注释）。每个候选独立走结构+忠实度双闸；
-      // 单候选失败仅自身重试一次（覆盖偶发截断/解析），仍失败才 toast 跳过、不拖累其余；≥1 成功即进入候选选择态，全失败才走修复队列。
-      const attempt = async ()=>{
-        const txt = await callAIGuarded('outline', { angleNote: outlineAngleDirective(ang, i, N) },
-          {temperature: ang.temp, maxTokens: 8192, signal: _abortCtl?.signal, tolerateFaithOutline: true});
-        // v1.0.170：改用括号深度平衡扫描（extractFirstObject），容忍前后杂文；失败时把 AI 原始开头带进报错，
-        // 一眼区分「模型返回不标准」vs「我方解析误判」。
-        const salv = salvageOutlineFromText(txt);
-        if(!salv){
-          const _head = String(txt||'').replace(/\s+/g,' ').slice(0,90);
-          throw new Error(`AI 未返回可用的书名/简介` + (_head ? `；原始输出开头「${_head}…」` : ''));
-        }
-        const o = salv.o;
-        if(salv.salvaged){ try{ o._softWarn = o._salvaged || '未能完整解析为标准结构，已自动抢救为可编辑骨架'; }catch(e){} }
-        const warn = (txt && txt._validateWarn) || '';
-        if(warn){ try{ o._faithWarn = warn; }catch(e){} }
-        // v1.0.197：候选生成即补齐 soft 字段（anchor/thesis 缺失时由简介推导/占位），
-        // 消除候选卡上每次生成都恒现的「待确认校验：缺：叙事锚点、深层主题」；数据完整、不再作软缺警示，且不阻塞比选。
-        fillOutlineSoftFields(o);
-        return o;
-      };
-      let cand = null, lastErr = null;
-      for(let k=0; k<2 && !cand; k++){
-        try{
-          cand = await attempt();
-        }catch(e){
-          if(e.name === 'AbortError') throw e;
-          lastErr = e;
-          if(k===0 && st){ st.textContent = `${tag}（${ang.tag}）首次未通过（${e.message}），自动重试一次…`; }
-        }
-      }
-      if(!cand){ toast(`${tag}（${ang.tag}）重试后仍未通过校验，已跳过：${(lastErr && lastErr.message) || '未知错误'}`); }
-      if(cand){
-        const _g = gradeOutlineCandidate(cand);
-        const _warn = cand._faithWarn || '';
-        // 忠实度/结构警示候选不当硬伤丢弃——标记"仍可选用"、黄标提示，端上自行把关
-        items.push({ id: 'c'+(i+1), label: `${tag}·${ang.tag}`, outline: cand, ok: _g.ok && !_warn, reason: _g.reason || _warn || '' });
-      }
-    }
-    if(!items.length) throw new Error('全部候选均未通过校验');
-    state._outlineCandidates = { batchTs: Date.now(), items, chosenId: null };
-    state._outlineCandsFolded = false;   // v1.0.166：新一批候选生成后默认展开，不沿用上次选用后的折叠态
-    markAIDone('outline');   // v234 修复：v230 多候选路径漏标 completed——规划师/标题/正文等下游全部被"请先完成上游步骤：生成大纲"误拦（旧单发版 9422 有标，重写时丢失）
-    persist(); render();
-    const _badN = items.filter(it=>!it.ok).length;
-    if(st){ st.className='status'; st.textContent = _badN ? `已生成 ${items.length} 个候选（其中 ${_badN} 个未通过结构校验，仍可选用并会自动补齐），请在候选卡中比选采用` : `已生成 ${items.length} 个候选大纲，请在候选卡中比选采用`; }
-    toast(_badN ? `已生成 ${items.length} 个候选（${_badN} 个未过校验可选）` : `已生成 ${items.length} 个候选大纲，请比选采用`);
-  }catch(e){
-    if(e.name==='AbortError'){ if(st){ st.className='status'; st.textContent='已停止生成'; } else { toast('已停止生成'); } }
-    else {
-      if(st){ st.className='status err'; st.textContent = e.message; }
-      addToFixQueue({kind:'outline', error:e.message});   // 4.8（6.4）：失败进修复队列
-      toast('大纲生成失败，已加入修复队列');
-    }
-  }finally{
-    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='outline');   // 兜底清理运行态
-    hideStopBtn(); if(btn) busy(btn,false);
-  }
-}
-
-// v230/3.3：候选大纲卡片区（未生成大纲页与已生成大纲页共用；chosenId 标注当前采用者）
-// v239/905-2：选择完成后用户可把候选区折叠起来——标题行「收起候选 ▴ / 展开候选 ▾」手动切换；
-// 折叠状态 state._outlineCandsFolded 随项目持久化（projectSnapshot/applyProject 透传），刷新不丢。
-function outlineCandidatesHtml(){
-  const cands = state._outlineCandidates;
-  if(!cands || !Array.isArray(cands.items) || !cands.items.length) return '';
-  const folded = !!state._outlineCandsFolded;
-  const head = `<div style="display:flex;align-items:center;gap:8px;margin:10px 0 0">
-    <p class="muted" style="margin:0;flex:1">🧭 本批候选大纲（${cands.items.length} 个，${new Date(cands.batchTs).toLocaleString()}）：选用后未选候选自动存入「📚 大纲版本」历史，可随时切回。</p>
-    <button type="button" class="btn small ghost" data-cand-fold style="white-space:nowrap" title="${folded?'展开本批候选大纲卡片':'把本批候选大纲卡片折叠成一行（已选用的版本不受影响）'}">${folded?'展开候选 ▾':'收起候选 ▴'}</button>
-  </div>`;
-  if(folded) return `<div id="outlineCands">${head}</div>`;
-  const cards = cands.items.map(it=>{
-    const od = (it && it.outline) || {};
-    const adopted = cands.chosenId === it.id;
-    let adoptHtml;
-    if(adopted){ adoptHtml = '<b style="color:var(--ok, #2e9e5b);white-space:nowrap">✅ 当前采用</b>'; }
-    else {
-      adoptHtml = '<button type="button" class="btn small '+(it.ok?'primary':'ghost')+'" data-cand-adopt="'+esc(it.id)+'" style="white-space:nowrap">'+(it.ok?'▶ 选用此版':'⚠️ 仍要选用')+'</button>';
-    }
-    // v1.0.164：警示不再塞进头部行（nowrap 长文本会把卡片头部挤爆/溢出错排），独立成整行并自然换行；
-    // 头部行只保留「标题 + 选用按钮」，按钮用 flex:none 固定不压缩
-    let warnLine = '';
-    if(!it.ok){
-      warnLine = `<div style="margin:8px 0 0;font-size:11px;line-height:1.55;color:#b8860b">⚠️ <b>待确认校验</b>${it.reason?('：'+esc(it.reason)):''}</div>`;
-    }
-    return `<div class="card" style="margin-top:10px">
-      <div class="card-head-row">
-        <b style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(od.title||'未命名')} <span class="muted">［${esc(it.label||'候选')}］</span></b>
-        <span style="display:inline-flex;align-items:center;flex:none;margin-left:8px;white-space:nowrap">${adoptHtml}</span>
-      </div>
-      ${warnLine}
-      <p class="sub" style="margin:6px 0 0;white-space:pre-wrap;word-break:break-word">${esc(String(od.logline||''))}</p>
-      <div class="btn-row" style="margin-top:8px">
-        <button type="button" class="btn small ghost" data-cand-prev="${esc(it.id)}">👁 预览</button>
-      </div>
-    </div>`;
-  }).join('');
-  return `<div id="outlineCands">${head}${cards}</div>`;
-}
-
-// v230/3.3：采用候选大纲（点击 → confirm 确认 → 生效；被替换的当前大纲与未选候选均入历史）
-function adoptOutlineCandidate(id){
-  const cands = state._outlineCandidates;
-  if(!cands || !Array.isArray(cands.items)) return;
-  const it = cands.items.find(x=>x && x.id===id);
-  if(!it) return;
-  if(cands.chosenId === id){ toast('该候选已是当前采用版本'); return; }
-  // v238/B：确认文案按实际情形动态生成——章数一致时明确"正文保留"，章数不同时警示"正文清空"
-  {
-    const s = chapterContentStat();
-    const newN = (it.outline && Array.isArray(it.outline.chapters)) ? it.outline.chapters.length : 0;
-    let msg;
-    if(s.hasContent && newN && s.curN && newN !== s.curN){
-      msg = `选用后：未选候选将存入历史版本，当前大纲自动入历史。⚠️ 新候选章节数（${newN}）与当前（${s.curN}）不同，已写正文将被清空（可从历史版本找回）。确定？`;
-    } else if(s.hasContent){
-      msg = '选用后：未选候选将存入历史版本，当前大纲自动入历史，已写正文将按章节对应保留。确定？';
-    } else {
-      msg = '选用后：未选候选将存入历史版本，当前大纲自动入历史。确定？';
-    }
-    if(!window.confirm(msg)) return;
-  }
-  // v1.0.161：采用"未通过校验"候选时，先按软字段自动补齐，避免缺字段进下游（书名/简介缺失的硬伤候选已被生成层跳过，不会出现在这里）
-  const _cl = it.ok ? JSON.parse(JSON.stringify(it.outline)) : fillOutlineSoftFields(JSON.parse(JSON.stringify(it.outline)));
-  applyOutlineObject(_cl, { replacedLabel: '被替换的上一版' });
-  // 未选用的其他候选逐个入历史（label 标注；上一批的当前采用者即当前大纲，已在上面入历史，不重复）
-  cands.items.forEach(x=>{
-    if(!x || x.id===id || x.id===cands.chosenId) return;
-    if(x.outline) snapshotOutlineLabel(x.outline, `${x.label||'候选'}·未选用`);
-  });
-  cands.chosenId = id;
-  markAIDone('outline');   // v234 修复：多候选采用路径补标 completed（幂等；未采用前 genOutlineMulti 已标过）
-  state._outlineCandsFolded = true;   // v1.0.166：选完即自动折叠候选区（右侧「展开候选 ▾」可手动再展开）
-  persist(); render();
-  toast(it.ok ? `已采用「${it.label||'候选'}」` : `已采用「${it.label||'候选'}」（原未过校验，缺失字段已自动补齐）`);
-}
-
-// v230/3.3：候选大纲预览（gs-overlay 弹窗；无章节列表时仅展示书名/简介）
-function previewOutlineCandidate(id){
-  const cands = state._outlineCandidates; if(!cands || !Array.isArray(cands.items)) return;
-  const it = cands.items.find(x=>x && x.id===id); if(!it) return;
-  const od = it.outline||{};
-  const chapRows = (Array.isArray(od.chapters) && od.chapters.length)
-    ? od.chapters.map((c,i)=>`${i+1}. ${esc((c&&c.title)||'')}`).join('<br>')
-    : '';
-  const ov = document.createElement('div'); ov.id='candPrevPanel'; ov.className='gs-overlay';
-  ov.innerHTML = `<div class="gs-modal">
-    <div class="gs-modal-head"><b>预览 · ${esc(it.label||'候选')}</b><button class="gs-x" data-cp2-close>✕</button></div>
-    <div class="cv-pre" style="padding:12px;max-height:60vh;overflow:auto"><b>${esc(od.title||'')}</b><br><span class="muted">${esc(od.logline||'')}</span><br><br>${chapRows}</div>
-  </div>`;
-  document.body.appendChild(ov);
-  ov.querySelector('[data-cp2-close]').onclick = ()=> ov.remove();
-  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
-}
-
-// v230/3.5：「🔄 重生成大纲」——再生产一批新候选；当前大纲与上一批候选自动入历史，不丢失
-async function regenOutlineBatch(btn){
-  const cands = state._outlineCandidates;
-  const cur = cands && cands.chosenId ? '（当前采用：' + ((cands.items.find(x=>x&&x.id===cands.chosenId)||{}).outline||{}).title + '）' : '';
-  if(!window.confirm(`将再生成一批 ${OUTLINE_CANDIDATE_N} 个新候选${cur}；当前大纲与上一批候选自动存入历史版本，不会丢失。继续？`)) return;
-  if(cands && Array.isArray(cands.items)){
-    snapshotOutline('重生成前·原大纲');
-    cands.items.forEach(x=>{ if(x && x.outline && x.id!==cands.chosenId) snapshotOutlineLabel(x.outline, `${x.label||'候选'}·未选用`); });
-  }
-  state._outlineCandidates = null;
-  await genOutlineMulti(btn);
-}
 
 // 4.5：genOutline 改造——走 callAIWithContract 校验；保留 title/logline/anchor/thesis（v1.0.144 起不再含 structure）；
 // chapters 数量一致时保留旧标题；锚点前移（直接使用 AI 返回的 anchor/thesis，不再事后提取）。
-async function genOutline(){
-  const btn = $('#btnGenOutline');
+// ==================== 阶段3/3.2：生成大纲 = 纯搬运函数 ====================
+// 把②优化构想所选候选的 书名/简介/全书节拍 三处原样搬入 outline（无 AI 参与；书名仅用户可改）。
+const genOutline = async function(){
+  const btn = $('#btnGenOutline') || $('[data-gen-outline]');
   const st = $('#outlineStatus');
   if(st){ st.className='status'; st.textContent=''; }
-  state.idea = $('#ideaInput').value.trim();
-  if(!state.idea){ toast('先写几句构想'); if(btn) busy(btn,false); return; }
-  // 4.8 旗舰版（6.4）：拓扑路由检查 + 运行态标记（唯一执行前检查入口）
   if(!canRunAI('outline')){ toast('请先完成上游步骤：优化构想'); if(btn) busy(btn,false); return; }
-  // v238/B：已有正文且章节数预设被改动时，生成前明确警示正文无法按章节对应保留
+  // v1.0.255 流程第一步引导：从未生成任何优化方案时，禁止直接搬入历史方案——生成大纲前必须先跑「✨ 优化构想」
+  const noOpt = !(Array.isArray(state.polishOptions) && state.polishOptions.length);
+  if(noOpt){ toast('请先点「✨ 优化构想」生成方案，再点「生成大纲」搬入书名 / 简介 / 节拍'); if(btn) busy(btn,false); return; }
+  const cand = selectedPolishCandidate();
+  if(!cand){ toast('先选择一个优化方案（在②优化构想中点击某张候选卡「✔ 采用此方案」）'); if(btn) busy(btn,false); return; }
+  if(dictmasterLocked()){ toast('词典达人已产出万物词典，②方案已锁定，不可再换选重搬'); if(btn) busy(btn,false); return; }
   if(!confirmOutlineContentGuard()){ if(btn) busy(btn,false); return; }
   markAIRunning('outline');
-  if(btn) busy(btn,true,'生成大纲中…');
-  // v230/1-B 修复：移除"建议先优化构想"toast（同 genOutlineMulti——纯文本构想时代该提示每点必弹且被误解为阻断）
-  const stopParent = btn.parentNode;
-  showStopBtn(stopParent);
+  if(btn) busy(btn,true,'搬运大纲中…');
   try{
-    // 4.8（4.4）：统一经 callAIGuarded('outline')——system=buildOutlineSys()、user=buildOutlineUser(ctx)、校验=validateOutlineOutput
-    // 4.9 加固：大纲 JSON 体量大（含 chapterPlan 全章节覆盖），显式放宽输出上限到 8192，避免服务商默认上限把 JSON 截断成非法结构
-    const txt = await callAIGuarded('outline', null, {temperature: resolveActiveSpec().outlineTemp, maxTokens: 8192, signal: _abortCtl?.signal});
-    // v1.0.195：改用抢救式解析——结构不全时自动补出可编辑骨架，避免"未解析到书名/简介"硬失败进修复队列
-    const salv = salvageOutlineFromText(txt);
-    if(!salv) throw new Error('AI 未返回可用的书名/简介');
-    const o = salv.o;
-    if(salv.salvaged){ try{ o._softWarn = '未能完整解析为标准结构，已自动抢救为可编辑骨架（书名/简介或为推断，请校对）' + (o._softWarn?('；'+o._softWarn):''); }catch(e){} }
-    // v230/T3+3.3：章数硬校验已拆除（chapterPlan 与章数解耦），落盘段抽取为 applyOutlineObject 共用——
-    // genOutline 与多候选「选用此版」两条路走同一函数（含：章数软检查/旧标题保留/旧词典沿用/当前大纲入历史/
-    // 简介字数 toast/pendingV45 应用/navBeacon 回填/userIdea/chapterPlans 初始化/state.chapters 同步）
-    const _softWarn = (o && o._softWarn) || '';
-    fillOutlineSoftFields(o);   // v1.0.161：anchor/thesis 软缺不再否决，落地时自动占位补齐
-    applyOutlineObject(o, { replacedLabel: '被替换的上一版' });
-    state._outlineCandidates = null;   // v1.0.178「默认大纲」单发路径：落地后清空旧候选卡，避免遗留可比的 6 选
-    state._outlineCandsFolded = false;
-    markAIDone('outline');   // 4.8（6.4）：成功后标记完成
+    const o = buildOutlineFromPolishCandidate(cand);
+    applyOutlineObject(o, { silent: true });
+    // v1.0.205 阶段5.5：去掉「确认大纲，进入写正文」中间确认关卡——大纲一旦落定即视为已确认，
+    // 正文区直接可用（旧版需再点一次确认条，属历史遗留；重生成大纲仍可随时回 flow2 再点「生成大纲」覆盖）
+    state.outlineConfirmed = true;
+    markAIDone('outline');   // 成功后标记完成
     persist(); render();
-    toast(_softWarn ? `大纲已生成（${_softWarn}，已自动补齐占位）` : '大纲已生成');
+    toast('已生成大纲：书名 / 小说简介 / 全书节拍已搬入，直接进入正文写作（书名仅用户可改）');
   }catch(e){
     if(e.name==='AbortError'){ if(st){ st.className='status'; st.textContent='已停止生成'; } }
     else {
       if(st){ st.className='status err'; st.textContent = e.message; }
-      addToFixQueue({kind:'outline', error:e.message});   // 4.8（6.4）：失败进修复队列
-      toast('大纲生成失败，已加入修复队列');
+      addToFixQueue({kind:'outline', error:e.message});
+      toast('大纲生成失败：'+e.message);
     }
   }finally{
-    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='outline');   // 兜底清理运行态
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='outline');
+    hideStopBtn(); if(btn) busy(btn,false);
+  }
+};
+
+// —— 阶段3/3.2 纯搬运辅助 ——
+// 当前被选中的②优化构想候选（依据 state.polishAdopted = 候选 name）
+function selectedPolishCandidate(){
+  const opts = Array.isArray(state.polishOptions) ? state.polishOptions : [];
+  if(!opts.length) return null;
+  const ad = state.polishAdopted;
+  if(ad){ const hit = opts.find(o=> o && o.name === ad); if(hit) return hit; }
+  return opts[0];   // 无显式选中时回退第一候选（视为已选）
+}
+// 3.0 锁定判定：③词典达人被触发（state.dictmasterRan）且产出非空（glossary 已有词典条目）即锁
+function dictmasterLocked(){
+  if(!state.dictmasterRan) return false;
+  const g = (state.outline && state.outline.glossary) || null;
+  if(!g) return false;
+  return (g.characters && g.characters.length) || (g.places && g.places.length) || (g.propernouns && g.propernouns.length) ? true : false;
+}
+// 从候选文本提出书名（v1.0.205 放宽：兼容 书名/小说名/标题 键值行 与《…》书名号两种写法；无则回退原大纲书名或空）
+function extractCandidateBookName(txt){
+  const s = String(txt||'');
+  const kv = s.match(/(?:^|\n)\s*(?:书名|小说名|标题|名称)\s*[:：]\s*([^\n]{1,30})/);
+  if(kv && kv[1]) return kv[1].trim().replace(/[】\]\)]/g,'');
+  const bk = s.match(/[《<]([^《》<>]{1,30})[》>]/);
+  if(bk && bk[1]) return bk[1].trim().replace(/[】\]\)]/g,'');
+  return '';
+}
+// v1.0.236 简介剔除：既去掉候选里的「结构（…）：…」整段（节拍归下方「全书节拍」模块），
+//   也去掉 书名/小说名/标题（书名已在故事大纲卡标题栏展示，简介内不重复）与 推荐理由（属候选营销文案，不进简介）。
+//   仅删这些字段段/行，其余字段原样保留。
+function stripStructureFromIntro(txt){
+  const s = String(txt||'');
+  if(!s) return s;
+  const lines = s.split('\n');
+  const out = [];
+  let skip = false;
+  const fieldHead = /^\s*(?:书名|小说名|标题|题材|主角|核心冲突|世界观|对手|动机|风格|落地方式|目标|核心词|推荐理由|简介|评分|一句话|定位|优势|亮点)\s*[:：]/;
+  const dropLine = /^\s*(?:书名|小说名|标题|推荐理由)\s*[:：]/;   // 单行命名字段：直接剔除
+  for(const ln of lines){
+    if(!skip && /^\s*结构(?:\s*（[^）]*）)?\s*[:：]/.test(ln)){ skip = true; continue; }
+    if(skip){
+      // 遇到下一个已知字段标签 → 结束跳过并保留该行
+      if(fieldHead.test(ln)){ skip = false; out.push(ln); }
+      continue;
+    }
+    if(dropLine.test(ln)) continue;
+    out.push(ln);
+  }
+  return out.join('\n').replace(/\n{2,}/g, '\n').trim() || s.trim();
+}
+// v1.0.236 简介展示排版：把剔除后的文本按「标签：内容」拆成整齐的字段行（对齐优化构想候选卡的样式），
+//   无标签的普通行原样输出；供简介卡显示用（编辑态仍用原始文本）。
+function renderLoglineHtml(txt){
+  const s = stripStructureFromIntro(txt);
+  const ls = String(s||'').trim().split('\n');
+  if(!ls.length || !(ls[0]||'').trim()) return '';
+  const labelSet = new Set(['书名','小说名','标题','题材','主角','核心缺陷','钩点','核心冲突','风格','目标','核心词','世界观','对手','动机','特点','亮点','定位','基调','金手指','展开','结局','综上','核心看点','设定','走向','看点','卖点','矛盾','成长','悬念','反转']);
+  const re = /^([^\s：:（(]{1,10})\s*[:：]\s*(.*)$/;
+  // 每个标签稳定映射到不同色相：核心六项用预设跨度较大的色系，其余按名字哈希兜底
+  const presetHue = {题材:165,主角:218,核心冲突:12,风格:278,目标:128,核心词:332,世界观:188,对手:30,动机:306,特点:46,亮点:52,定位:232,基调:200,金手指:284,展开:358,结局:160,核心看点:20,设定:110,走向:60,看点:327,卖点:301,矛盾:345,成长:95,悬念:244,反转:14};
+  function labelHue(name){ if(presetHue[name]!=null) return presetHue[name]; let h=0; for(const c of name) h=(h*31+c.codePointAt(0))%360; return h; }
+  return ls.map(ln=>{
+    const m = ln.match(re);
+    if(m && labelSet.has(m[1].trim())){
+      const nm = m[1].trim();
+      return `<div class="so-line"><span class="so-lb" style="--h:${labelHue(nm)}">${esc(nm)}</span><span class="so-txt">${esc(m[2])}</span></div>`;
+    }
+    return `<div class="so-line so-plain">${esc(ln)}</div>`;
+  }).join('');
+}
+// 用②候选的 书名/简介/结构 构建 outline 骨架（纯本地，无 AI）
+function buildOutlineFromPolishCandidate(cand){
+  const txt = String((cand && cand.text) || '').trim();
+  const o = state.outline || {};
+  const curTitle = (o && o.title) || '';
+  const title = extractCandidateBookName(txt) || curTitle || '';
+  const prevGloss = (o && o.glossary && sourceHasGlossary(o.glossary)) ? o.glossary : null;
+  const build = {
+    title,
+    logline: stripStructureFromIntro(txt) || (o && o.logline) || '',
+    userIdea: String(state.idea || '').trim(),
+    tone: (o && o.tone) || ''
+  };
+  // 沿用旧词典（词典达人或逐章提取回填的产物不清空）
+  if(prevGloss) build.glossary = prevGloss;
+  else build.glossary = { characters:[], places:[], propernouns:[], subplots:[] };
+  return build;
+}
+
+/* ==================== 阶段3/3.3+3.6：③ 词典达人（新 AI·dictmaster role） ====================
+ * 输入 = ②所选方案的完整原文（单一专线蓝本，含书名+九要素）→ 深化 + 补新；不注入全书节拍（词典是全局设定，元节拍无关）。
+ * 产出 = 完整人物卡（十维）+ 人物关系表 + 地名关联表 + 专名关联表 + 世界观规则，一次生成，并入 state.outline.glossary。
+ * ②已有角色/地名/专名不可改动；未提及的按慎重原则自动补充（避免乱加设定）。同名去重由落库端比对兜底。
+ * 独立历史 6 次：第 7 次生成时最旧被挤出（FIFO）。
+ */
+const DICTMASTER_SYS = `你是一位资深长篇「词典达人」（全局设定架构师）。你将拿到 ②优化构想所选方案的完整原文（含 书名 + 九要素：题材/主角/核心冲突/世界观/对手/动机/风格/结构/核心词）作为唯一蓝本，把它深化并补充为一份可直接支撑全书写作的「万物词典」。
+【职责边界 / 硬性约束】
+1. 蓝本（②所选方案）里已出现的人物/地名/专名，必须全部收录且**不可改动**：名称逐字原样、设定只能按蓝本深化，不许改角色身份/立场/核心矛盾、不许删主角。
+2. 蓝本未提及、但为支撑该世界观/主线合理运转所必需的配角/地名/专名，可自行补全（如主角亲友、反派爪牙、关键地点/势力/宝器/功法），但**禁止无依据乱加**：每个新增都必须能从蓝本九要素或主线逻辑推出，且数量克制（建议 ≤ 蓝本已有量的 1.5 倍）。
+3. 不注入全书节拍/章节微拍（词典是全局设定，与元节拍无关）。
+【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
+{"characters":[{"name":"","identity":"","age":"","gender":"","appearance":"","hobby":"","relation":"","trait":"","catchphrase":"口头禅"}],"relationshipTable":[{"a":"名字","b":"名字","relation":"关系","note":"一句话"}],"places":[{"name":"","type":"","note":""}],"placeContacts":[{"from":"地名","to":"地名","relation":"联系","note":""}],"propernouns":[{"name":"","note":""}],"properContacts":[{"from":"专名","to":"专名","relation":"联系","note":""}],"worldRules":[{"cat":"规则类别","scope":"适用对象/范围","rule":"具体规则（尽量写清违反的后果/代价）"}],"summary":"1-2 句说明构成品亮点（可空，空则省略）"}
+【要点】characters 每位必须给满 9 维且每维非空（name身份、identity身份定位、age年龄、gender性别、appearance外貌、hobby爱好、relation关系、trait性格要点、catchphrase【口头禅】（catchphrase 只写其反复挂在嘴边的口头语；age/gender 无明确值也必须写"未知"）；relation 只写一句话关系摘要（≤20字，如"主角的青梅"；可含关系表之外的隐藏线索如"隐瞒身世"），多组关系的逐条明细一律放 relationshipTable，禁止在 relation 里堆砌多组关系（与关系表重复）；places 每位必须给满 type（类型）+note（说明）；propernouns 每位必须给满 note（说明）；characters 建议 ≥6 位且含主角+反派+主要配角。三张关联表必须按各自名称的语义精确生成：relationshipTable 即【人物关系表】——只写人物↔人物之间的关联（血缘/身份/立场/恩怨等），不要写入地名或专名；placeContacts 即【地名关联表】——只写地名↔地名之间的关联（相邻/隶属/路程远近/往来通道/势力归属等）；properContacts 即【专名关联表】——只写专名↔专名之间的关联（来源/克制/配套/并列等）；三张关联表每一条都必须是"两个不同实体之间的真实关联"：两端名（关系表 a 与 b，关联表 from 与 to）都必须填真实名称、且两端名称不同，并且要分别取自本表对应的清单——人物关系表两端取 characters 里的人名、地名关联表两端取 places 里的地名、专名关联表两端取 propernouns 里的专名；严禁把某个实体的"功能/属性/组成部分/内部要点/技能/子项/类别"当成另一个实体去建关联，严禁留空端名或用自身对自身凑数；三表内容多少按具体小说情况决定，有真实关联就列、没有就不硬凑，每条都必须是两端齐全的真实关联，宁缺毋滥、禁止为看起来数量多而虚增条数。worldRules 即【世界观规则】：按本次故事的题材/时代背景/社会性质，把这本书里『世界实际怎么运转』的、贯穿全文必须遵守的具体规则提炼出来（要落成可执行的具体条目，不是空泛口号，正文据其写作不得违背）。要贴合该题材的真实世界逻辑，例如——现代都市/职场类：写明社会劳动作息（白领一周双休/单休/大小周、某些行业一月只休两三天、上下班时间、法定节假日、通勤等）、经济与货币、法律与治安、阶层、日用科技等实际运转规则；古代写实/历史类（如三国）：没有『上班双休』这类现代概念，应写明古代特有作息（农耕节令、集市与墟日、宵禁、驿站驿道、官衙卯时点卯）、军制军粮、赋税徭役、货币（铜钱/银两/粮布）、通信与出行速度等；古代江湖类：写明江湖规矩（门派帮派/武林盟约/快意恩仇的边界/镖局客栈驿道）、官府与江湖的关系、武艺内功体系等；神话仙侠类（如西游/封神）：写明天庭地府妖界方外世界体系、修炼境界与境界压制、法宝神通法则、天条因果、仙人鬼神不得干预凡俗等约束。worldRules 每位必须给满 cat（类别）+rule（规则）；scope（适用对象/范围）建议一并给出——写明这条规则约束谁、作用于谁（如 全境/全体人物/普通百姓/当朝官府/修士/某势力/某地区/仅主角一人的独有约束等），让正文写作时知道该由谁遵守、作用于谁；rule 尽量把『违反的后果/代价』也写进去（如破坏者受天条反噬/官府追捕/被逐出师门等），使规则可校验、能落地。凡该世界存在的维度都要覆盖并按类别分条列出：社会劳动作息、经济货币/物价、法律与治安/秩序法则、阶层与身份流动、力量/能力体系与使用上限代价、地理与交通/出行速度、时间节令与天象（含时间流速/梦与现实的边界）、风俗与禁忌/因果报应、明面规则与潜规则（表面秩序 vs 实际灰色地带）、例外条款（规则有无例外、何人可破例）、烟火市井（衣食住行价格/民生物价）。某题材无某类规则就不列该类，禁止把现代职场概念生搬硬套到古代/仙侠世界；建议 ≥5 条并按类别分条列出，越具体越好。`;
+function buildDictMasterUser(ctx){
+  const cand = ctx && ctx.candidate;
+  const txt = String((cand && cand.text) || '').trim();
+  const parts = [];
+  parts.push(`【蓝本：②优化构想所选方案】${(cand && cand.name) ? ('方案『' + cand.name + '』') : '（所选方案）'}`);
+  // 单一专线：只注入所选方案的完整原文（含书名、九要素、全部设定）。去重由落库端同名比对兜底，不再注入"已在库"清单（首轮无词典，且避免空噪音）。
+  parts.push(('【所选方案完整原文（作为唯一蓝本，其中已有角色/地名/专名不可改动）】\n' + txt) || '（所选方案为空）');
+  return parts.join('\n\n');
+}
+// 词典达人产物校验（决策3 收紧）：人物 10 维全填（age/gender 可为"未知"）、地名 type+note、专名 note 齐全；关系/关联表不强求非空
+function validateDictMasterOutput(j){
+  if(!j || typeof j !== 'object') return '返回不是对象';
+  if(!Array.isArray(j.characters) || !j.characters.length) return '人物卡 characters 为空（应至少 1 位）';
+  for(const c of j.characters){
+    if(!c || !String(c.name||'').trim()) return '存在人物缺少 name';
+    const dims = {identity:c.identity, appearance:c.appearance, hobby:c.hobby, relation:c.relation, trait:c.trait, catchphrase:c.catchphrase};
+    for(const [kk,vv] of Object.entries(dims)){ if(!String(vv||'').trim()) return `人物「${String(c.name).trim()||'?'}」缺字段 ${kk}（9 维须填满）`; }
+    if(!String(c.age||'').trim()) return `人物「${String(c.name).trim()||'?'}」缺字段 age（可写未知）`;
+    if(!String(c.gender||'').trim()) return `人物「${String(c.name).trim()||'?'}」缺字段 gender（可写未知）`;
+    // 方案乙（relation 去重）护栏：relation 只写一句话摘要，超长视为把多组关系堆进摘要，阻断并提示走关系表
+    if(String(c.relation||'').trim().length > 40) return `人物「${String(c.name).trim()||'?'}」relation 超过 40 字，疑似把多组关系堆进摘要：只写 ≤20字 的一句话（如「主角的青梅」），多组关系的逐条明细放 relationshipTable`;
+  }
+  if(!Array.isArray(j.relationshipTable)) return '缺少 relationshipTable 数组';
+  const places = Array.isArray(j.places)?j.places:[];
+  const props = Array.isArray(j.propernouns)?j.propernouns:[];
+  if(!places.length && !props.length) return '缺少 places 或 propernouns';
+  for(const p of places){ if(p && (!String(p.name||'').trim()||!String(p.type||'').trim()||!String(p.note||'').trim())) return `地名「${String(p&&p.name||'').trim()||'?'}」信息不全（需 type+note）`; }
+  for(const p of props){ if(p && (!String(p.name||'').trim()||!String(p.note||'').trim())) return `专名「${String(p&&p.name||'').trim()||'?'}」缺 note`; }
+  // v1.0.210：世界观规则至少 1 条，且每条必须 cat（类别）+rule（规则）齐全
+  const wr = Array.isArray(j.worldRules)?j.worldRules:[];
+  if(!wr.length) return '缺少 worldRules（世界观规则，应 ≥1 条）';
+  for(const r of wr){ if(r && (!String(r.cat||'').trim()||!String(r.rule||'').trim())) return `世界观规则「${String(r&&r.cat||'').trim()||'?'}」缺失 cat 或 rule`; }
+  // v1.0.213：三张关联/关系表每条必须两端齐全且不同；禁止 AI 把"功能/属性/子项"当成关联凑数（否则会虚增条数如 333 条）
+  for(const [key,aa,bb,lab] of [['relationshipTable','a','b','人物关系表'],['placeContacts','from','to','地名关联表'],['properContacts','from','to','专名关联表']]){
+    const arr = Array.isArray(j[key]) ? j[key] : [];
+    for(const e of arr){
+      if(!e || typeof e !== 'object') continue;
+      const A=String(e[aa]||'').trim(), B=String(e[bb]||'').trim();
+      const hasRest = String(e.relation||'').trim() || String(e.note||'').trim();
+      if(hasRest && (!A || !B)) return `${lab}存在端名不全的条目（${lab}每条必须两端都填真实名称，禁止把功能/属性/子项当作另一端凑数）`;
+      if(A && B && A===B) return `${lab}「${A}」两端相同（自身对自身无意义）`;
+    }
+  }
+  return '';
+}
+// 一键生成万物词典（蓝色渐变→生成后绿渐变；重新生成=替换本 AI 上次贡献；历史 6 次）
+async function genDictMaster(btn){
+  const o = state.outline;
+  const st = $('#dictmasterStatus');
+  if(st){ st.className='status'; st.textContent=''; }
+  if(!canRunAI('dictmaster')){ toast('请先完成上游：②优化构想并选中一个方案'); return false; }
+  if(!selectedPolishCandidate()){ toast('先选择一个优化方案'); return false; }
+  // 3.7：触发时锁存用户原始构想快照（录入框从未被优化稿覆盖）
+  state.originalIdeaSnapshot = String(state.idea || '').trim() || state.originalIdeaSnapshot;
+  markAIRunning('dictmaster');
+  if(btn) busy(btn,true,'生成万物词典中…');
+  if(btn && btn.parentNode) showStopBtn(btn.parentNode);
+  try{
+    const txt = await callAIGuarded('dictmaster', {}, {temperature: resolveActiveSpec().dictmasterTemp, maxTokens: 16384, signal: _abortCtl?.signal});   // v1.0.259 词典达人输出上限 8192→16384：一次产出全书人物九维+关系表+地名/专名关联+世界观规则，8192 在内容量大时被顶满截断（普通模型走 max_tokens=16384；推理模型仍由 callDeepSeek 放大到 32K）
+    const j = extractJsonObject(txt);
+    if(!j){ throw new Error('AI 未返回可用的词典 JSON'); }
+    const v = validateDictMasterOutput(j);
+    if(v) throw new Error('词典校验失败：'+v);
+    // v1.0.204 阶段4/4.2 合并进 glossary：
+    // 决策1a 同名去重（以现有为准：手工>逐章提取>词典达人）；决策8 手工保护（只清本 AI 从未被改动的旧条目）
+    o.glossary = o.glossary || { characters:[], places:[], propernouns:[], subplots:[] };
+    const snapKeys = { characters:['name','identity','age','gender','appearance','hobby','relation','trait','catchphrase'], places:['name','type','note'], propernouns:['name','note'] };
+    const entryJson = (x,k)=>{ const o2={}; (snapKeys[k]||[]).forEach(f=> o2[f]=String((x && x[f])!=null ? x[f] : '').trim()); try{ return JSON.stringify(o2); }catch(e){ return ''; } };
+    ['characters','places','propernouns'].forEach(k=>{
+      const kept=[];
+      (o.glossary[k]||[]).forEach(x=>{
+        if(x && x._dictmaster){
+          if(x._srcSnapshot && entryJson(x,k) !== x._srcSnapshot){
+            // 被手工改动 → 升级为"手工"优先级保留，脱去本 AI 标记不再被清/覆盖
+            delete x._dictmaster; delete x._srcSnapshot;
+          } else {
+            // 从未被改动（或旧版无快照）→ 本回合替换，丢弃
+            return;
+          }
+        }
+        kept.push(x);
+      });
+      o.glossary[k]=kept;
+    });
+    // 同名去重：以现有为准 → 词典达人同名让位、只补未收录项
+    const push = (list,k,mapper)=>{
+      const existing = new Set((o.glossary[k]||[]).map(x=>x && String(x.name||'').trim()).filter(Boolean));
+      (list||[]).forEach(it=>{
+        const nm=String((it && it.name)||'').trim(); if(!nm) return;
+        if(existing.has(nm)) return;   // 同名让位
+        o.glossary[k]=o.glossary[k]||[];
+        const e = (mapper?mapper(it):{ name:nm, note:String(it.note||'').trim() });
+        e._dictmaster=true; e._srcSnapshot=entryJson(e,k);   // 决策8：存本 AI 生成快照，重产时比对是否被手工改动
+        o.glossary[k].push(e); existing.add(nm);
+      });
+    };
+    push(j.characters, 'characters', c=>({ name:String(c.name||'').trim(), identity:String(c.identity||'').trim(), age:String(c.age||'').trim(), gender:String(c.gender||'').trim(), appearance:String(c.appearance||'').trim(), hobby:String(c.hobby||'').trim(), relation:String(c.relation||'').trim(), trait:String(c.trait||'').trim(), catchphrase:String(c.catchphrase||'').trim() }));
+    push(j.places, 'places', p=>({ name:String(p.name||'').trim(), type:String(p.type||'').trim(), note:String(p.note||'').trim() }));
+    push(j.propernouns, 'propernouns', p=>({ name:String(p.name||'').trim(), note:String(p.note||'').trim() }));
+    // 关系表 / 关联表存入 glossary 专用字段（★万物词典卡与 ⑤正文 可读取）
+    o.glossary._relationshipTable = (j.relationshipTable||[]).map(x=>({ a:String(x.a||'').trim(), b:String(x.b||'').trim(), relation:String(x.relation||'').trim(), note:String(x.note||'').trim() }));
+    o.glossary._placeContacts = (j.placeContacts||[]).map(x=>({ from:String(x.from||'').trim(), to:String(x.to||'').trim(), relation:String(x.relation||'').trim(), note:String(x.note||'').trim() }));
+    o.glossary._properContacts = (j.properContacts||[]).map(x=>({ from:String(x.from||'').trim(), to:String(x.to||'').trim(), relation:String(x.relation||'').trim(), note:String(x.note||'').trim() }));
+    // v1.0.210：世界观规则（本书世界实际如何运转的硬约束，正文注入端读取，供全文一致遵守）
+    o.glossary._worldRules = (j.worldRules||[]).map(x=>({ cat:String(x.cat||'').trim(), scope:String(x.scope||'').trim(), rule:String(x.rule||'').trim() }));
+    // 存档最近产物 + 历史 6 次（FIFO）
+    const result = { ts: Date.now(), book: (o.title)||'', summary:String(j.summary||'').trim(), nChar:(j.characters||[]).length, nPlace:(j.places||[]).length, nProp:(j.propernouns||[]).length, nRel:(j.relationshipTable||[]).length, nPC:(j.placeContacts||[]).length, nPRC:(j.properContacts||[]).length, nWR:(j.worldRules||[]).length, characters:j.characters||[], rel:j.relationshipTable||[], places:j.places||[], pc:j.placeContacts||[], props:j.propernouns||[], prc:j.properContacts||[], wr:j.worldRules||[] };
+    state.dictmasterLatest = result;
+    state.dictmasterHistory = Array.isArray(state.dictmasterHistory) ? state.dictmasterHistory : [];
+    state.dictmasterHistory.unshift(result);
+    if(state.dictmasterHistory.length > 6) state.dictmasterHistory = state.dictmasterHistory.slice(0, 6);   // 第 7 次最旧被挤出
+    state.dictmasterRan = true;
+    persist(); render();
+    markAIDone('dictmaster');
+    toast(`万物词典已生成：人物 ${result.nChar} 位 · 地名 ${result.nPlace} · 专名 ${result.nProp} · 关系表 ${result.nRel} 条 · 世界观规则 ${result.nWR} 条（已并入万物词典）`);
+    return true;
+  }catch(e){
+    if(e.name !== 'AbortError') addToFixQueue({kind:'dictmaster', error:e.message});
+    toast(e.name==='AbortError' ? '已停止生成万物词典' : '万物词典生成失败：'+e.message);
+    if(st){ st.className='status err'; st.textContent = e.message; }
+    return false;
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='dictmaster');
     hideStopBtn(); if(btn) busy(btn,false);
   }
 }
-
-// 4.7 Pro（3.2 原码）：若优化构想产出了 brief，将其注入大纲 AI 的【优化构想简报】
-// v230/1-C：新 PRO 输出纯文本、无 JSON brief——无 brief 时回退用 _lastPolishIdeaText（最近一次纯文本优化稿，截 800 字）注入，
-// 保住构想→大纲的上下文传递；大纲忠实度闸比对源仍是 state.idea 用户原文，不受影响。
-function formatNavBeaconForOutline(){
-  // v1.0.178：不论简报还是纯文本，都从用户原文提炼加引号的核心词作为【用户核心设定词】显式注入，
-  // 与大纲 Sys 的忠实度硬约束（保留核心词）直接对接，让优化稿更"对口"大纲 AI。
-  const core = outlineCoreTerms();
-  const coreStr = core.length ? `\n【用户核心设定词（必须原样保留入书名/简介/锚点）】${core.join('、')}` : '';
-  // 若 4.7 Pro 优化构想生成了 brief，可将其注入大纲 AI
-  const b = state._lastPolishBrief;
-  if(b && (b.genre || b.protagonist || b.coreConflict || b.style)) return `题材：${b.genre || ''}\n主角：${b.protagonist || ''}\n核心冲突：${b.coreConflict || ''}\n风格：${b.style || ''}` + coreStr;
-  const t = String(state._lastPolishIdeaText||'').trim();
-  if(t) return t.slice(0, 800) + (t.length > 800 ? '\n（已截断）' : '') + coreStr;
-  return '';
-}
-// v1.0.178：从用户构想原文提取带引号的专名/固定短语（忠实度关键词），供大纲 AI 原样保留。
-function outlineCoreTerms(){
-  const m = String(state.idea || '').match(/[「“『【][^」”』】]{1,14}?[」”』】]/g) || [];
-  const out = [];
-  m.forEach(s => { const w = s.replace(/[「“『【」”』】]/g,'').trim(); if(w && !out.includes(w)) out.push(w); });
-  return out.slice(0, 12);
-}
-
-// 4.5：大纲输出 schema 校验（v1.0.144 起 title/logline/anchor/thesis 完整性；structure 契约已彻底移除）
-function validateOutlineOutput(o){
-  if(!o || typeof o !== 'object') return '返回不是对象';
-  if(!String(o.title||'').trim()) return '缺少 title';
-  if(!String(o.logline||'').trim()) return '缺少 logline';
-  // v1.0.161：分级校验——anchor/thesis 缺失不再否决整章（软缺：候选仍可选用、单发仍可落地，落地时由 fillOutlineSoftFields 自动占位补齐）；
-  // 仅缺 title/logline 视为硬伤。软缺原因落到 o._softWarn 供界面标注，不阻断。
-  const soft = [];
-  if(!String(o.anchor||'').trim()) soft.push('缺叙事锚点(anchor)');
-  if(!String(o.thesis||'').trim()) soft.push('缺深层主题(thesis)');
-  if(soft.length){ try{ o._softWarn = soft.join('、'); }catch(e){} }
-  return '';
-}
-// v1.0.161：候选分级。hard=true　缺书名/简介（硬伤，不可选用）；canAdopt=false。否则即便缺软字段也允许选用。
-function gradeOutlineCandidate(o){
-  o = o || {};
-  const miss = [];
-  if(!String(o.title||'').trim()) miss.push('书名');
-  if(!String(o.logline||'').trim()) miss.push('简介');
-  if(!String(o.anchor||'').trim()) miss.push('叙事锚点');
-  if(!String(o.thesis||'').trim()) miss.push('深层主题');
-  const hard = miss.includes('书名') || miss.includes('简介');
-  return { ok: !miss.length, hard, miss, reason: miss.length?('缺：'+miss.join('、')):'', canAdopt: !hard };
-}
-// v1.0.161：补齐大纲软字段（anchor/thesis 缺失时自动占位），保证采用"未通过校验"候选也不带缺字段进下游。
-function fillOutlineSoftFields(o){
-  if(!o || typeof o !== 'object') return o||{};
-  if(!String(o.anchor||'').trim()){
-    const l = String(o.logline||'').trim();
-    o.anchor = l ? l.slice(0, 80) : '（未设定，请在大纲页补充叙事锚点）';
+// ③词典达人区块 HTML（蓝色渐变按钮 → 生成后绿色渐变；重新生成；历史 6 次入口）
+function dictMasterBlockHtml(){
+  const g = (state.outline && state.outline.glossary) || null;
+  const hasOut = !!state.dictmasterLatest && g && ((g.characters&&g.characters.length)||(g.places&&g.places.length)||(g.propernouns&&g.propernouns.length));
+  const locked = dictmasterLocked();
+  const histN = Array.isArray(state.dictmasterHistory) ? state.dictmasterHistory.length : 0;
+  const status = `<p id="dictmasterStatus" class="status" style="margin:8px 0 0"></p>`;
+  if(hasOut){
+    const r = state.dictmasterLatest || {};
+    // v1.0.221 修复：折叠标题计数必须基于「真数组长度」，而非 html 字符串字符数（此前 join 后取 .length 虚高成 1103/843 等字符数）
+    const relArr = validAssoc(g._relationshipTable,'a','b');
+    const pcArr  = validAssoc(g._placeContacts,'from','to');
+    const prcArr = validAssoc(g._properContacts,'from','to');
+    const wrArr  = ((g&&g._worldRules)||[]).filter(x=>x&&String(x.rule||'').trim());
+    const relRows = relArr.slice(0,8).map(x=>`<div class="dm-rel"><b>${esc(x.a||'')}</b> ←${esc(x.relation||'')}→ <b>${esc(x.b||'')}</b>${x.note?` <span class="muted">· ${esc(x.note)}</span>`:''}</div>`).join('');
+    const contactRow = x=>`<div class="dm-rel">${esc(x.from||'')} ↔ ${esc(x.to||'')} <span class="muted">· ${esc(x.relation||'')}${x.note?('：'+esc(x.note)):''}</span></div>`;
+    const pcRows = pcArr.map(contactRow).join('');
+    const prcRows = prcArr.map(contactRow).join('');
+    const wrRows = wrArr.map(x=>`<div class="dm-wr"><b>${esc(x.cat||'')}${String(x.scope||'').trim()?` · ${esc(String(x.scope).trim())}`:''}</b><div>${esc(x.rule||'')}</div></div>`).join('');
+    // —— 词典达人「全貌」视图：标签页 + 搜索 + 实体明细（read-only，编辑仍在 flow7 设定表）——
+  const hue = s=>{ let h=0; for(const ch of String(s||'')) h=(h*31+ch.codePointAt(0))%360; return h; };
+  const _labels = { identity:'身份', age:'岁数', gender:'性别', appearance:'外貌', hobby:'爱好', catchphrase:'口头禅', relation:'关系', trait:'性格', type:'类型', note:'说明' };
+  const detailLines = (o, keys)=> keys.map(k=> (o && String(o[k]||'').trim())
+    ? `<div class="dmt-line"><b>${esc(_labels[k]||k)}</b><span>${esc(String(o[k]).trim())}</span></div>` : '').join('');
+  const chip = nm=>`<b class="de-chip" style="--h:${hue(nm)}">${esc(nm)}</b>`;
+  const charRow = c=>`<details class="dmt-entry"><summary>${chip(c.name)}<span class="muted dmt-brief">${esc([c.identity,c.gender,c.age].filter(Boolean).join(' · ')||'（无简介）')}</span></summary><div class="dmt-body">${detailLines(c,['identity','age','gender','appearance','hobby','catchphrase','relation','trait'])||'<span class="muted">（无字段）</span>'}</div></details>`;
+  const placeRow = p=>`<details class="dmt-entry"><summary>${chip(p.name)}<span class="muted dmt-brief">${esc([p.type,p.note].filter(Boolean).join(' · ')||'')}</span></summary><div class="dmt-body">${detailLines(p,['type','note'])||''}</div></details>`;
+  const propRow  = p=>`<details class="dmt-entry"><summary>${chip(p.name)}<span class="muted dmt-brief">${esc(String(p.note||'').trim()||'')}</span></summary><div class="dmt-body">${detailLines(p,['note'])||''}</div></details>`;
+  const charMain = (g.characters||[]).filter(c=>c && c.tier!=='support');
+  const charSup  = (g.characters||[]).filter(c=>c && c.tier==='support');
+  const dmtGroup = (lab, rows)=> rows.length ? `<details class="dmt-group" open><summary>${lab}（${rows.length}）</summary><div class="dmt-list">${rows}</div></details>` : '';
+  const allRows = dmtGroup('👤 主要人物', charMain.map(charRow))
+    + dmtGroup('🤝 次要配角', charSup.map(charRow))
+    + dmtGroup('🗺️ 地名', (g.places||[]).map(placeRow))
+    + dmtGroup('📌 专名', (g.propernouns||[]).map(propRow));
+    return `<div class="card dm-card">
+      <div class="dm-head dm-head-single">📖 词典达人 · 万物词典生成器<span class="muted" style="font-weight:400">（人物 ${(g.characters||[]).length} · 地名 ${(g.places||[]).length} · 专名 ${(g.propernouns||[]).length}）</span></div>
+      <div class="dm-toolbar">
+        <div class="btn-row" style="margin:0">
+          ${histN?`<button id="btnDictMasterHist" class="btn small ghost">🕘 历史版本(${histN}/6)</button>`:''}
+        </div>
+        <span class="muted dm-strip">关系表 ${relArr.length} · 地名关联 ${pcArr.length} · 专名关联 ${prcArr.length} · 世界观规则 ${wrArr.length}</span>
+      </div>
+      <div class="dmt-tabs">
+        <button type="button" class="dmt-tab on" data-dmt-tab="all">🔍 全貌</button>
+        <button type="button" class="dmt-tab" data-dmt-tab="wr">⚙️ 世界观规则（${wrArr.length}）</button>
+        <button type="button" class="dmt-tab" data-dmt-tab="rel">👥 人物关系表（${relArr.length}）</button>
+        <button type="button" class="dmt-tab" data-dmt-tab="pc">🗺️ 地名关联表（${pcArr.length}）</button>
+        <button type="button" class="dmt-tab" data-dmt-tab="prc">📌 专名关联表（${prcArr.length}）</button>
+      </div>
+      <div class="dmt-panels">
+        <div class="dmt-panel on" data-dmt-panel="all">
+          <input type="search" class="dmt-search" data-dmt-search placeholder="🔍 搜索 人物/地名/专名（按名字或简介过滤）…" />
+          <div class="dmt-groups" data-dmt-scope>${allRows||'<span class="muted">（暂无实体）</span>'}</div>
+        </div>
+        <div class="dmt-panel" data-dmt-panel="wr"><div class="dm-rel-table">${wrRows||'<span class="muted">（无）</span>'}</div></div>
+        <div class="dmt-panel" data-dmt-panel="rel"><div class="dm-rel-table">${relRows||'<span class="muted">（无）</span>'}</div></div>
+        <div class="dmt-panel" data-dmt-panel="pc"><div class="dm-rel-table">${pcRows||'<span class="muted">（无）</span>'}</div></div>
+        <div class="dmt-panel" data-dmt-panel="prc"><div class="dm-rel-table">${prcRows||'<span class="muted">（无）</span>'}</div></div>
+      </div>
+      ${status}
+    </div>`;
   }
-  if(!String(o.thesis||'').trim()) o.thesis = '（由简介引申的主题，请在大纲页细化补充）';
-  return o;
+  return `<div class="card dm-card">
+    <div class="dm-head dm-head-single">📖 词典达人 · 万物词典生成器</div>
+    ${locked?`<div class="dm-locked" style="margin:6px 0;color:#2e9e5b;font-size:12px">②方案已锁定：本词典已生成，可在下方「学校」区重新一键迭代（历史 6 次对比）。</div>`:''}
+    <div class="btn-row"><p class="muted" style="margin:8px 0 0;font-size:12px">尚未生成万物词典。点击「学校 · ⚡ 一键开学」或下方「📖 词典达人」步骤即可生成。</p></div>
+    ${status}
+  </div>`;
+}
+// 词典达人 6 次历史对比预览（新 UI）
+function openDictMasterHistoryPanel(){
+  const hist = Array.isArray(state.dictmasterHistory) ? state.dictmasterHistory : [];
+  if(!hist.length){ toast('暂无历史版本'); return; }
+  const fmtTs = ts=>{ const d=new Date(ts); return (d.getMonth()+1)+'-'+d.getDate()+' '+String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); };
+  const ov = document.createElement('div'); ov.id='dmpPanel'; ov.className='gs-overlay';
+  const tabs = hist.map((h,i)=>`<button class="dm-tab" data-dm-tab="${i}" title="第 ${hist.length-i} 次">#${hist.length-i}</button>`).join('');
+  const idx = hist.length-1;   // 最新在 tabs 最右
+  const renderBody = (i)=>{
+    const h = hist[i]; if(!h) return '';
+    const rel=(h.rel||[]).map(x=>`<div class="dm-rel"><b>${esc(x.a||'')}</b> ←${esc(x.relation||'')}→ <b>${esc(x.b||'')}</b>${x.note?` <span class="muted">· ${esc(x.note)}</span>`:''}</div>`).join('')||'<span class="muted">（无）</span>';
+    const pc=(h.pc||[]).map(x=>`<div class="dm-rel">${esc(x.from||'')} ↔ ${esc(x.to||'')} <span class="muted">· ${esc(x.relation||'')}</span></div>`).join('')||'<span class="muted">（无）</span>';
+    const prc=(h.prc||[]).map(x=>`<div class="dm-rel">${esc(x.from||'')} ↔ ${esc(x.to||'')} <span class="muted">· ${esc(x.relation||'')}</span></div>`).join('')||'<span class="muted">（无）</span>';
+    const wr=(h.wr||[]).map(x=>`<div class="dm-wr"><b>${esc(x.cat||'')}</b><div>${esc(x.rule||'')}</div></div>`).join('')||'<span class="muted">（无）</span>';
+    return `<div class="dm-prev-meta">${fmtTs(h.ts)} · ${h.book?('《'+esc(h.book)+'》'):''} 人物 ${h.nChar||0} · 地名 ${h.nPlace||0} · 专名 ${h.nProp||0} · 关系表 ${h.nRel||0} 条 · 世界观规则 ${h.nWR||0} 条</div>
+      <div class="dm-prev-chars"><b>人物卡（${h.nChar||0}）</b><span class="muted">${(h.characters||[]).map(c=>esc(c&&c.name||'')).join('、')}</span></div>
+      <div class="dm-tables">
+        <details class="dm-fold"><summary>世界观规则</summary><div class="dm-rel-table">${wr}</div></details>
+        <details class="dm-fold"><summary>人物关系表</summary><div class="dm-rel-table">${rel}</div></details>
+        <details class="dm-fold"><summary>地名关联表</summary><div class="dm-rel-table">${pc}</div></details>
+        <details class="dm-fold"><summary>专名关联表</summary><div class="dm-rel-table">${prc}</div></details>
+      </div>`;
+  };
+  ov.innerHTML = `<div class="gs-modal dm-hist-modal">
+    <div class="gs-modal-head"><b>🕘 词典达人 · 万物词典历史（${hist.length}/6）</b><button class="gs-x" data-dmh-close>✕</button></div>
+    <div class="dm-tabs">${tabs}</div>
+    <div class="cv-body"><div id="dmhBody" style="max-height:62vh;overflow:auto">${renderBody(idx)}</div></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-dmh-close]').onclick = ()=> ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+  ov.querySelectorAll('[data-dm-tab]').forEach(t=>{
+    t.onclick = ()=>{ ov.querySelectorAll('[data-dm-tab]').forEach(x=>x.classList.remove('on')); t.classList.add('on'); const b=$('#dmhBody'); if(b) b.innerHTML = renderBody(+t.dataset.dmTab); };
+  });
+  ov.querySelector('[data-dm-tab="'+idx+'"]').classList.add('on');
+}
+// ③词典达人绑定
+// v1.0.30x：生成入口收归「学校区」按钮，本卡仅存产物展示，去掉生成按钮绑定
+function bindDictMaster(){
+  const hb = $('#btnDictMasterHist'); if(hb) hb.onclick = ()=> openDictMasterHistoryPanel();
+  // v1.0.307 词典达人「全貌」标签页切换
+  $$('.dmt-tab').forEach(t=>{
+    if(t._dmt) return; t._dmt = 1;
+    t.onclick = ()=>{
+      const tab = t.dataset.dmtTab;
+      $$('.dmt-tab').forEach(x=>x.classList.toggle('on', x===t));
+      $$('.dmt-panel').forEach(p=>p.classList.toggle('on', p.dataset.dmtPanel===tab));
+    };
+  });
+  // v1.0.307 全貌搜索过滤：按 名字/简介 文本匹配，隐藏不匹配条目与空组
+  const sb = $('[data-dmt-search]');
+  if(sb && !sb._dmt){ sb._dmt = 1; sb.oninput = ()=>{
+    const q = String(sb.value||'').trim().toLowerCase();
+    const scope = sb.closest('.dmt-panels') && sb.closest('.dmt-panel').querySelector('[data-dmt-scope]');
+    if(!scope) return;
+    scope.querySelectorAll('.dmt-group').forEach(grp=>{
+      let shown = 0;
+      grp.querySelectorAll('.dmt-entry').forEach(en=>{
+        const hit = !q || (en.textContent || '').toLowerCase().indexOf(q) >= 0;
+        en.style.display = hit ? '' : 'none';
+        if(hit) shown++;
+      });
+      grp.style.display = shown ? '' : 'none';
+      const sum = grp.querySelector('summary'); if(sum) sum.textContent = sum.dataset.base;
+    });
+  };}
+  const scope = document.querySelector('[data-dmt-scope]');
+  if(scope) scope.querySelectorAll('.dmt-group summary').forEach(s=>{ s.dataset.base = s.textContent; });
 }
 
-// v228/P3：大纲忠实度闸——先过结构校验，再校验是否保留用户构想核心词（复用 v225/P6 的 validateIdeaFaithful；
-// ctx 由 AIBus.get('outline') 提供，base 含 idea=state.idea）。返回 ''=通过，非空=不忠实原因，经 validateAIOutput
-// 字符串约定归一化后自动走 genOutline 的修复队列重试链，零新增管道。
-function validateOutlineFaithful(j, ctx){
-  const err = validateOutlineOutput(j);
-  if(err) return err;
-  return validateIdeaFaithful(j, (ctx && (ctx.idea || ctx.rawIdea)) || '');
+/* ==================== 阶段5：④ 词典充实（新 AI · dictEnrich role） ====================
+ * 定位：排在 ④规划师 之后、⑥正文 之前。
+ * 输入 = ④规划师产物（章节标题 / 章节编排要点 / 全书时间线）+ ③万物词典（现有人/地/专名，只读参照）。
+ * 产出 = 在万物词典之上，为正文【主动补充】更多 人物 / 地名 / 专名 —— 尤其是只说一句台词、只露一个镜头的
+ *        「路人 / 龙套」闲人（不要求九维，正文却需要他们登场来撑起生活气，避免正文因人物稀少而干瘪重复）。
+ * 方式 = 纯文本生成（不卡 JSON、不返工），配合轻量解析（｜分列 + 字段：值）自动并入 glossary，正文即可选用。
+ *       正文不再从自身回填词典（autoExtractGlossary / extractGlossaryFromChapter 已随本节移除）。
+ */
+const DICT_ENRICH_SYS = `你是一位资深长篇「词典充实师」。你将拿到 ③万物词典（现有人/地/专名，只读参照，不得改动、不得重复新增同名）与 ④规划师产物（章节标题 / 章节编排要点 / 全书时间线，若有）。你的任务：**在现有词典之上，为写正文的 AI 主动补充更饱满的 人物 / 地名 / 专名**——让正文有足够多、足够鲜活的角色与地点可写，从而避免正文因人物稀少而干瘪、重复、原地打转。
+【产出三类人物（按戏份/重要性严格分档，勿混用）】
+· 主要人物：本书的主角、核心反派、贯穿全书的绝对核心角色（通常已在我给出的现有人物里；仅当确实需要补充新的重量级核心角色时才新增）。给出 身份 / 关系 / 外貌 / 性格 / 口头禅 等关键维度，建议尽可能写全。
+· 次要配角：有戏份但非核心的次要人物（家人/挚友/对手的副手/导师/宿敌的耳目等）。给出 身份 / 关系 / 外貌 / 性格 / 口头禅 等关键维度即可（不必像词典达人那样十维写满；逐条说清它在该书的用途与基本盘，实在不明的写"未知"）。
+· 路人 / 龙套：只说一句台词、只露一个镜头的闲人（店小二、更夫、车夫、茶客、围观者、报信者、守卫……）：**不要求任何九维设定**——只需一个名字 + 一句轻量说明（身份；何时何地做什么/说一句什么话），让正文能随手让其登场。**其登场地点与时间必须贴合【小说简介】【章节标题】【时间线】与【万物词典】：地点一律沿用词典中已有地名或简介/时间线中出现的地点原名，时间必须落在时间线出现的时节内，禁止自造简介与词典之外的新地名、禁止写出与时间线矛盾的时节**（这是全书地理/时间一致性的底线）。这类角色是全书"生活气"的来源，务必给足（建议 ≥ 全书章数的 1/3 条，多多益善、可跨章复用）。
+【职责边界 / 硬性约束】
+1. 已在我给出的现有词典里的 人物/地名/专名，一律不得改动，也不得重复新增同名。
+2. 新增每个 主要人物/次要配角/地名/专名，都必须能从 小说简介 / 章节标题 / 【节拍表实体清单】/ 章节编排要点 / 时间线 中找到它会被用到的场景，禁止无中生有乱加（路人/龙套不受此限——本就是氛围闲人）。新增名可优先取用作【节拍表实体清单】里节拍表引入的新名。
+3. 数量：主要人物建议 0—2 位（缺核心才有，忌乱加主角）；次要配角建议 3—8 位；地名、专名与配角同一量级；**路人龙套尽量多给**（这是正文"人丁兴旺"的关键，多多益善）。
+4. 命名必须与本书题材/世界观自洽，禁止把现代词汇生搬进古代/仙侠等异题材（除非题材允许）。
+5. 名字只许用现有人物/地名/专名之外的【新名】；不要给出主角、反派、核心配角早已在目录里的同名。
+【输出格式】严格只输出下面的纯文本，不要 JSON、不要解释、不要 markdown 代码块：
+【新增主要人物】
+主要人物｜名｜身份：…；关系：…；外貌：…；性格：…；口头禅：…
+【新增次要配角】
+次要配角｜名｜身份：…；关系：…；外貌：…；性格：…；口头禅：…
+次要配角｜名｜身份：…；关系：…
+【新增地名】
+地名｜名｜类型：…；说明：…
+【新增专名】
+专名｜名｜说明：…
+【新增路人/龙套】
+路人｜名｜身份（如"青石村的菜贩"）；何时何地做什么/说一句什么话
+路人｜名｜…
+每条一行。用 '｜'（中文竖线）分隔：第 1 段是类别词（主要人物/次要配角/路人/地名/专名，必须从中取值），第 2 段是名字，第 3 段是设定/说明（用"字段：值"写法，多字段用；隔开）。路人第 3 段写"身份；何时何地做什么/说一句什么话"，地点与时节必须取自【小说简介】【时间线】【万物词典】中真实出现者，禁止自造新地名或与时间线矛盾的时节。不要输出任何段落之外的前后缀与解释。`;
+function buildDictEnrichUser(){
+  const o = state.outline || {};
+  const parts = [];
+  const head = [];
+  if(o.title) head.push(`【小说标题】${o.title}`);
+  if(o.logline && String(o.logline).trim()) head.push(`【小说简介】${stripStructureFromIntro(o.logline)}`);
+  if(head.length) parts.push(head.join('\n'));
+  const titles = (o.chapters||[]).map((c,i)=>`第${i+1}章 ${cleanChapterTitle((c&&c.title)||'')}`).join('\n');
+  if(String(titles).trim()) parts.push(`【章节标题】\n${titles}`);
+  const tl = globalTimelineBlock(); if(tl) parts.push(tl);   // 含全局时间线 + 各章节拍要点（承接点/情境）
+  // v1.0.293：直读节拍表同源附带实体清单（tlEntities 全量，无截断）作为新实体来源——只补这一批里词典没有的新名，做真正增量
+  const entBlock = (o.chapterPlans||[]).map((p,i)=> (p && typeof p.tlEntities==='string' && String(p.tlEntities).trim()) ? `第${i+1}章：${String(p.tlEntities).trim()}` : null).filter(Boolean).join('\n');
+  if(String(entBlock).trim()) parts.push(`【节拍表实体清单（各章同源附带的全量新实体，只读参照；只根据这里补词典还没有的新名）】\n${entBlock}`);
+  const _tb = teamShapeBrief(); if(_tb) parts.push(_tb);
+  const g = (o && o.glossary) || {};
+  const vis = [];
+  (g.characters||[]).forEach(c=>{ const tierTxt = (c&&c.tier==='support') ? '次要配角' : '主要人物'; vis.push(`${tierTxt}·${String(c&&c.name||'').trim()}${String(c&&c.identity||'').trim()?`（身份：${String(c.identity).trim()}）`:''}${String(c&&c.relation||'').trim()?`；关系：${String(c.relation).trim()}`:''}`); });
+  (g.walkons||[]).forEach(w=> vis.push(`路人龙套·${String(w&&w.name||'').trim()}${String(w&&w.note||'').trim()?`（${String(w.note).trim()}）`:''}`));
+  (g.places||[]).forEach(p=> vis.push(`地名·${String(p&&p.name||'').trim()}${String(p&&p.type||'').trim()?`（类型：${String(p.type).trim()}）`:''}`));
+  (g.propernouns||[]).forEach(x=> vis.push(`专名·${String(x&&x.name||'').trim()}${String(x&&x.note||'').trim()?`（${String(x.note).trim()}）`:''}`));
+  parts.push(`【万物词典（现有人/地/专名，只读参照：不得改动、不得重复新增同名）】\n${vis.join('\n')||'（无）'}`);
+  return parts.join('\n\n');
+}
+// 轻量解析词典充实纯文本（不依赖 JSON）：按 '｜' 分列 + 字段：值 提取，逐行归类到 人物/地名/专名/路人。
+function parseDictEnrichText(txt){
+  const res = { characters:[], places:[], propernouns:[], walkons:[] };
+  if(!txt) return res;
+  const parsePairs = detail => {
+    const m = {};
+    String(detail||'').split(/[；;]/).forEach(seg=>{
+      const kv = seg.match(/^[ \t]*([\u4e00-\u9fa5A-Za-z0-9]{1,6})[：:]\s*(.+)$/);
+      if(!kv || !kv[1] || !String(kv[2]||'').trim()) return;
+      m[kv[1].trim()] = kv[2].trim();
+    });
+    return m;
+  };
+  const lines = String(txt).split('\n');
+  for(const raw of lines){
+    const ln = String(raw||'').trim(); if(!ln) continue;
+    if(/^【.*】$/.test(ln)) continue;   // 段落头跳过
+    const seg = ln.split('｜'); if(seg.length < 2) continue;
+    const cat  = String(seg[0]||'').trim();
+    const name = String(seg[1]||'').trim(); if(!name) continue;
+    const detail = seg.slice(2).join('｜').trim();
+    if(/路人|龙套|闲人/.test(cat)){ res.walkons.push({ name, note: detail, _auto:true, tier:'walkon' }); continue; }
+    // v1.0.28x：人物分三档——主要人物/次要配角。AI 类别词「主要人物」→ main；「次要配角」「人物」「角色」→ support；未匹配则默认 support
+    if(/人物|角色|主角|配角/.test(cat)){
+      const tier = /主要人物|主角|重要角色/.test(cat) ? 'main' : 'support';
+      const m = parsePairs(detail);
+      res.characters.push(completeCharFields({
+        name,
+        tier,
+        identity: m['身份'] || m['简介'] || '',
+        age:      m['岁数'] || m['年龄'] || m['岁'] || '',
+        gender:   m['性别'] || '',
+        appearance: m['外貌'] || m['长相'] || '',
+        hobby:    m['爱好'] || '',
+        relation: m['关系'] || '',
+        trait:    m['性格'] || m['性格要点'] || '',
+        catchphrase: m['口头禅'] || ''
+      }));
+      continue;
+    }
+    if(/地名|地点|地方|场景/.test(cat)){ const m = parsePairs(detail); res.places.push({ name, type: m['类型']||m['类别']||'', note: m['说明']||m['备注']||'' }); continue; }
+    if(/专名|术语|名词|物件|势力|组织|功法|宝器/.test(cat)){ const m = parsePairs(detail); res.propernouns.push({ name, note: m['说明']||m['备注']||detail }); continue; }
+  }
+  return res;
+}
+// v1.0.28x：把解析结果并入 glossary（同名去重、以现有为准；人物按 tier 归入 characters，路人进 walkons 轻量清单）。返回 {c,w,p,k,total}。
+function mergeDictEnrich(res){
+  const o = state.outline; if(!o) return {c:0,w:0,p:0,k:0,total:0};
+  if(!o.glossary) o.glossary = { characters:[], places:[], propernouns:[] };
+  if(!Array.isArray(o.glossary.walkons)) o.glossary.walkons = [];
+  const g = o.glossary;
+  const n = { c:0, w:0, p:0, k:0, main:0, support:0 };
+  const have = list => new Set((list||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
+  const hi = have(g.characters);
+  (res.characters||[]).forEach(it=>{ const nm=it.name; if(!nm||hi.has(nm)) return; if(it.tier!=='main'&&it.tier!=='support') it.tier='support'; it._enrich=true; it._srcHow='词典充实'; it._srcTs=Date.now(); g.characters.push(it); hi.add(nm); n.c++; if(it.tier==='main') n.main++; else n.support++; });
+  const hp = have(g.places);
+  (res.places||[]).forEach(it=>{ const nm=it.name; if(!nm||hp.has(nm)) return; it._enrich=true; it._srcTs=Date.now(); g.places.push(it); hp.add(nm); n.p++; });
+  const hk = have(g.propernouns);
+  (res.propernouns||[]).forEach(it=>{ const nm=it.name; if(!nm||hk.has(nm)) return; it._enrich=true; it._srcTs=Date.now(); g.propernouns.push(it); hk.add(nm); n.k++; });
+  const hw = have(g.walkons);
+  (res.walkons||[]).forEach(it=>{ const nm=it.name; if(!nm||hw.has(nm)) return; it._enrich=true; it._srcTs=Date.now(); g.walkons.push(it); hw.add(nm); n.w++; });
+  n.total = n.c + n.w + n.p + n.k;
+  return n;
 }
 
+/* ==================== v1.0.295（M3）正文收编 · dictHarvest role ====================
+ * 关联：正文生成器每章同源附带【本章出场人物】(splitChapterCastout → state.chapters[i].castOut)。
+ * 本环节在正文写完后，跨章聚合出场名单 + 单章高频正文出现 判定候选，交由「正文收编师」判断哪些反复出现/有戏份的
+ * 新实体应正式收编进「万物词典」（含从路人升级为主/配角），一次性的氛围路人不入典。据此真正执行
+ * 「仅当某角色会反复出现时才升级收编进词典」这条边界。
+ * 复用：parseDictEnrichText（轻量解析）+ mergeDictHarvest（带跨表升级的合并）+ callDeepSeek 管线。 */
+const DICT_HARVEST_SYS = `你是一位长篇小说的「正文收编师」。正文创作结束后，系统会把「反复出现/有戏份、但尚未录入词典」的新实体候选名单及其在正文中的出现片段交给你。你的职责是判定哪些应正式收编进「万物词典」，哪些只是已有角色的别名、哪些只是一次性路人。
+【判定流程】
+1. 对每个候选先做【别名吸附】：它是否只是已有词典人物的 缩略 / 字号 / 绰号 / 异写？
+   - 是 → 不新增、不改名，该候选直接跳过，并在结果末尾附一行【已吸附】说明它是哪个已有名的别名。
+2. 确属全新角色，且「反复出现或有戏份、值得被词典收编」：按词典充实的格式输出其设定，收编进对应类别（人物/地名/专名/路人）。
+3. 只是一次性路人/出场单薄没戏份：不输出（不入典）。
+【硬性约束】
+· 万物词典已收录的名一律不得重复新增同名，不得改动既有词条。
+· 判定必须基于给出的正文片段证据，禁止臆造设定；身份/关系等要点要能与片段对得上。
+【输出格式】每行一个实体，用「类别｜名称｜字段：值；字段：值」格式、末尾加分号。类别只用 人物/地名/专名/路人；人物最好给 身份/关系 等可入典要点（正文片段里有的才写，没有则不编）。若本批决定不入任何实体，只输出一行【收编】无新增候选。`;
+// 用「类别｜名称｜」文本逐条解析（与节拍表实体清单同构）
+function _parsedCastList(text){
+  const res = [];
+  String(text||'').split(/[；;]/).forEach(seg=>{
+    const parts = String(seg).split(/[｜|]/).map(s=>String(s||'').trim()).filter(Boolean);
+    if(parts.length >= 2) res.push({ cat: parts[0], name: parts[1] });
+  });
+  return res;
+}
+// 候选判定：跨章聚合 castOut（≥2 章 触发）+ 单章高频正文出现（同一角色单章内高频出现也算候选）；已收编者跳过。
+function harvestCandidates(){
+  const o = state.outline; if(!o) return { candidates: [], byChap: {} };
+  const g = o.glossary || {};
+  const resolved = new Set();
+  (g.characters||[]).forEach(x=>resolved.add(String(x&&x.name||'').trim()));
+  (g.places||[]).forEach(x=>resolved.add(String(x&&x.name||'').trim()));
+  (g.propernouns||[]).forEach(x=>resolved.add(String(x&&x.name||'').trim()));
+  const walkonSet = new Set((g.walkons||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
+  const agg = new Map(); // name -> {cats, chans}
+  (o.chapters||[]).forEach((ch,ci)=>{
+    if(!ch || typeof ch.castOut !== 'string' || !String(ch.castOut).trim()) return;
+    _parsedCastList(ch.castOut).forEach(it=>{
+      if(!it.name || resolved.has(it.name)) return;
+      if(!agg.has(it.name)) agg.set(it.name,{ cats:new Set(), chans:new Set() });
+      const r = agg.get(it.name); r.chans.add(ci); if(it.cat) r.cats.add(it.cat);
+    });
+  });
+  const candidates = [];
+  agg.forEach((rec,name)=>{
+    const chans = [...rec.chans].sort((a,b)=>a-b);
+    if(chans.length >= 2) candidates.push({ name, cat:[...rec.cats][0]||'人物', chapters:chans, isUpgrade:walkonSet.has(name) });
+  });
+  // 单章高频：仅 1 章出现但在该章正文出现 ≥5 次，也算「有戏份」候选（防漏掉章内核心配角）
+  agg.forEach((rec,name)=>{
+    if(rec.chans.size !== 1) return;
+    const ci = rec.chans.values().next().value;
+    const body = (o.chapters[ci] && o.chapters[ci].content) || '';
+    if(String(body).split(name).length - 1 >= 5 && !candidates.some(c=>c.name===name))
+      candidates.push({ name, cat:[...rec.cats][0]||'人物', chapters:[ci], isUpgrade:walkonSet.has(name) });
+  });
+  candidates.sort((a,b)=>(b.chapters.length - a.chapters.length));
+  return { candidates: candidates.slice(0, 20), byChap:{} };   // M3-5：单批 ≤20，防证据超长
+}
+function _evidWindow(body, name){
+  const src = String(body||''); const idx = src.indexOf(name);
+  if(idx < 0) return '';
+  const s = Math.max(0, idx-60), e = Math.min(src.length, idx + String(name).length + 60);
+  return '…'+src.slice(s,e).replace(/\s+/g,' ').trim()+'…';
+}
+// 收编用户上下文：候选名单（各带正文片段证据）+ 现有词典只读参照（供别名吸附）；仅读取新章节 castOut，无老数据兜底
+function buildDictHarvestUser(){
+  const o = state.outline; if(!o) return '';
+  const { candidates } = harvestCandidates();
+  const parts = [];
+  if(candidates.length){
+    const rows = candidates.map(c=>{
+      const chs = c.chapters.slice(0,3).map(ci=>{
+        const w = _evidWindow((o.chapters[ci]&&o.chapters[ci].content)||'', c.name);
+        return `第${ci+1}章${w?`：${w}`:''}`;
+      }).join('；');
+      return `· ${c.cat}｜${c.name}｜ 出场 ${c.chapters.length} 章${c.isUpgrade?'（词典已有同名路人，拟升级为主/配角）':''} —— ${chs}`;
+    });
+    parts.push(`【正文收编候选（跨章≥2 或单章高频出现的新实体，各条附出现片段作判证；请据此收编/别名吸附/剔除一次性路人）】\n${rows.join('\n')}`);
+  } else {
+    parts.push('【正文收编候选】当前没有达到收编阈值（跨章≥2 或单章高频）的新实体候选。');
+  }
+  const g = o.glossary || {};
+  const vis = [];
+  (g.characters||[]).forEach(x=>vis.push(`人物·${String(x&&x.name||'').trim()}${String(x&&x.identity||'').trim()?`（${x.identity.trim()}）`:''}`));
+  (g.places||[]).forEach(x=>vis.push(`地名·${String(x&&x.name||'').trim()}`));
+  (g.propernouns||[]).forEach(x=>vis.push(`专名·${String(x&&x.name||'').trim()}`));
+  (g.walkons||[]).forEach(x=>vis.push(`路人·${String(x&&x.name||'').trim()}`));
+  parts.push(`【万物词典（现有，只读参照：不得改动、不得重复新增同名；用于分辨候选是否为已有名的缩略/字号/绰号）】\n${vis.join('\n')||'（无）'}`);
+  return parts.join('\n\n');
+}
+function dictHarvestGate(opts){
+  opts = opts || {};
+  if(!isLong() || !state.outline || !state.outlineConfirmed){ if(!(opts&&opts.silent)) toast('请先完成 ②生成大纲，再收编正文实体'); return false; }
+  if(!(opts && opts.force) && genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
+  if(!harvestCandidates().candidates.length){ if(!(opts&&opts.silent)) toast('暂无达到阈值（跨章≥2 或单章高频）的新实体需要收编'); return false; }
+  return true;
+}
+// 正文收编入口（复用 dictEnrich 的运行位/MarkAI/stop 通道，独立于「⚡一键四步」，须正文已写才可用）
+async function genDictHarvest(btn, opts){
+  opts = opts || {};
+  const st = $('#dictEnrichStatus'); if(st){ st.className='status'; st.textContent=''; }
+  if(!dictHarvestGate(opts)) return false;
+  markAIRunning('dictEnrich');
+  if(btn) busy(btn,true,'收编中…','de-busy');
+  const stopParent = (btn && btn.closest('.de-card')) || (btn && btn.parentNode);
+  if(stopParent) showStopBtn(stopParent);
+  const stream = $('#dictEnrichStream');
+  if(stream){ stream.style.display='block'; stream.textContent='正在扫描正文反复出现实体并收编进词典…'; }
+  try{
+    const user = buildDictHarvestUser();
+    const onStream = delta => { if(stream){ stream.textContent += String(delta||''); stream.scrollTop = stream.scrollHeight; } };
+    const res = await callAIWithContract(
+      callDeepSeek(DICT_HARVEST_SYS, user, { temperature: resolveActiveSpec().plannerAuxTemp, topP: 0.6, maxTokens: clampMaxTokens('plannerAux'), onStream, signal:_abortCtl?.signal, taskKey:'dictHarvest' }),
+      { needJson:false, taskName:'正文收编' }
+    );
+    if(!res.ok) throw new Error(res.error || '生成失败');
+    const txt = String(res.text || '').trim();
+    if(!txt) throw new Error('未返回收编内容');
+    const parsed = parseDictEnrichText(txt);
+    const n = mergeDictHarvest(parsed);
+    state.outline._dictHarvestText = txt;   // 存档（不渲染原文）
+    persist(); render(); markAIDone('dictEnrich');
+    if(stream) stream.style.display='none';
+    toast(`正文收编完成：主要人物 ${n.main||0} · 次要配角 ${n.support||0} · 路人 ${n.w} · 地名 ${n.p} · 专名 ${n.k} 已入词典${n.up?`，${n.up} 个路人升级为主/配角`:''}`);
+    return true;
+  }catch(e){
+    if(e && e.name !== 'AbortError') addToFixQueue({ kind:'dictEnrich', error:'正文收编：'+(e&&e.message) });
+    if(!(e && e.name === 'AbortError')) toast('正文收编失败：'+(e&&e.message));
+    if(st){ st.className='status err'; st.textContent=(e&&e.message)||'失败'; }
+    return false;
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='dictEnrich');
+    hideStopBtn(); if(btn) busy(btn,false); if(stream) stream.style.display='none';
+  }
+}
+// 带「跨表升级」的词典收编合并：候选若已在 walkons（路人）而本次按人物收编，则收编进 characters 并从 walkons 移除，杜绝一人占两表；其余同名去重同 mergeDictEnrich。
+function mergeDictHarvest(res){
+  const o = state.outline; if(!o) return { c:0, w:0, p:0, k:0, up:0, main:0, support:0, total:0 };
+  if(!o.glossary) o.glossary = { characters:[], places:[], propernouns:[] };
+  if(!Array.isArray(o.glossary.walkons)) o.glossary.walkons = [];
+  const g = o.glossary;
+  const n = { c:0, w:0, p:0, k:0, up:0, main:0, support:0 };
+  const have = list => new Set((list||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
+  const hi = have(g.characters), hp = have(g.places), hk = have(g.propernouns), hw = have(g.walkons);
+  const mark = it => { it._enrich=true; it._srcHow='正文收编'; it._srcTs=Date.now(); };
+  (res.characters||[]).forEach(it=>{
+    const nm = String(it && it.name || '').trim(); if(!nm || hi.has(nm)) return;
+    mark(it); if(it.tier!=='main'&&it.tier!=='support') it.tier='support';
+    if(hw.has(nm)){ g.walkons = g.walkons.filter(w=>String(w&&w.name||'').trim()!==nm); hw.delete(nm); n.up++; }   // M3-3 升级：从路人移除
+    g.characters.push(it); hi.add(nm); n.c++; if(it.tier==='main') n.main++; else n.support++;
+  });
+  (res.walkons||[]).forEach(it=>{
+    const nm = String(it && it.name || '').trim(); if(!nm || hw.has(nm) || hi.has(nm) || hp.has(nm) || hk.has(nm)) return;
+    mark(it); g.walkons.push(it); hw.add(nm); n.w++;
+  });
+  (res.places||[]).forEach(it=>{
+    const nm = String(it && it.name || '').trim(); if(!nm || hp.has(nm) || hi.has(nm)) return;
+    mark(it); g.places.push(it); hp.add(nm); n.p++;
+  });
+  (res.propernouns||[]).forEach(it=>{
+    const nm = String(it && it.name || '').trim(); if(!nm || hk.has(nm)) return;
+    mark(it); g.propernouns.push(it); hk.add(nm); n.k++;
+  });
+  n.total = n.c + n.w + n.p + n.k;
+  return n;
+}
+// v1.0.29x：规划师化——force=true 供「⚡ 一键四步」总控旁路（与 plannerGate 同策略，避免阶段入口 genBusy 命中总控 _abortCtl 造成自锁）
+function dictEnrichGate(opts){
+  opts = opts || {};
+  if(!isLong() || !state.outline || !state.outlineConfirmed){ if(!(opts&&opts.silent)) toast('请先完成 ②生成大纲，再充实词典'); return false; }
+  if(!(opts && opts.force) && genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
+  return true;
+}
+// ④ 词典充实（纯文本生成 + 轻量解析并入词典）；btn=null 且 opts.force 时供「⚡ 一键四步」总控直跑，卡片无按钮亦可触发
+async function genDictEnrich(btn, opts){
+  opts = opts || {};
+  const st = $('#dictEnrichStatus'); if(st){ st.className='status'; st.textContent=''; }
+  if(!dictEnrichGate(opts)) return false;
+  markAIRunning('dictEnrich');
+  if(btn) busy(btn,true,'充满词典中…', 'de-busy');
+  // 总控调用（btn=null）时停止按钮挂载在总控动作行，阶段内不在 de-card 重复挂
+  const stopParent = (btn && btn.closest('.de-card')) || (btn && btn.parentNode);
+  if(stopParent) showStopBtn(stopParent);
+  const stream = $('#dictEnrichStream');
+  if(stream){ stream.style.display='block'; stream.textContent='正在生成词典充实内容…'; }
+  try{
+    const user = buildDictEnrichUser();
+    const onStream = delta => { if(stream){ stream.textContent += String(delta||''); stream.scrollTop = stream.scrollHeight; } };
+    const res = await callAIWithContract(
+      callDeepSeek(DICT_ENRICH_SYS, user, { temperature: resolveActiveSpec().plannerAuxTemp, topP: 0.6, maxTokens: clampMaxTokens('plannerAux'), onStream, signal:_abortCtl?.signal, taskKey:'dictEnrich' }),
+      { needJson:false, taskName:'词典充实' }
+    );
+    if(!res.ok) throw new Error(res.error || '生成失败');
+    const txt = String(res.text || '').trim();
+    if(!txt) throw new Error('未返回词典充实内容');
+    const parsed = parseDictEnrichText(txt);
+    if(!(parsed.characters.length || parsed.walkons.length || parsed.places.length || parsed.propernouns.length)) throw new Error('未识别到有效条目（人物/路人/地名/专名），请重试');
+    const n = mergeDictEnrich(parsed);
+    // v1.0.28x：不再在卡片上展示生成原文——改为只在生成完成后向用户列出「三档人物」的极简信息（主要人物/次要配角/路人龙套）
+    state.outline._dictEnrichText = txt;   // 仅存档（导入/导出时仍保留原文兜底），UI 不再直接渲染
+    state.outline._dictEnrichSummary = buildDictEnrichSummary(parsed);
+    state.dictEnrichCounts = { c:n.c, w:n.w, p:n.p, k:n.k, main:n.main||0, support:n.support||0, ts:Date.now() };
+    persist(); render(); markAIDone('dictEnrich');
+    if(stream) stream.style.display='none';
+    toast(`词典已充实：主要人物 ${n.main||0} · 次要配角 ${n.support||0} · 路人 ${n.w||0} · 地名 ${n.p} · 专名 ${n.k}（已并入万物词典，正文可直接选用）`);
+    return true;
+  }catch(e){
+    if(e && e.name !== 'AbortError') addToFixQueue({ kind:'dictEnrich', error:'词典充实：'+(e&&e.message) });
+    if(!(e && e.name === 'AbortError')) toast('词典充实失败：'+(e&&e.message));
+    if(st){ st.className='status err'; st.textContent=(e&&e.message)||'失败'; }
+    return false;
+  }finally{
+    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='dictEnrich');
+    hideStopBtn(); if(btn) busy(btn,false); if(stream) stream.style.display='none';
+  }
+}
+// v1.0.28x：生成后仅存「三档人物 + 地名/专名」极简摘要（供卡片以小说简介式排版列出，不再需要回放生成原文）
+function buildDictEnrichSummary(parsed){
+  const pk = x => String((x&&x.name)||'').trim();
+  const brief = x => String((x&&x.identity)||(x&&x.relation)||'').trim();
+  const wbrief = x => String((x&&x.note)||'').trim();
+  return {
+    main:    (parsed.characters||[]).filter(c=>c&&c.tier==='main').map(c=>({ name:pk(c), brief:brief(c) })),
+    support: (parsed.characters||[]).filter(c=>c&&c.tier==='support').map(c=>({ name:pk(c), brief:brief(c) })),
+    walkons: (parsed.walkons||[]).map(w=>({ name:pk(w), brief:wbrief(w) })),
+    nPlaces: (parsed.places||[]).length,
+    nProps:  (parsed.propernouns||[]).length,
+  };
+}
+// ④ 词典充实器 区块 HTML（v1.0.28x 极简化：只保留「标题条 + 一个按钮」，点击即生成并并入万物词典；
+// 结果以标题旁一行合并计数呈现，不再放任何说明描述、分类明细或生成原文回放）
+function dictEnrichBlockHtml(){
+  const o = (state.outline) || {};
+  const t = String(o._dictEnrichText || '').trim();
+  const sum = o._dictEnrichSummary || null;
+  const cnt = state.dictEnrichCounts || null;
+  const status = `<p id="dictEnrichStatus" class="status" style="margin:8px 0 0"></p>`;
+  const stream = `<pre id="dictEnrichStream" class="cp-stream-preview" style="display:none;white-space:pre-wrap"></pre>`;
+  const deCollapsed = !!state.deCollapsed;
+  const c = cnt || {};
+  const countTxt = t ? [
+    c.main>0 ? `主要人物 ${c.main}` : (sum&&sum.main&&sum.main.length ? `主要人物 ${sum.main.length}` : null),
+    c.support>0 ? `次要配角 ${c.support}` : (sum&&sum.support&&sum.support.length ? `次要配角 ${sum.support.length}` : null),
+    c.w>0 ? `路人 ${c.w}` : (sum&&sum.walkons&&sum.walkons.length ? `路人 ${sum.walkons.length}` : null),
+    sum&&sum.nPlaces ? `地名 ${sum.nPlaces}` : (c.p>0 ? `地名 ${c.p}` : null),
+    sum&&sum.nProps ? `专名 ${sum.nProps}` : (c.k>0 ? `专名 ${c.k}` : null),
+  ].filter(Boolean).join(' · ') : '';
+  const foldBtn = `<span class="de-carrow">${deCollapsed?'▸':'▾'}</span>`;
+  // v1.0.28y：按钮改为词典达人式大渐变块（词典充实用紫色，点击生成中同为紫色+spinner）；
+  // 按钮下方展示三档人物（主要/次要/路人）名字+最brief信息，各自可折叠，与词典达人 .dm-fold 统一。
+  // v1.0.282：三档人物改从「当前词典」实时取数——此前用生成时快照 _dictEnrichSummary，词典被修正/重生成后摘要仍是旧描述（显示错误）；
+  // 布局：主要人物/次要配角 → 上下两行（名字在上、描述在下一行）；路人龙套 → 同一行（名字+描述同行，超长省略）。
+  const g = (o && o.glossary) || {};
+  const hue = s=>{ let h=0; for(const ch of String(s||'')) h=(h*31+ch.codePointAt(0))%360; return h; };
+  const liveBrief = c => String((c && c.identity) || (c && c.relation) || '').trim();
+  const liveMain = (g.characters||[]).filter(c=>c && (c.tier!=='support')).map(c=>({ name:String(c&&c.name||'').trim(), brief:liveBrief(c) }));
+  const liveSupport = (g.characters||[]).filter(c=>c && c.tier==='support').map(c=>({ name:String(c&&c.name||'').trim(), brief:liveBrief(c) }));
+  const liveWalkons = (g.walkons||[]).map(w=>({ name:String(w&&w.name||'').trim(), brief:String(w&&w.note||'').trim() }));
+  const deCat = (lab, arr, mode)=>{
+    const n = (arr && arr.length) ? arr.length : 0;
+    const nNew = (arr||[]).filter(x=>x&&x._enrich).length;
+    const isCloud = (mode==='cloud');
+    const cls = isCloud ? 'de-cloud' : 'de-grid';
+    const body = (arr&&arr.length) ? arr.map(it=>{
+      const nm = String(it&&it.name||'').trim(); if(!nm) return '';
+      const brief = String((it&&(it.identity||it.relation||it.note))||'').trim();
+      const isNew = !!(it && it._enrich);
+      if(isCloud) return `<span class="de-cloud-p${isNew?' new':''}" title="${esc(brief||nm)}">${isNew?'✦ ':''}${esc(nm)}</span>`;
+      return `<div class="de-item${isNew?' new':''}"><b class="de-chip" style="--h:${hue(nm)}">${isNew?'✦ ':''}${esc(nm)}</b><span class="muted dm-rel-txt">${esc(brief||'（无简介）')}</span></div>`;
+    }).join('') : '<span class="muted">（暂无）</span>';
+    const tag = nNew>0 ? `<b class="de-newb" title="本板块从 词典充实/正文收编 新增并入的条目">+${nNew} 新</b>` : '';
+    return `<details class="dm-fold"${n?' open':''}><summary>${lab}（${n}）${tag}</summary><div class="${cls}">${body}</div></details>`;
+  };
+  return `<div class="card dm-card de-card">
+    <div class="dm-head de-head" role="button" tabindex="0" data-de-toggle title="展开/收起">
+      ${foldBtn}🧩 词典充实${countTxt?`<span class="muted" style="font-weight:400">（已并入词典：${countTxt}）</span>`:''}
+    </div>
+    <div class="de-body"${deCollapsed?' style="display:none"':''}>
+      <!-- v1.0.29x：词典充实入口收归「规划师④词典充实」，本卡不再放点击按钮，仅供展示生成内容 -->
+      ${stream}
+      ${status}
+      <!-- v1.0.295：正文收编入口（独立于 ⚡一键四步，须正文已写才可用）——从已写正文收编反复出现/有戏份的新实体回词典 -->
+      <div style="margin-top:8px">
+        <button type="button" class="btn ghost de-harvest-btn" id="btnHarvestCast" title="扫描已写正文，把反复出现/有戏份但尚未入典的新实体收编进万物词典（一次性的氛围路人自动忽略）">🧺 从正文收编</button>
+      </div>
+      ${t ? `<div class="dm-tables" style="margin-top:10px">
+        ${deCat('👤 主要人物', liveMain, 'grid')}
+        ${deCat('🤝 次要配角', liveSupport, 'grid')}
+        ${deCat('🚶 路人龙套', liveWalkons, 'cloud')}
+      </div>` : `<p class="muted" style="margin-top:4px">尚未充实词典。</p>`}
+    </div>
+  </div>`;
+}
+// ④ 词典充实绑定
+function bindDictEnrich(){
+  const eb = $('#btnGenDictEnrich'); if(eb) eb.onclick = ()=> genDictEnrich(eb);
+  // v1.0.295：正文收编按钮
+  const hb = $('#btnHarvestCast'); if(hb) hb.onclick = ()=> genDictHarvest(hb);
+  // v1.0.28x：词典充实卡整卡折叠/展开（点击标题栏切换，状态持久化）
+  const dh = $('[data-de-toggle]');
+  if(dh){
+    const toggleDe = ()=>{
+      state.deCollapsed = !state.deCollapsed;
+      persist();
+      const body = dh.closest('.de-card') && dh.closest('.de-card').querySelector('.de-body');
+      if(body) body.style.display = state.deCollapsed ? 'none' : '';
+      const arr = dh.querySelector('.de-carrow'); if(arr) arr.textContent = state.deCollapsed ? '▸' : '▾';
+    };
+    dh.onclick = ()=> toggleDe();
+    dh.onkeydown = (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggleDe(); } };
+  }
+}
+
+// v1.0.245：大纲 AI 链路死代码（validateOutlineOutput 等）已随「大纲无 AI 化」清理。
 // v10.18 规划师节拍表生成（4.5 改造：强制分批，每批最多 PLAN_BATCH_SIZE 章，批间携带"已定稿前文骨架"）。
 // 每批结果合并到 state.outline.chapterPlans 与 state.outline.chapters；每批都校验数量与 schema。
 // 失败保持原值不清空；覆盖由调用方 confirm 把关。
 const PLAN_BATCH_SIZE = 25;
 
-/* ============ v1.0.138 规划师五段拆分 ============ */
+/* ============ v1.0.138 规划师拆分 ============
+ * v1.0.203 阶段3/3.4：规划师回四步——删除原「万物词典」步（词典改由 ③格「词典达人」负责，⑤格正文/规划师按需消费同一 state.outline.glossary），
+ * v1.0.29x：规划师升级四步——第④步接「词典充实」（dictEnrich）。词典已由 ③格「词典达人」生成基准，再由④规划师第④步
+ * 主动充实（读章节标题/编排要点/时间线 + 现有词典，补充人物/地名/专名与路人龙套并入词典），配套「一键四步」按步续跑仍复用 _plannerProgress。 */
 const PLANNER_STAGES = [
-  // v1.0.172：顺序改为「标题→词典→节拍表→伏笔网」。原为 节拍表→标题→词典→伏笔网，
-  // 但 plannerBatchContext 生成节拍表时直接读取 o.chapters[].title（第N章《标题》）与词典实体做输入——
-  // 节拍表强依赖标题与词典；而标题只依赖大纲、词典只依赖大纲+书名。故标题（骨架）先出，能落地的再依次生成。
-  // v1.0.183：在节拍表后插入「④ 全局时间线」——以全局视角统一重排全书时间锚，消除逐批机械排期，原伏笔网顺延为⑤。
   { id:'titles',     num:'①', label:'章节标题' },
-  { id:'glossary',   num:'②', label:'万物词典' },
-  { id:'beats',      num:'③', label:'节拍表'   },
-  { id:'timeline',   num:'④', label:'全局时间线' },
-  { id:'foreshadow', num:'⑤', label:'伏笔网'   }
+  { id:'beats',      num:'②', label:'节拍表'   },
+  { id:'timeline',   num:'③', label:'全局时间线' },
+  { id:'dictEnrich', num:'④', label:'词典充实' }
 ];
 function stageLabel(id){ const s=PLANNER_STAGES.find(x=>x.id===id); return s ? s.num+s.label : id; }
+// v1.0.231：节拍表 / 全局时间线 自动重试（含「⚡ 一键四步」与单独点击两条入口）——每批/整段最多尝试
+// PLANNER_RETRY_MAX 次（含首次，即最多自动重试 PLANNER_RETRY_MAX-1 次），失败即重试、成功即进入下一步。
+// 重试计数存于 outline._plannerRetries（红色角标显示，随项目持久化，刷新后仍可见），每次新开一轮生成归零、重试时递增。
+const PLANNER_RETRY_MAX = 16;   // v1.0.231：节拍表 / 全局时间线 自动重试上限升至 16 次（含首次=最多自动重试 15 次）
+function plannerRetryOf(stage){
+  const o = state.outline; if(!o) return 0;
+  return (o._plannerRetries && o._plannerRetries[stage]) || 0;
+}
+function setPlannerRetry(stage, n){
+  const o = state.outline; if(!o) return;
+  o._plannerRetries = o._plannerRetries || {};
+  o._plannerRetries[stage] = Math.max(0, Math.min(n, PLANNER_RETRY_MAX * 6));   // 累计显示，仅作上限保护
+  refreshPlannerStageBadge(stage);
+}
+function refreshPlannerStageBadge(stage){
+  if(stage !== 'beats' && stage !== 'timeline') return;
+  const b = document.querySelector(`.cp-stagebar [data-cp-stage="${stage}"]`);
+  if(!b) return;
+  const old = b.querySelector('.cp-retry-badge'); if(old) old.remove();
+  const rc = plannerRetryOf(stage);
+  if(rc > 0) b.insertAdjacentHTML('beforeend', `<b class="cp-retry-badge" title="${stage==='beats'?'节拍表':'全局时间线'}本环节已自动重试 ${rc} 次（每次失败后最多自动重试 ${PLANNER_RETRY_MAX-1} 次）">↻${rc}</b>`);
+}
 // 阶段完成判定（v225/P4 重写：以"每一章都有数据"为准；空数组/部分批次完成一律不亮绿灯——修"刷新后假绿灯"）
 function plannerStageDone(stage){
   const o = state.outline; if(!o) return false;
@@ -10165,11 +11210,12 @@ function plannerStageDone(stage){
   const everyPlan = pred => totalN > 0 && plans.length >= totalN && plans.every(p => p && typeof p==='object' && pred(p));
   switch(stage){
     case 'titles':     return totalN > 0 && (o.chapters||[]).every(c => String(c&&c.title||'').trim());
-    // 完成判定要求每章有 beats
-    case 'beats':      return everyPlan(p => Array.isArray(p.beats) && p.beats.length >= beatCnt());
-    case 'timeline':   return !!o._globalTimeline && Array.isArray(o._globalTimeline.chapters) && o._globalTimeline.chapters.length === totalN;
-    case 'glossary':   return sourceHasGlossary((o.glossary)||{});
-    case 'foreshadow': return !!(o._foreshadowLedger && Array.isArray(o._foreshadowLedger.planted) && o._foreshadowLedger.planted.length);
+    // v1.0.285：完成判定只看 beatsText（beats 数组已退役）
+    case 'beats':      return everyPlan(p => String(p.beatsText||'').trim());
+    // v1.0.273：纯文本化——时间线以 _globalTimeline.text 为准（旧 JSON chapters 兜底）
+    case 'timeline':   return !!o._globalTimeline && ( (String(o._globalTimeline.text||'').trim()) || (Array.isArray(o._globalTimeline.chapters) && o._globalTimeline.chapters.length === totalN) );
+    // v1.0.29x：第④步词典充实——以已生成并存档的充实原文为准（词典充实卡片同时据此亮绿灯）
+    case 'dictEnrich': return !!String(o._dictEnrichText||'').trim();
   }
   return false;
 }
@@ -10184,24 +11230,21 @@ function refreshPlannerStageBar(running, failed){
     if(st.id === running){ b.classList.add('running'); dot.innerHTML = '<span class="spinner"></span>'; b.disabled = true; }
     else { b.disabled = false;
       if(st.id === failed){ b.classList.add('fail'); dot.textContent = '✕'; }
-      else if(plannerStageDone(st.id)){ b.classList.add('done'); dot.textContent = (st.id==='foreshadow' && o._foreshadowLedger && (o._foreshadowLedger.planted||[]).length) ? ('✓'+o._foreshadowLedger.planted.length) : '✓'; }   // v250/933-T1A：伏笔网带条数
+      else if(plannerStageDone(st.id)){ b.classList.add('done'); dot.textContent = '✓'; }
       // v225/P4：半程态——进度持久化显示"进行到 N/M 批"（琥珀色，样式 .cp-dot.partial）
       else if((o._plannerProgress||{})[st.id] && o._plannerProgress[st.id].done > 0 && o._plannerProgress[st.id].done < o._plannerProgress[st.id].total){
         b.classList.add('partial'); dot.textContent = `${o._plannerProgress[st.id].done}/${o._plannerProgress[st.id].total}`;
       }
       else { b.classList.add('undone'); dot.textContent = '·'; }
     }
+    refreshPlannerStageBadge(st.id);   // v1.0.226：重试角标随阶段栏一并重建
   });
   const all = bar.querySelector('[data-cp-all]');
   if(all) all.classList.toggle('running', !!running);
-  // v1.0.190：全局时间线按段续跑——有持久化半程态时在阶段条下重建分段轨道 + 续跑按钮（刷新后仍可续）
+  // v1.0.230：全局时间线改为整段一次生成——移除分段续跑；迁移期清掉旧存档残留的分段半程态并隐藏轨道
   if(running !== 'timeline'){
-    const tlProg = (o._plannerProgress||{}).timeline;
-    const N = (o.chapters||[]).length;
-    if(tlProg && N && Number.isInteger(tlProg.done) && tlProg.done > 0 && tlProg.done < tlProg.total){
-      const segs = timelineSegments(N);
-      if(segs.length === tlProg.total){ renderSegTrack(segs, tlProg.done, -1, -1, `续跑将从第 ${tlProg.done+1}/${tlProg.total} 段开始`); showTimelineResume(segs, tlProg.done); }
-    } else if(plannerStageDone('timeline')){ hideTimelineTrack(); }
+    if(o._plannerProgress && o._plannerProgress.timeline) delete o._plannerProgress.timeline;
+    hideTimelineTrack();
   }
 }
 // v225/P5-A：填完章节数即可进入规划师——无章节数组时按 N 生成占位（空标题），规划师五阶段均可直接跑
@@ -10233,54 +11276,36 @@ function plannerBatchContext(b, opts){
   opts = opts || {};
   const o = state.outline || {};
   const n = b.end - b.start;
-  const batchTitles = (o.chapters||[]).slice(b.start, b.end).map((c,i)=> `第${b.start+i+1}章《${c&&c.title||''}》`).join(' / ');
   const parts = [];
   if(opts.withStyle !== false){ const ws = writeStyleNamesBlock(); if(ws.trim()) parts.push(ws.trim()); }
-  const anchor = outlineAnchorBlock(); if(anchor) parts.push(anchor);
-  parts.push(`【导航灯塔】\n${JSON.stringify(o.navBeacon||{})}`);   // v228/P6：紧凑 JSON 输入瘦身（提速，语义不变）
-  // v1.0.141：断掉旧 structure(acts/mainLine/pivotPlan) 注入，改为注入「大纲节拍的结构」阶段列表
+  // v1.0.280：接入「词典达人专线」——注入 ②优化构想所选方案完整原文为唯一核心蓝本（与词典达人同源），
+  // 让节拍编排紧贴核心构想推进，不跑偏
+  const _cand = selectedPolishCandidate();
+  const _candTxt = String((_cand && _cand.text) || '').trim();
+  if(_candTxt){
+    parts.push(`【蓝本：②优化构想所选方案】${(_cand && _cand.name) ? ('方案『' + _cand.name + '』') : '（所选方案）'}`);
+    parts.push(`【所选方案完整原文（作为本章节拍编排的唯一核心蓝本，其中信息不可违背、须落地到节拍事件）】\n${_candTxt}`);
+  }
+  // v1.0.240：不再注入【导航灯塔】JSON——其 genre/protagonist/coreConflict/tone 与 整体情绪基调 重复，同一信息注入两遍纯属噪声
+  // 【全书节拍】阶段列表：保留（阶段约束，节拍须落在阶段内）
   const _stg = chapterPlanStages(o);
   if(_stg.length){
     const _stgTxt = _stg.map(s=>`第 ${s.first}—${s.last} 章「${s.name}」`).join('；');
-    parts.push(`【大纲节拍的结构】全书按本节拍阶段推进：${_stgTxt}。每章必须落在其所属阶段内、服务该阶段走向，不得越过当前阶段提前兑现后续阶段内容。`);
+    parts.push(`【全书节拍】全书按本节拍阶段推进：${_stgTxt}。每章必须落在其所属阶段内、服务该阶段走向，不得越过当前阶段提前兑现后续阶段内容。`);
   }
-  parts.push(`【整体情绪基调】${o.tone || '未指定'}`);
+  // v1.0.280：不再注入【整体情绪基调】——o.tone 全库无写入点（navBeacon.tone 恒为空），注入恒为「未指定」，纯噪声
   const _tb = teamShapeBrief();   // v1.0.186 团队设定注入节拍批：event 分工 / 团队拍型 / 对手戏
   if(_tb) parts.push(_tb);
-  parts.push(`【本批次】第 ${b.start+1}—${b.end} 章，共 ${n} 章\n${batchTitles}`);
+  // v1.0.285：本批标题与上方「全书章节标题」全局清单重复，此处只保留范围提示（批内章节号由「===== 第N章 =====」约定）
+  parts.push(`【本批次】第 ${b.start+1}—${b.end} 章，共 ${n} 章`);
   const prev = b.start > 0 ? buildPrevSkeleton(b.start) : '';
   if(prev) parts.push(prev);
-  if(opts.withGlossary !== false){ const g = chapterGlossaryBlock(); if(g.trim()) parts.push(g.trim()); }
-  const iron = narrativeIronBlock('planner');   // v1.0.133 叙事铁律（规划纪律：禁则硬约束+软约束引导）
+  if(opts.withGlossary !== false){ const g = chapterGlossaryBlock(undefined, {lean:true}); if(g.trim()) parts.push(g.trim()); }   // v1.0.240：节拍表用瘦身词典（人物只留 名称·身份·关系，外貌/爱好/口头禅等正文细节不注入）
+  const iron = narrativeIronBlock('planner', {lean:true});   // v1.0.240 规划纪律瘦身：节拍表不再注入正文向铁律全文，仅保留禁则清单 + 一行规划纪律摘要（铁律第 5 条已覆盖）
   if(iron) parts.push(iron);
   return parts.join('\n\n');
 }
-// 节拍批次校验（查 beats 完整性；opts.finalOffset=本批内全书末章的数组下标，未含末章传 -1/缺省）
-function validatePlannerBeatsBatch(j, opts){
-  opts = opts || {};
-  if(!j || typeof j !== 'object') return '返回不是对象';
-  if(!Array.isArray(j.chapterPlans)) return '缺少 chapterPlans 数组';
-  const _keys = beatTypeKeys();
-  const _allowed = _keys.slice();
-  if(!_allowed.includes(BEAT_ENDING.key)) _allowed.push(BEAT_ENDING.key);   // v1.0.196：「结局」仅末章末拍可放行
-  for(const [i,p] of j.chapterPlans.entries()){
-    if(!p || typeof p !== 'object') return `第 ${i+1} 个 chapterPlan 不是对象`;
-    if(!Array.isArray(p.beats) || p.beats.length !== beatCnt()) return `第 ${i+1} 章 beats 应为 ${beatCnt()} 段（当前选定「${currentBeatCfg().label}」），实得 ${Array.isArray(p.beats)?p.beats.length:'非数组'}`;
-    const isFinal = (opts.finalOffset != null && i === opts.finalOffset);   // v1.0.196：本批该项是否为全书末章
-    for(const [k,b] of p.beats.entries()){
-      if(!_allowed.includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
-      if(_keys[k] && b.type !== _keys[k]){
-        // v1.0.196：末章末拍允许以「结局」替换原微拍末拍（hook/收束+悬念），其余位置仍严格按序
-        if(!(isFinal && k === p.beats.length-1 && b.type === BEAT_ENDING.key)){
-          return `第 ${i+1} 章第 ${k+1} 个 beat 顺序应为「${_keys[k]}」，实得「${b.type}」`;
-        }
-      }
-      if(!String(b.event||'').trim()) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 event`;
-      if(_timeAnchorOn() && !String(b.time||'').trim()) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 time（时间锚，如 现实·第2天·清晨）`;   // v1.0.175
-    }
-  }
-  return '';
-}
+// v1.0.285：validatePlannerBeatsBatch（旧 JSON beats 完整性校验）已随 beats 数组退役整体删除——节拍表为纯文本编排，无 JSON schema 可校验
 // 规划师流式预览（复用旧 cp-stream-preview 样式）
 function plannerPreview(btn, tip){
   if(!currentIsDeepSeek()) return null;
@@ -10297,7 +11322,29 @@ function plannerRunBtn(btn, on){
   else { btn.classList.remove('cp-gen-btn-loading'); busy(btn,false); }
 }
 
+// v1.0.276 章节标题纯文本化：把 AI 返回的逐行纯文本解析成恰好 n 个「第N章 标题」，供自动填充。
+// 容错：去掉代码块围栏/行首序号符号/多余标点；数量不足时按序补齐占位，行过多时按序截断。
+function parseTitlesText(txt, n){
+  const out = [];
+  const lines = String(txt||'').split(/\r?\n/);
+  for(const raw of lines){
+    if(out.length >= n) break;
+    let line = String(raw||'').trim();
+    if(!line) continue;
+    line = line.replace(/^```/,'').replace(/```$/,'').trim();   // 去代码块围栏
+    if(!line) continue;
+    if(/^[·•●*\-–—_]{3,}$/.test(line)) continue;                 // 纯分隔行跳过
+    if(/^[#*>-]+\s*/.test(line)) line = line.replace(/^[#*>-]+\s*/,'').trim();  // 去 markdown 无序/引用符与井号
+    line = line.replace(/^(第\s*\d+\s*章[·、：:．.，,、\-–—]*\s*|[0-9．.、]\s*)/,'').trim();  // 去可能重复的章号前缀/数字序号
+    const c = cleanChapterTitle(line).trim();                     // 统一净化标题名
+    if(c) out.push(`第${out.length+1}章 ${c}`);
+  }
+  while(out.length < n) out.push(`第${out.length+1}章 `);        // 不足补齐占位
+  return out;
+}
+
 // ② 章节标题（单批；复用 REGEN_TITLES_SYS，直接定稿应用）
+// v1.0.276 纯文本化：章节标题由 JSON 契约改走「纯文本逐行」+ parseTitlesText 自动填充，免除 JSON 截断/校验失败
 async function genPlannerTitles(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
@@ -10313,12 +11360,12 @@ async function genPlannerTitles(btn, opts){
     if(!n){ if(!opts.silent) toast('请先设置章节数并生成大纲'); return false; }
     const user = titlesGenUser({ req:'' });
     const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const cands = await Promise.all([
-      callAIWithContract(callDeepSeek(REGEN_TITLES_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.5, onStream, signal:_abortCtl?.signal, taskKey:'plannerTitles'}), {needJson:true, expectedCount:n, countPath:'titles', taskName:'规划师-标题-A'}),
-    ]);
-    const best = pickBestTitles(cands, n);
-    if(!best.ok) throw new Error(best.error);
-    const titles = (best.data.titles||[]).map(t=>String(t||'').trim());
+    const res = await callAIWithContract(
+      callDeepSeek(REGEN_TITLES_SYS, user, {temperature:resolveActiveSpec().plannerTitlesTemp, topP:0.5, onStream, signal:_abortCtl?.signal, taskKey:'plannerTitles'}),
+      { needJson:false, taskName:'规划师-标题-A' }
+    );
+    if(!res.ok) throw new Error(res.error || '标题生成失败');
+    const titles = parseTitlesText(res.text || '', n);   // 纯文本 → n 个「第N章 标题」自动填充
     if(!bindPlannerTitles(titles)) throw new Error('标题数量与章节数不一致，未应用');
     state.plannerFinalized = true;
     persist(); render(); markAIDone('chapterPlan'); refreshPlannerStageBar(null, null);
@@ -10335,13 +11382,73 @@ async function genPlannerTitles(btn, opts){
   }
 }
 
-// ① 节拍表（分批 ≤25；基于标题/前文骨架直接生成 beats，批间即时写回）
+// ① 节拍表（分批 ≤12；基于标题/阶段/前文骨架/词典/所选方案 直接生成每章「章节编排」纯文本，批间即时写回）
+// ② 节拍表（v1.0.273 纯文本化）：按「幕/阶段」分片、每片带全全局骨架，输出每章内容丰满的「章节编排」文本。
+// 移除 event≤40 字、严格 JSON schema、按拍 type 顺序契约、修 schema 的重试；仅保留网络/截断重试。
+// v1.0.285：beats 数组退役——生成/解析/写回全程 beatsText 纯文本（splitBeatsTextBlocks 按「===== 第N章 =====」切块）
+function beatChunkRanges(o){
+  const totalN = (o.chapters||[]).length;
+  if(!totalN) return [];
+  const stages = chapterPlanStages(o);
+  const base = [];
+  if(stages && stages.length){ stages.forEach(s=>{ base.push({start: s.first-1, end: s.last}); }); }
+  else base.push({start:0, end: totalN});
+  const MAX = 12;   // 单次调用不超过 12 章，避免超长输出力竭变薄/被截断
+  const out = [];
+  base.forEach(r=>{ for(let s=r.start; s<r.end; s+=MAX){ out.push({start:s, end: Math.min(s+MAX, r.end)}); } });
+  return out;
+}
+// 解析 AI 返回的章节编排纯文本：按 "===== 第N章 =====" 分隔为章节块（N=绝对章号）
+// v1.0.302（防串位）：旧实现把切点取成「下一章分隔符的『末尾』」，导致每个章节块末尾都吞进一行「===== 第N+1章 =====」，
+// 泄露进正文 L1/L2 注入与阅读界面，可能让正文 AI 误判章节边界。现改为切到「下一章分隔符的『起始』」，不再吞入分隔行；
+// 并对历史脏数据统一过 cleanBeatDividerTrailer 兜底剔除残留在章内的分隔行。
+function cleanBeatDividerTrailer(txt){
+  return String(txt||'').split(/\r?\n/).filter(ln=>!/^\s*={5}\s*第\s*\d+\s*章\s*={5}\s*$/.test(ln)).join('\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+function splitBeatsTextBlocks(txt){
+  const blocks = [], re = /^={5}\s*第(\d+)章\s*={5}\s*$/gm;
+  const starts = []; let m;
+  while((m=re.exec(txt))) starts.push({ n: +m[1], start: m.index, end: m.index + m[0].length });
+  for(let i=0;i<starts.length;i++){
+    const end = (i+1<starts.length) ? starts[i+1].start : txt.length;
+    const text = cleanBeatDividerTrailer(txt.slice(starts[i].end, end));
+    if(text){ const _s = splitBeatsEssence(text); blocks.push({ n: starts[i].n, text: _s.body, essence: _s.essence, entities: _s.entities }); }
+  }
+  return blocks;
+}
+// v1.0.289：从单章节拍编排纯文本中切出「【时间线要点】」块（节拍生成器同源附带、仅供全书时间线判时使用的精华）。
+// 匹配行首「【时间线要点】」（兼容「【时间线】」/省略冒号），只取该行内容；该行从编排正文剥离，保证 beatsText 纯净。
+// 无此块（老数据）则 essence 为空串，调用方据此回退段落提取。格式示例：
+// 【时间线要点】现实·第2天清晨→第4天傍晚（3日）：承接上章追杀突围后逃离，收束抵达边境镇入夜。
+// v1.0.29x：同步切出「【本章实体清单】」行为 entities（独立字段，供词典充实直读全量实体；仅新生成章节有值）。
+function splitBeatsEssence(blockTxt){
+  const lines = String(blockTxt||'').split(/\r?\n/);
+  const essRe = /^[ \t]*【\s*时间线(?:要点)?\s*】\s*[:：]?\s*([\s\S]*)$/;
+  const entRe = /^[ \t]*【\s*本章实体清单\s*】\s*[:：]?\s*([\s\S]*)$/;
+  let essence = '', entities = '', bodyLines = [];
+  for(const ln of lines){
+    let mk = ln.match(essRe);
+    if(mk){ const t = String(mk[1]||'').trim(); if(t) essence = t; continue; }
+    mk = ln.match(entRe);
+    if(mk){ const t = String(mk[1]||'').trim(); if(t) entities = t; continue; }
+    bodyLines.push(ln);
+  }
+  return { body: bodyLines.join('\n').replace(/\s+$/,'').trim(), essence, entities };
+}
+// 节拍批次用户上下文：在通用批次上下文之上，额外注入「全书章节标题」（全局视野，多片共用）
+function plannerBeatsUser(b){
+  const o = state.outline || {};
+  const allTitles = (o.chapters||[]).map((c,i)=>`第${i+1}章《${c&&c.title||'（标题待定）'}》`).join('；');
+  const globalTitles = `【全书章节标题（全局视野，各批次共用，据此编排全局推进）】\n${allTitles}`;
+  const ctx = plannerBatchContext(b);
+  return globalTitles + '\n\n' + ctx;
+}
 async function genPlannerBeats(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
   markAIRunning('chapterPlan');
   refreshPlannerStageBar('beats', null);
-  let preview = plannerPreview(btn, '正在生成节拍表…'), _streamBuf = '';
+  let preview = plannerPreview(btn, '正在生成章节编排（纯文本）…'), _streamBuf = '';
   plannerRunBtn(btn, true);
   const o = state.outline;
   const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
@@ -10349,78 +11456,66 @@ async function genPlannerBeats(btn, opts){
   try{
     const totalN = (o.chapters||[]).length;
     if(!totalN){ if(!opts.silent) toast('请先设置全书章节数'); return false; }
-    // v1.0.198 微拍批次量化：每批输出的体量按「每章拍数」归一——以微五(5拍×25章)为基准，高拍数微拍（微七=7拍→~18章/批）不再按固定 25 章硬塞进单次调用，
-    // 避免单批响应过长 / 超 maxTokens 截断，从而出现「节拍表一直生成中」的长时间卡顿；微三/微五/双拍取 min(25, ceil(125/拍数)) 不受影响或更细。
-    const _bc = Math.max(1, beatCnt());
-    const _bsz = Math.max(1, Math.min(PLAN_BATCH_SIZE, Math.ceil((PLAN_BATCH_SIZE * 5) / _bc)));
-    const pending = [];
-    for(let start=0; start<totalN; start+=_bsz) pending.push({start, end: Math.min(start+_bsz, totalN)});
-    let wrote = 0;
-    let _doneN = 0;
+    if(!Array.isArray(o.chapterPlans)) o.chapterPlans = new Array(totalN).fill(null);
+    let pending = beatChunkRanges(o);
+    if(!pending.length) pending = [{start:0, end:totalN}];
+    let wrote = 0, _doneN = 0, beatsRetries = 0;
+    setPlannerRetry('beats', 0);
     while(pending.length){
       const b = pending[0]; _doneN++;
-      const n = b.end - b.start;
-      let user = plannerBatchContext(b);
-      // v1.0.175：时间锚跨批承接——把上一批的"现实主线末尾时点"透传给本批，确保首页首拍时间不间断、不倒退
-      if(_timeAnchorOn() && b.start > 0){
-        const _prevPlan = (Array.isArray(o.chapterPlans) && o.chapterPlans[b.start - 1]) || null;
-        const _prevTail = _prevPlan && Array.isArray(_prevPlan.beats) ? String((_prevPlan.beats[_prevPlan.beats.length-1]||{}).time||'').trim() : '';
-        if(_prevTail){ user += `\n\n【上一章末尾时间锚（承接硬约束）】第 ${b.start} 章（上一批末章）结束于「${_prevTail}」。\n· 本批第 ${b.start+1} 章首拍的"现实·时点"必须承接该末尾时点（从其之后/衔接处继续），禁止整体倒退到更早时段；\n· 若首拍需以闪回/梦境等异支线开场，也须在主线时点之后正常进入并随后收回，不得破坏主线时间顺序。`; }
-      }
-      const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（批次 ${_doneN}/${_doneN + pending.length - 1}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-      _streamBuf = '';
-      // v1.0.196：本批含全书末章时，末章末拍须以「结局(ending)」收束而非悬念，并把末章下标透传给校验层放行
-      const _finalAbs = totalN - 1;
-      const _inFinal = _finalAbs >= b.start && _finalAbs < b.end;
-      let _finalOffset = -1;
-      if(_inFinal){
-        _finalOffset = _finalAbs - b.start;
-        user += `\n\n【全书末章·结局拍（硬约束）】本批第 ${_finalOffset + 1} 章，即全书第 ${_finalAbs + 1} 章，是全书最后一章。该章**最后一拍禁止用 hook（悬念）**，必须改为「结局」节拍：本章最后一段 beats 的 type 固定为 "ending"，其余各拍类型照常按微拍顺序。其 event 必须收束全书主线与各主要人物归宿、给出核心冲突的最终解决与确定结局或明确余味；禁止留悬念钩子、禁止开放式烂尾。`;
-      }
-      const cands = await Promise.all([
-        callAIWithContract(callDeepSeek(buildBeatsSys(), user, {temperature:resolveActiveSpec().planTemp, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:true, expectedCount:n, countPath:'chapterPlans', schemaValidator:(j)=> validatePlannerBeatsBatch(j, { finalOffset: _finalOffset }), taskName:`节拍表批次 ${_doneN}-A`}),
-      ]);
-      const best = pickBestChapterPlan(cands, n);
-      if(!best.ok){
-        const err = String(best.error || '所有候选均无效');
-        // v1.0.198 截断自动拆批：高拍数/长章数导致的单批输出被 maxTokens 截断（finishReason=length）时，
-        // 不再让整批长时间失败转圈，而是把本段拆成两半重跑（至多逐层减半，n=1 时不再拆、直接报错）。
-        const truncated = /截断|truncat|finishReason/i.test(err);
-        if(truncated && n > 2){
-          const mid = b.start + Math.ceil(n/2);
+      const user = plannerBeatsUser(b);
+      const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（片段 ${_doneN}/${_doneN + pending.length - 1}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
+      let outTxt = '', lastErr = '', truncSplit = false;
+      for(let attempt=0; attempt<PLANNER_RETRY_MAX; attempt++){
+        if(_abortCtl && _abortCtl.signal.aborted) throw {name:'AbortError'};
+        if(attempt > 0){ beatsRetries++; setPlannerRetry('beats', beatsRetries); }
+        _streamBuf=''; if(preview){ preview.textContent = `（片段 ${_doneN}/${_doneN + pending.length - 1}，自动重试 ${attempt}/${PLANNER_RETRY_MAX-1}）`; }
+        const usr = attempt>0 ? (user + `\n\n【重试提示】上一轮第 ${_doneN} 段输出不完整/被截断。请重新输出，并确保：每一章都以「===== 第N章 =====」行开头（N=该章绝对章号）、内容足够密实、不得省略任何一章。原因：${lastErr}`) : user;
+        const res = await callAIWithContract(callDeepSeek(buildBeatsSys(), usr, {temperature:resolveActiveSpec().planBeatsTemp, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:false, taskName:`章节编排片段 ${_doneN}${attempt>0?'-重试'+attempt:'A'}`});
+        if(res.ok && String(res.text||'').trim()){ outTxt = String(res.text||'').trim(); break; }
+        lastErr = res.error || '输出为空';
+        const truncated = /截断|truncat|finishReason/i.test(lastErr);
+        if(truncated && (b.end - b.start) > 2){
+          const mid = b.start + Math.ceil((b.end - b.start)/2);
           pending.shift();
           pending.unshift({start:b.start, end:mid}, {start:mid, end:b.end});
-          if(!opts.silent) toast('节拍表单批过长被截断，已自动拆小重跑…');
-          continue;
+          truncSplit = true;
+          if(!opts.silent) toast('章节编排片段过长被截断，已自动拆小重跑…');
+          break;
         }
-        throw new Error(`批次 ${_doneN} 失败：${err}`);
+        if(attempt < PLANNER_RETRY_MAX-1) await new Promise(r=>setTimeout(r, 1200));
       }
+      if(truncSplit) continue;
+      if(!outTxt) throw new Error(`片段 ${_doneN} 失败：${lastErr || '所有候选均无效'}`);
       pending.shift();
-      if(!Array.isArray(o.chapterPlans)) o.chapterPlans = new Array(totalN).fill(null);
-      (best.data.chapterPlans||[]).forEach((p,i)=>{
-        const idx = b.start + i;
-        const cur = (o.chapterPlans[idx] && typeof o.chapterPlans[idx]==='object') ? o.chapterPlans[idx] : {};
-        o.chapterPlans[idx] = Object.assign({}, cur, {
-          beats: Array.isArray(p.beats) ? p.beats : (Array.isArray(cur.beats)?cur.beats:[]),
-          emotionalArc: String(p.emotionalArc||cur.emotionalArc||'').trim(),
-          requiredEntities: Array.isArray(p.requiredEntities)&&p.requiredEntities.length ? p.requiredEntities : (Array.isArray(cur.requiredEntities)?cur.requiredEntities:[])
-        });
-        if(Array.isArray(p.beats) && p.beats.length>=beatCnt()) wrote++;
+      const blocks = splitBeatsTextBlocks(outTxt);
+      let got = 0;
+      blocks.forEach(blk=>{
+        const idx = blk.n - 1;
+        if(idx >= b.start && idx < b.end){
+          const cur = (o.chapterPlans[idx] && typeof o.chapterPlans[idx]==='object') ? o.chapterPlans[idx] : {};
+          // v1.0.291：重生成前压栈「后悔药」历史已随阅读器历史功能退役——直接以新编排覆盖写回
+          // v1.0.293：节拍表同源附带实体清单（【本章实体清单】）落库 tlEntities，供词典充实直读全量实体
+          o.chapterPlans[idx] = Object.assign({}, cur, { beatsText: blk.text, tlEssence: (blk.essence||''), tlEntities: (blk.entities||'') });
+          if(blk.text) got++;
+        }
       });
+      if(got > 0) wrote += got;
       o._plannerProgress = o._plannerProgress || {};
-      o._plannerProgress.beats = { done: _doneN, total: _doneN + pending.length, ts: Date.now() };   // v225/P4：批次进度持久化，刷新后可见半程态
+      o._plannerProgress.beats = { done: _doneN, total: _doneN + pending.length, ts: Date.now() };
       persist();
     }
     render();
     markAIDone('chapterPlan');
     o._plannerProgress = o._plannerProgress || {};
-    o._plannerProgress.beats = { done: _doneN, total: _doneN, ts: Date.now() };   // v225/P4：全部批次完成（v1.0.198 修正：用 _doneN 而非未定义的 batches.length，避免成功收尾抛 TypeError 被误判为失败）
+    o._plannerProgress.beats = { done: _doneN, total: _doneN, ts: Date.now() };
     refreshPlannerStageBar(null, null);
-    if(!opts.silent) toast(`节拍表已生成：${wrote} 章 · 每章${beatCnt()}段（${currentBeatCfg().label}）`);
+    if(!opts.silent) toast(`章节编排已生成：${wrote} 章（纯文本，${currentBeatCfg().label}）`);
+    playDoneSound('single');   // 节拍表（规划步之一）完成 → 单个完成音
     return true;
   }catch(e){
     if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'节拍表：'+e.message});
-    if(!opts.silent) toast(e.name==='AbortError' ? '已停止生成节拍表' : '节拍表生成失败：'+e.message);
+    if(!opts.silent) toast(e.name==='AbortError' ? '已停止生成章节编排' : '章节编排生成失败：'+e.message);
     refreshPlannerStageBar(null, 'beats');
     return false;
   }finally{
@@ -10433,125 +11528,160 @@ async function genPlannerBeats(btn, opts){
 // 以全局视角统一重排全书各章/各拍的时间锚：消除逐批机械排期、让时间跨度为情节服务，回写节拍表
 // 并写入 o._globalTimeline（供时间线看板与承接真相源读取），正文据此承接、不再章首生硬报时。
 // ===== ④ 全局时间线 · v1.0.190 方案2：按段串行重排、跨段承接、中断可续跑 =====
-// 时间统筹师系统提示（分段版）：只重排「本批」章节，全量输出其时间锚 + 头(anchor)/尾(end) 承接
-const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」。你可能只拿到全书某一批（一段）章节，也可能兼有上一批末尾时点。你的职责：把**本批**章节的现有时间锚重新排成一整条**连贯、可信、有节奏**的全球时间线的一段，让正文不再机械、不在章首生硬报时，并让本批能无缝接到上一批之后。
-【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
-{"anchor":"本批现实主线起始时点（若给了上一批末尾则必须晚于/衔接它并写在这里；没给则写全书现实主线起点）","end":"本批现实主线结束时点（供下一批承接）","chapters":[{"index":1,"beats":[{"type":"<本批内该章原拍type，原样照抄>","time":"支线·时点，如 现实·第3天·上午"}, ...]}, ...], "global_notes":"用一句话说明本批时间跨度与节奏安排"}
+// 时间统筹师系统提示（v1.0.224 重写）：全局时间线 = 全书时间唯一权威。
+// 输入：本批各章「标题 + 节拍事件」+ 大纲结构阶段（+ 上一批末尾时点）。AI 从剧情事件独立规划时间，不再依赖节拍表已有 time。
+// 时间单位解绑：时点可用 时刻/日/旬/月/季/年，跨章跳转以剧情为准；只标注确需跳变的章，非跳变章默认顺延。
+const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」，负责为全书安排**唯一、连贯、可信**的时间线。你不是重排别人已定的时间，而是从**每一章的剧情事件**判断每章落在什么时间、章节之间时间如何流动。
+【事件驱动】：给出的素材是每章标题 + 每章章节编排（节拍表已为你提炼时间线索）。你要从事件看时间——赶路/养伤/修炼/等待/远行/多日布局让时间向前跳跃；同一场戏内的多拍落在同一时刻/同一日；追杀/夺宝/对决/宫斗等紧迫戏压缩到数小时内。严禁"第N章=第N天"这种机械等差排期。
+【时间单位解绑】：时点是开放的——可以是 时刻(清晨/夜)/日(第2天)/旬/月/季/年，按剧情需要选择，绝不要把所有章都锁死在"第N天"。全书可有跨旬/跨月/跨年的大跨度（如闭关数年、远行数月、季节更迭），只要剧情事件支持即可；同一天内又可有多章连续推进。跨度由事件真实耗时决定。
+【输出格式】严格只输出**全书时间线的纯文本**（不要 JSON、不要解释、不要 markdown 代码块）。先写一段【全书时间轴】总览，再逐章给出该章落在什么时点。每章一行，格式为：
+第N章《标题》：起始时点 → 章末时点（若与前章自然顺延续写，只写时点，别标"跳跃"；确有大跨度/切支线才在括号里注明，如 数日后 / 三日后 / 翌月 / 半年后 / 入冬 / 闭关三月 / 回忆·第1天）。
+结尾用一行【节奏】概括全书时间跨度与节奏安排（用了哪些时间单位）。
 【硬性规则】
-1. index 从 1 起，对应当前本批内部第几章（1=本批第一章），数量必须与本批给定章节数完全一致；每章 beats 的数量与 type 必须照抄，只许改动 time。
-2. 现实（主线）支线：本批第一个现实时点（anchor）必须晚于或衔接上一批末尾（给了就严禁倒退）；本批现实支线内部全程单调不倒退；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰，切换须由剧情出入点解释。
-3. 时间跨度由剧情事件决定、绝不由章节序号决定：严禁"第N章=第N天"等差排期。同一事件内多拍落同一时刻/同一日；赶路/养伤/修炼/等待/多日布局可整段跳数日/数旬/数月；紧迫戏压缩到同一日内甚至数小时。
-4. 时间节奏要有起伏：本批里有的章时间基本不流动，有的章跨数天，绝不均匀。
-5. 每个 time 只写"支线名 + 一个时点"（≤12 字），用顿号或·分隔，不要多余解释。`;
+0. 先全局、后局部：动手排每章之前，先依据全部章节标题/章节编排，判断整部小说的现实时间轴跨度（数小时/数日/数月/数年/数十年/跨越数代/千年仙途），把它作为全书的"总时间轴"；然后把每章落在这一条总轴上——首章起始到末章章末的总跨度必须与判断一致，全书整体单调推进。严禁无依据地"一章一天"机械递进，也不许把跨度算错（如数年的故事排成数日、数日的连环事件排成数年）。
+1. 每一章都必须出现一行"第N章"，N 为全书绝对章号，一章不多一章不少。
+2. 全书现实主线时间必须单调不倒退：后一章起始不得早于前一章章末；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰，切换须由剧情出入点解释（时点前加支线名，如「回忆·第1天」）。
+3. 时间节奏要有起伏：有的章时间基本不流动（同日内推进），有的章跨数天/旬/月/季/年，绝不均匀；确需大跨度跳跃的章在括号中标出跳变。
+4. 时点写法直白可读："支线名 + 一个时点"（如 现实·第2天·清晨 / 现实·第3天 / 三日后 / 入冬 / 思念·深夜）；不要含糊（"若干时间后"），要让正文能据此安心承接。
+5. 只输出上述时间线纯文本。`;
 
-// 分段输出校验：结构 + 每章 beat 数/type 顺序/必填 time + anchor/end 非空
-function validateTimelineSegOutput(j, expectedCount){
-  if(!j || typeof j !== 'object') return '返回不是对象';
-  if(!String(j.anchor||'').trim()) return '缺少 anchor（本批现实主线起始时点）';
-  if(!String(j.end||'').trim()) return '缺少 end（本批现实主线结束时点，供下一批承接）';
-  if(!Array.isArray(j.chapters) || !j.chapters.length) return '缺少 chapters 数组';
-  if(j.chapters.length !== expectedCount) return `本批 chapters 应为 ${expectedCount} 章，实得 ${j.chapters.length}`;
-  const keys = beatTypeKeys();
-  for(const [ci, cp] of j.chapters.entries()){
-    if(!cp || typeof cp !== 'object') return `本批第 ${ci+1} 个 chapter 不是对象`;
-    if(!Number.isInteger(+cp.index) || +cp.index < 1) return `本批第 ${ci+1} 个 chapter 缺失有效 index`;
-    if(!Array.isArray(cp.beats) || cp.beats.length !== beatCnt()) return `本批第 ${ci+1} 章 beats 应为 ${beatCnt()} 段，实得 ${Array.isArray(cp.beats)?cp.beats.length:'非数组'}`;
-    for(let i=0;i<cp.beats.length;i++){
-      const b = cp.beats[i];
-      if(!b || !String(b.time||'').trim()) return `本批第 ${ci+1} 章第 ${i+1} 拍缺失 time`;
-      if(keys[i] && b.type !== keys[i]) return `本批第 ${ci+1} 章第 ${i+1} 拍 type 应为 ${keys[i]}，实得 ${b.type}`;
+// v1.0.273 纯文本化：全局时间线不再走 JSON"章级锚点"——改为输出内容丰满、直白可读的「全书时间线」纯文本（含全书时间轴总览 + 逐章时点 + 节奏小结）。此函数仅做轻量健康检查：必须有"第N章"行、数量与全书对齐、主线单调不倒退（返回问题描述，供重试提示用；不再阻断）。
+function timelineTextHealth(txt, totalN){
+  if(!String(txt||'').trim()) return '输出为空';
+  const re = /第(\d+)章/g; let m; const found = []; const seen = {};
+  while((m = re.exec(txt))){
+    const n = +m[1];
+    if(n >= 1 && n <= 10000 && !seen[n]){ seen[n] = true; found.push(n); }
+  }
+  if(!found.length) return '输出中没有任何「第N章」行';
+  for(let n=1; n<=totalN; n++){ if(!seen[n]) return `缺少第 ${n} 章的时点行`; }
+  return '';
+}
+
+// v1.0.230：移除 timelineSegments——全局时间线改为整段一次生成，不再切段。
+
+// v1.0.284：从「章节编排」纯文本中提取指定小节内容（段落式切段：标题同行/独占一行/多行内容都识别，遇下一小节标题即止）。
+  // 供正文任务书（承接点/收束设计/出场实体·v1.0.298 改名，兼容旧名必须实体）复用，与阅读界面「概」的 secOf 同口径。beatsText 为 v1.0.273 起的唯一数据形态（beats 数组已不生成）。
+function beatsTextSection(btTxt, ...names){
+  btTxt = String(btTxt||'').trim();
+  if(!btTxt) return null;
+  let maxLen = 200;
+  if(names.length && typeof names[names.length-1] === 'number') maxLen = names.pop();
+  names = names.filter(Boolean);
+  if(!names.length) return null;
+  const SEC_NAMES = ['承接点','承接','场景链与切换','场景链','逐拍推进','情绪弧','心情弧','情绪基调','必须使用实体','必须实体','出场实体','埋设伏笔','收束设计','收束','设定'];
+  const lines = btTxt.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  const re = new RegExp('^(?:'+names.join('|')+')[：:\\s]*(.*)$');
+  for(let i=0;i<lines.length;i++){
+    const m = lines[i].match(re);
+    if(!m) continue;
+    const buf = [(m[1]||'').trim()].filter(Boolean);
+    for(let j=i+1;j<lines.length;j++){
+      if(SEC_NAMES.some(n=>new RegExp('^(?:'+n+')[：:\\s]').test(lines[j]))) break;   // 下一小节标题即止
+      buf.push(lines[j]);
     }
+    const v = buf.join('；').replace(/\s+/g,' ').trim();
+    if(v) return v.slice(0, maxLen || 200);
+  }
+  return null;
+}
+// v1.0.280：从「章节编排」纯文本中提取一句情境摘要——优先「承接点」小节内容，无则取首段有效文字；
+// 供只认纯文本的下游（全书时间线注入/「概」概览等）复用。beatsText 为 v1.0.273 起的唯一数据形态（beats 数组已不生成）。
+function beatsTextSceneSnippet(btTxt, maxLen){
+  btTxt = String(btTxt||'').trim();
+  if(!btTxt) return '';
+  const lines = btTxt.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+  // 优先「承接点/承接」行（同行内容，或该行无内容时取下一行）
+  for(let i=0;i<lines.length;i++){
+    const m = lines[i].match(/^(?:承接点|承接)[：:\s]*(.*)$/);
+    if(m){
+      const v = (m[1]||'').trim() || (i+1<lines.length ? lines[i+1] : '');
+      if(v) return String(v).replace(/\s+/g,'').slice(0, maxLen||46);
+    }
+  }
+  // 无承接点：取首段有效文字（剥掉可能的小节标题前缀）
+  for(let i=0;i<lines.length;i++){
+    const v = lines[i].replace(/^(?:承接点|承接|场景链与切换|场景链|逐拍推进|情绪弧|心情弧|情绪基调|必须使用实体|必须实体|出场实体|埋设伏笔|收束设计|收束|设定)[：:]\s*/,'').trim();
+    if(v) return String(v).replace(/\s+/g,'').slice(0, maxLen||46);
   }
   return '';
 }
 
-// 分区规则：≤8 章对半切 2 段（取中间整章作界，免空段）；>8 章 5 章起步，尾段不足 3 章并入前段
-function timelineSegments(totalN){
-  if(totalN <= 8){
-    const mid = Math.max(1, Math.floor(totalN/2));
-    return [[0,mid],[mid,totalN]].filter(s=>s[1]>s[0]);
-  }
-  const cuts=[]; for(let i=5;i<totalN;i+=5) cuts.push(i);
-  const segs=[]; let st=0;
-  for(const c of cuts){ segs.push([st,c]); st=c; }
-  segs.push([st,totalN]);
-  if(segs.length>1){
-    const last=segs[segs.length-1];
-    if(last[1]-last[0] < 3){ const prev=segs[segs.length-2]; segs[segs.length-2]=[prev[0],last[1]]; segs.pop(); }
-  }
-  return segs;
+// v1.0.238：时间线专属线——只注入 全书章节数 + 每章标题 + 每拍时间精华 + 团队同场共时（仅多角色时，solo 自动为空）。
+// 其余（书名/情绪基调/全书节拍/时间单位说明/处理范围/上批承接）一律不再注入：时间线只从事件看时间，输入越纯净、判时越稳。
+// v1.0.289：节拍生成器同源附带「【时间线要点】」精华，落库为 chapterPlans[i].tlEssence——时间线优先直取该字段（精准、无截断）；
+// 老数据无该字段时回退段落式提取 beatsTextSection（承接点/收束设计/首段情境，保留完整语义，不再"去空白硬截 46 字"）。
+function _timelineEssenceOf(p){
+  if(p && typeof p.tlEssence==='string' && String(p.tlEssence).trim()) return String(p.tlEssence).trim();
+  const bt = (p && typeof p.beatsText==='string') ? p.beatsText.trim() : '';
+  if(!bt) return '';
+  // 回退：优先完整段落（承接点→收束设计），无小节则取首段情境全文（去空白但不过度硬截）
+  const _cj = beatsTextSection(bt, '承接点', '承接', 180) || '';
+  if(_cj) return _cj;
+  const _ss = beatsTextSection(bt, '收束设计', '收束', 120) || '';
+  if(_ss) return _ss;
+  const _sn = beatsTextSceneSnippet(bt, 60) || '';
+  return _sn;
 }
-
-// 本批用户拼装：处理范围 + 上一批末尾承接上下文 + 本批各章节拍与现有时间锚
-function buildTimelineSegUser(s, e, prevEnd){
+function buildTimelineSegUser(){
   const o=state.outline||{};
   const totalN=(o.chapters||[]).length;
-  const parts=[`【全书章节数】${totalN} 章`,`【本次处理范围】第 ${s+1}—${e} 章（本批共 ${e-s} 章）`];
-  if(o.title) parts.push(`【书名】${o.title}`);
-  if(o.tone) parts.push(`【整体情绪基调】${o.tone}`);
-  const _stg=chapterPlanStages(o);
-  if(_stg&&_stg.length) parts.push(`【大纲节拍的结构】全书按阶段推进：${_stg.map(x=>`第 ${x.first}—${x.last} 章「${x.name}」`).join('；')}`);
-  if(prevEnd) parts.push(`【上一批已排定的现实主线末尾时点】${prevEnd}\n本批第一个现实时点（anchor）必须晚于或衔接它，严禁整体倒退；回忆/梦境/穿越等非主线支线各自独立计时、不受此限。`);
+  const parts=[`【全书章节数】${totalN} 章`];
   const rows=[];
-  for(let i=s;i<e;i++){
+  for(let i=0;i<totalN;i++){
     const c=o.chapters[i]||{};
     const p=Array.isArray(o.chapterPlans)?o.chapterPlans[i]:null;
     const t=String((c.title||'').trim());
-    const beats=(p&&Array.isArray(p.beats))?p.beats:[];
-    const btxt=beats.map((b,bi)=>`   [${bi+1}] ${b.type||'?'} time=「${String((b.time||'')).trim()||'?'}」 ${String((b.event||'')).slice(0,46)}`).join('\n');
-    rows.push(`第${i+1}章《${t}》\n${btxt||'  （无节拍）'}`);
+    // v1.0.289：直取节拍表同源附带的「时间线要点」精华（tlEssence），缺则回退段落提取
+    const _te = _timelineEssenceOf(p);
+    rows.push(`第${i+1}章《${t}》\n${_te ? `   [时间线要点] ${_te}` : '  （无节拍）'}`);
   }
-  parts.push(`【本批各章节拍与现有时间锚】\n${rows.join('\n')}`);
-  const _tb=teamShapeBrief();   // v1.0.186 团队同场共时：团队核心团默认同在一条主线支线、共同推进
+  parts.push(`【每章标题与该章时间精华（据此规划时间，事件驱动：赶路/养伤/等待/远行→时间跳跃；同一场戏多拍→同时刻）】\n${rows.join('\n')}`);
+  // v1.0.239：全书时间跨度推断依据——从首章开篇与末章结局两个端点提炼"时间定位"，让模型先纵览全局判断整书现实时间轴跨度，再逐章落点，杜绝一天一章的机械递进。
+  {
+    const c0=o.chapters[0]||{}, cL=o.chapters[totalN-1]||{};
+    const p0=Array.isArray(o.chapterPlans)?o.chapterPlans[0]:null;
+    const pL=Array.isArray(o.chapterPlans)?o.chapterPlans[totalN-1]:null;
+    // v1.0.289：首/末章端点优先取时间线精华，缺则回退段落提取
+    const t0 = _timelineEssenceOf(p0);
+    const tL = _timelineEssenceOf(pL);
+    if(t0 || tL) parts.push(`【全书时间跨度推断依据（先定全局，再落局部）】开篇·第1章《${String(c0.title||'').trim()}》起始事件：${t0||'（缺）'}；结局·第${totalN}章《${String(cL.title||'').trim()}》收束事件：${tL||'（缺）'}。纵览这两端点与全书标题/事件序列，判断整部小说的现实时间轴跨度（数小时/数日/数月/数年/数十年/跨越数代/千年仙途），并把全部章节落在这条总时间轴上：首章 from 到末章 to 的总跨度必须与该判断一致，严禁无依据地"一章一天"机械递进。`);
+  }
+  const _tb=teamShapeBrief();   // v1.0.186 团队同场共时：团队/双主角默认同在一条主线支线、共同推进（单主角时为空，不注入）
   if(_tb) parts.push(_tb+'\n（时间侧留意：除非剧情明确拆线，各核心主角/成员的时间应落在同一主线支线的同一时点，团队因"分工拆成两路"而分处不同时点、双主角因"各自独立场景"而位于同一时点不同现场——都要在节拍/正文给出进入与回收说明，别拆到互相矛盾的时点）');
   return parts.join('\n\n');
 }
 
-// 分段轨道 DOM 管理：进度条 + 单个续跑按钮（不生成 20+ 个按钮）
-function tlTrackEl(){
-  const bar=$('.cp-stagebar'); if(!bar) return null;
-  const host=bar.parentElement;
-  let el=null;
-  if(host){ for(const c of host.children){ if(c && c.classList && c.classList.contains('cp-tl-track')){ el=c; break; } } }
-  if(!el){ el=document.createElement('div'); el.className='cp-tl-track'; bar.insertAdjacentElement('afterend', el); }
-  return el;
-}
-function renderSegTrack(segs, done, runIdx, failIdx, optTxt){
-  const el=tlTrackEl(); if(!el) return;
-  const n=segs.length;
-  const cells=segs.map((sg,i)=>{
-    let cls='cp-tl-cell';
-    if(i===failIdx) cls+=' cp-tl-fail';
-    else if(i===runIdx) cls+=' cp-tl-run';
-    else if(i<done) cls+=' cp-tl-done';
-    else cls+=' cp-tl-todo';
-    return `<span class="${cls}" title="第 ${i+1} 段：第 ${sg[0]+1}–${sg[1]} 章">${i+1}</span>`;
-  }).join('');
-  el.innerHTML=`<div class="cp-tl-head"><span>全局时间线分段</span><span class="cp-tl-count">${done}<i>/</i>${n}</span></div><div class="cp-tl-cells">${cells}</div>${optTxt?'<div class="cp-tl-hint2">'+optTxt+'</div>':''}`;
-}
-function showTimelineResume(segs, failIdx){
-  const el=tlTrackEl(); if(!el) return;
-  if(el.querySelector('.cp-tl-foot')) el.querySelector('.cp-tl-foot').remove();
-  const foot=document.createElement('div'); foot.className='cp-tl-foot';
-  const sg=segs[failIdx];
-  foot.innerHTML=`<span class="cp-tl-hint2 muted">中断于第 ${failIdx+1}/${segs.length} 段（第 ${sg[0]+1}–${sg[1]} 章），已自动重试 2 次未果，可续跑</span><button type="button" class="btn small ghost cp-tl-resume">▶ 续跑第 ${failIdx+1} 段</button>`;
-  el.appendChild(foot);
-  foot.querySelector('.cp-tl-resume').onclick=()=>{ genPlannerTimeline(null,{silent:false,resumeFrom:failIdx}); };
-}
+// v1.0.230：全局时间线改为整段一次生成，移除分段轨道及相关函数（tlTrackEl/renderSegTrack/showTimelineResume）。
 function hideTimelineTrack(){ const el=$('.cp-tl-track'); if(el) el.remove(); }
 
-// v1.0.184：全局时间线 + 各章节拍事件 上下文块——供 ⑤伏笔网 阶段读取，让伏笔设计贴着全局时间推进、能落地到具体剧情。
-// 若尚未生成时间线/节拍，则静默返回 ''（伏笔网仍可基于标题与结构阶段运行）。
+// 长文截断：优先在标点处截断，避免从词中间硬切断
+function clipText(str, max){
+  str = String(str||'').trim();
+  if(str.length <= max) return str;
+  const cut = str.slice(0, max);
+  const m = cut.match(/[\s\S]*[，。；：、！？,.!?:;…]/);
+  return ((m && m[0].length > Math.ceil(max*0.4)) ? m[0] : cut) + '…';
+}
+// v1.0.184：全局时间线 + 各章节拍要点 上下文块——供词典充实等下游读取，让补充设定贴着全局时间推进、能落地到具体剧情。
+// v1.0.24x：噪声瘦身——①章节标题统一 cleanChapterTitle（去《》与前缀），避免标题被重复注入 3 次且格式不一；
+//           ②节拍事件不再全量拼接，只取每章首拍「情境事件」，长文按标点回退截断。
+// 若尚未生成时间线/节拍，则静默返回 ''。
 function globalTimelineBlock(){
   const o = state.outline || {};
   const totalN = (o.chapters||[]).length;
   if(!totalN) return '';
   const parts = [];
   const gt = o._globalTimeline;
-  if(gt && Array.isArray(gt.chapters) && gt.chapters.length){
+  // v1.0.273：时间线为纯文本时直接引用；旧 JSON chapters 兜底转文本
+  const tlText = gt && String(gt.text||'').trim();
+  if(tlText){
+    parts.push(`【全局时间线】（全书时间跨度 起 → 止）\n${tlText}`);
+  } else if(gt && Array.isArray(gt.chapters) && gt.chapters.length){
     const rows = gt.chapters.map(c=>{
-      const t = String((o.chapters[c.index]&&o.chapters[c.index].title)||'').trim();
-      return `第${c.index+1}章《${t||'?'}》：${String(c.from||'?').trim()} → ${String(c.to||'?').trim()}`;
+      const t = cleanChapterTitle((o.chapters[c.index]&&o.chapters[c.index].title)||'');
+      const jt = String(c.jump||'').trim();
+      return `第${c.index+1}章 ${t||'?'}：${String(c.from||'?').trim()} → ${String(c.to||'?').trim()}${jt?`（跳跃：${jt}）`:''}`;
     });
     parts.push(`【全局时间线】（全书各章时间跨度 起 → 止）\n${rows.join('\n')}`);
     if(gt.notes) parts.push(`【全局节奏】${gt.notes}`);
@@ -10559,16 +11689,40 @@ function globalTimelineBlock(){
   const evRows = [];
   for(let i=0;i<totalN;i++){
     const p = Array.isArray(o.chapterPlans)?o.chapterPlans[i]:null;
-    if(!p || !Array.isArray(p.beats) || !p.beats.length) continue;
-    const t = String((o.chapters[i]&&o.chapters[i].title)||'').trim();
-    const evs = p.beats.map(b=>String((b&&b.event)||'').replace(/\s+/g,'').slice(0,40)).filter(Boolean).join(' -> ');
-    if(evs) evRows.push(`第${i+1}章《${t||'?'}》：（${evs}）`);
+    // v1.0.273：各章节拍要点——优先取纯文本编排（beatsText）首段情境；无则回退首拍事件
+    if(p && String(p.beatsText||'').trim()){
+      const _btS = String(p.beatsText||'').replace(/\s+/g,'').replace(/承接点[:：]/,'情境：').slice(0,120);
+      evRows.push(`第${i+1}章：${clipText(_btS || '', 80)}`);
+    }
   }
-  if(evRows.length) parts.push(`【各章节拍事件】（伏笔据此落地到具体剧情）\n${evRows.join('\n')}`);
+  if(evRows.length) parts.push(`【各章节拍要点】（每章情境）\n${evRows.join('\n')}`);
   return parts.join('\n\n');
 }
+// v1.0.273：纯文本时间线的「本章时间」上下文块——从全书时间线文本中摘出本章（及前后一章）的时点行，
+// 供正文承接时参照（正文据此自然续写、不机械报时）。旧 JSON chapters 时间线回退为空（以文本为主，不重复注入）。
+function timelineChapterBlock(i){
+  const o = state.outline || {};
+  const gt = o._globalTimeline;
+  if(!gt) return '';
+  const tlText = String(gt.text||'').trim();
+  if(!tlText) return '';
+  const n = i + 1;
+  let cur = '', prev = '';
+  (tlText.split('\n')).forEach(ln=>{
+    const m = ln.match(/^\s*第\s*(\d+)\s*章/);
+    if(!m) return;
+    const k = +m[1];
+    const body = ln.replace(/^\s*第\s*\d+\s*章(?:《[^》]*》)?\s*[:：]?\s*/, '');
+    if(k === n) cur = body;
+    else if(k === n-1) prev = body;
+  });
+  if(!cur) return '';
+  const lines = [`本章（第 ${n} 章）时点：${cur}`];
+  if(prev) lines.unshift(`上一章（第 ${n-1} 章）时点：${prev}`);
+  return `【本章时间（全局时间线）】\n${lines.join('\n')}`;
+}
 
-// ④ 全局时间线（v1.0.190：按段串行重排、跨段承接；中断自动重试 2 次，仍失败可续跑）
+// ④ 全局时间线（v1.0.230：整段一次生成全书时间线——不切段、无切点；失败自动重试最多 PLANNER_RETRY_MAX-1 次）
 async function genPlannerTimeline(btn, opts){
   opts = opts || {};
   if(!plannerGate(opts)) return false;
@@ -10576,88 +11730,58 @@ async function genPlannerTimeline(btn, opts){
   const totalN = (o.chapters||[]).length;
   if(!totalN){ if(!opts.silent) toast('请先设置全书章节数'); return false; }
   const _pl = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
-  if(_pl.length < totalN || !_pl.every(p=>p && Array.isArray(p.beats) && p.beats.length >= beatCnt())){
+  if(_pl.length < totalN || !_pl.every(p=>p && String(p&&p.beatsText||'').trim())){
     if(!opts.silent) toast('请先完成 ③ 节拍表，再规划全局时间线');
     refreshPlannerStageBar(null, 'timeline'); return false;
   }
-  const segs = timelineSegments(totalN);
-  // 续跑游标：显式 resumeFrom 优先；否则按持久化半程态续跑；都无则从头
-  let resumeFrom = opts.resumeFrom;
-  if(resumeFrom == null){
-    const tlProg = (o._plannerProgress||{}).timeline;
-    if(tlProg && Number.isInteger(tlProg.done) && tlProg.done > 0 && tlProg.done < segs.length && tlProg.total === segs.length) resumeFrom = tlProg.done;
-    else resumeFrom = 0;
-  }
+  // v1.0.230：整段一次发全书（0..totalN），不再分段、不再跨段承接、不再续跑；v1.0.273 改为纯文本输出
   markAIRunning('chapterPlan');
   refreshPlannerStageBar('timeline', null);
-  let preview = plannerPreview(btn, '正在全局重排时间线…'), _streamBuf = '';
+  let preview = plannerPreview(btn, '正在生成全书时间线（纯文本）…'), _streamBuf = '';
   plannerRunBtn(btn, true);
   const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
   if(stopParent) showStopBtn(stopParent);
-  const setProg = d=>{ o._plannerProgress = o._plannerProgress || {}; o._plannerProgress.timeline = { done:d, total:segs.length, ts:Date.now() }; };
+  let tlRetries = 0;          // v1.0.226：本轮累加重试次数（红色角标用），首轮归零
+  setPlannerRetry('timeline', 0);
   try{
-    const anchors = [];
-    let prevEnd = '', segNotes = '';
-    let changed = 0;
-    renderSegTrack(segs, resumeFrom, resumeFrom===segs.length ? -1 : resumeFrom, -1, '');
-    for(let si=resumeFrom; si<segs.length; si++){
-      const sg = segs[si]; const s = sg[0], e = sg[1];
-      const user = buildTimelineSegUser(s, e, prevEnd || undefined);
-      let ok = false, lastErr = '';
-      // 首次 + 自动重试最多 2 次（每次修正提示后同段重跑）
-      for(let attempt=0; attempt<3; attempt++){
-        if(_abortCtl && _abortCtl.signal.aborted) throw {name:'AbortError'};
-        renderSegTrack(segs, si, si, -1, `正在重排第 ${si+1}/${segs.length} 段…`+(attempt>0?`（自动重试 ${attempt}）`:''));
-        if(_streamBuf){ _streamBuf=''; if(preview) preview.textContent=''; }
-        const usr = user + (attempt>0 ? `\n【重试提示】上一轮第 ${si+1} 段输出无效，请严格按格式重新输出。原因：${lastErr}` : '');
-        const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-        const cands = await Promise.all([
-          callAIWithContract(callDeepSeek(PLANNER_TIMELINE_SYS, usr, {temperature:resolveActiveSpec().planTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}), {needJson:true, expectedCount:e-s, countPath:'chapters', schemaValidator:j=>validateTimelineSegOutput(j, e-s), taskName:`全局时间线-段${si+1}${attempt>0?'-重试'+attempt:''}`}),
-        ]);
-        const best = cands.filter(c=>c && c.ok).sort((a,b)=>(b.score||0)-(a.score||0))[0];
-        if(best){
-          // 应用本批：本批内部 index 映射到全书整章索引
-          best.data.chapters.forEach(cp=>{
-            const idx = s + (+cp.index - 1);
-            if(idx < 0 || idx >= totalN) return;
-            const plan = o.chapterPlans[idx]; if(!plan || !Array.isArray(plan.beats)) return;
-            cp.beats.forEach((nb,j)=>{ const bb=plan.beats[j]; if(!bb) return; const nt=String(nb&&nb.time||'').trim(); if(nt && String(bb.time||'').trim()!==nt){ bb.time=nt; changed++; } });
-            const t0 = cp.beats.length ? String(cp.beats[0].time||'').trim() : '';
-            const t1 = cp.beats.length ? String(cp.beats[cp.beats.length-1].time||'').trim() : '';
-            anchors.push({ index: idx, title: String((o.chapters[idx] && o.chapters[idx].title) || (''+idx+1)), from: t0, to: t1 });
-          });
-          prevEnd = String(best.data.end||'').trim() || '';
-          if(!segNotes) segNotes = String(best.data.global_notes||'').trim() || '';
-          ok = true;
-          break;
-        } else {
-          lastErr = (cands[0] && cands[0].error) || '候选无效';
-          if(attempt < 2) await new Promise(r=>setTimeout(r, 1500));   // 自动重试间隔
-        }
+    let timelineText = '', lastErr = '';
+    const user = buildTimelineSegUser();   // v1.0.238：时间线专属线，一次整段直发全书（无批次/无承接参数）
+    let ok = false;
+    for(let attempt=0; attempt<PLANNER_RETRY_MAX; attempt++){
+      if(_abortCtl && _abortCtl.signal.aborted) throw {name:'AbortError'};
+      if(attempt > 0){ tlRetries++; setPlannerRetry('timeline', tlRetries); }   // 红色角标实时递增
+      if(_streamBuf){ _streamBuf=''; if(preview) preview.textContent=''; }
+      if(attempt>0 && preview){ preview.textContent = `全书时间线输出无效，正在自动重试 ${attempt}/${PLANNER_RETRY_MAX-1}：${lastErr}`; }
+      const usr = user + (attempt>0 ? `\n【重试提示】上一轮全书时间线输出不完整/健康校验不通过，请严格按格式重新输出：每章一行「第N章《标题》：起始时点 → 章末时点」，一章不少。原因：${lastErr}` : '');
+      const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
+      const res = await callAIWithContract(
+        callDeepSeek(PLANNER_TIMELINE_SYS, usr, {temperature:resolveActiveSpec().planTimelineTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}),
+        {needJson:false, taskName:`全局时间线${attempt>0?'-重试'+attempt:'A'}`}
+      );
+      if(res.ok && String(res.text||'').trim()){
+        timelineText = String(res.text||'').trim();
+        lastErr = timelineTextHealth(timelineText, totalN);
+        if(!lastErr){ ok = true; break; }
+      } else {
+        lastErr = res.error || '输出为空';
       }
-      if(!ok){
-        setProg(si);          // 已成功 si 段
-        persist();
-        renderSegTrack(segs, si, -1, si, `第 ${si+1} 段生成失败`);
-        showTimelineResume(segs, si);
-        addToFixQueue({kind:'chapterPlan', error:'全局时间线-段'+(si+1)+'：'+lastErr});
-        refreshPlannerStageBar(null, 'timeline');
-        if(!opts.silent) toast(`全局时间线中断于第 ${si+1}/${segs.length} 段（已自动重试 2 次）；可在分段轨道下点「续跑第 ${si+1} 段」继续`);
-        return false;
-      }
-      setProg(si+1);
-      persist();              // 段级进度持久化：刷新后仍可续跑
-      renderSegTrack(segs, si+1, -1, -1, '');
+      if(attempt < PLANNER_RETRY_MAX-1) await new Promise(r=>setTimeout(r, 1500));   // 自动重试间隔
     }
-    anchors.sort((a,b)=>a.index-b.index);
-    o._globalTimeline = { chapters: anchors, notes: segNotes, ts: Date.now() };
-    if(o._plannerProgress) delete o._plannerProgress.timeline;   // 完成即清半程态
+    if(!ok){
+      addToFixQueue({kind:'chapterPlan', error:'全局时间线生成：'+lastErr});
+      refreshPlannerStageBar(null, 'timeline');
+      if(!opts.silent) toast(`全局时间线生成失败（已自动重试 ${PLANNER_RETRY_MAX-1} 次）：${lastErr}`);
+      return false;
+    }
+    // v1.0.273 纯文本化：整段写入 _globalTimeline.text；不再写 JSON chapters、不再回填每拍 time（正文直接注入本条时间线文本作为承接依据）
+    o._globalTimeline = { text: timelineText, ts: Date.now() };
+    if(o._plannerProgress) delete o._plannerProgress.timeline;   // 整段生成无半程态，顺带清旧值
     persist();
     render();
     markAIDone('chapterPlan');
     refreshPlannerStageBar(null, null);
     hideTimelineTrack();
-    if(!opts.silent) toast(`全局时间线完成：重排 ${changed} 处时间锚（共 ${segs.length} 段）${segNotes ? '｜'+segNotes.slice(0,28) : ''}`);
+    if(!opts.silent) toast('全书时间线完成（纯文本）：'+timelineText.split('\n')[0].replace(/^【[^】]*】/,'').slice(0,28));
     return true;
   }catch(e){
     if(e && e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'全局时间线：'+(e&&e.message)});
@@ -10670,155 +11794,18 @@ async function genPlannerTimeline(btn, opts){
   }
 }
 
-// ④ 万物词典（单批；产出种子合并进权威词典，同名以现有为准）
-async function genPlannerGlossary(btn, opts){
-  opts = opts || {};
-  if(!plannerGate(opts)) return false;
-  // v1.0.155：③词典前置要求章节标题（②），避免基于空标题生成、质量下降
-  if(!((state.outline && state.outline.chapters || []).some(c=>String((c&&c.title)||'').trim()))){
-    if(!opts.silent) toast('请先生成章节标题（规划师第②步），再生成万物词典');
-    refreshPlannerStageBar(null,'glossary'); return false;
-  }
-  markAIRunning('chapterPlan');
-  refreshPlannerStageBar('glossary', null);
-  let preview = plannerPreview(btn, '正在生成万物词典…'), _streamBuf = '';
-  plannerRunBtn(btn, true);
-  const o = state.outline;
-  const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
-  if(stopParent) showStopBtn(stopParent);
-  try{
-    const titles = (o.chapters||[]).map((c,i)=>`第${i+1}章《${c&&c.title||''}》`).join(' / ');
-    const parts = [];
-    const anchor = outlineAnchorBlock(); if(anchor) parts.push(anchor);
-    parts.push(`【小说标题】${o.title||''}\n【小说简介】${o.logline||''}`);
-    // v242/911-③：输入加料——题材导航 + 各幕必须事件，为词典衍生扩容供给素材
-    const nb = o.navBeacon || {};
-    const beaconLines = [];
-    if(nb.genre) beaconLines.push('题材：'+nb.genre);
-    if(nb.protagonist) beaconLines.push('主角：'+nb.protagonist);
-    if(nb.coreConflict) beaconLines.push('核心冲突：'+nb.coreConflict);
-    if(beaconLines.length) parts.push(`【题材导航】\n${beaconLines.join('\n')}`);
-    // v1.0.144：structure 已彻底移除；名册设定贴合全书拍子节奏即可（拍子指导见 chapterPlans/generated 章节标题）。
-    // v242/911-①：词典规模下限（按章节数推算），配合 System「宁全勿缺」+ 题材衍生
-    const _totalCh = (o.chapters||[]).length;
-    const _minC = Math.max(8, Math.ceil(_totalCh/4));
-    const _minP = Math.max(5, Math.ceil(_totalCh/8));
-    const _minK = Math.max(5, Math.ceil(_totalCh/10));
-    parts.push(`【词典规模要求】人物 ≥${_minC} 条、地点 ≥${_minP} 条、专名 ≥${_minK} 条；章节标题未提及的可按题材惯例合理衍生（标注「（衍生）」），不足下限视为不合格`);
-    parts.push(`【章节标题】${titles||'(无)'}`);
-    // v1.0.155：消除词典「悬空引用」——把「大纲节拍的结构」阶段数据真实下发，词典以结构与标题为准
-    const glSkel = structureSkeletonBlock(); if(glSkel) parts.push(glSkel);
-    // v1.0.186 团队设定注入词典：核心团全员必须立档、可作节拍/正文的人名真源（非 solo 时才有）
-    const _tb = teamShapeBrief();
-    if(_tb) parts.push(_tb + '\n（须为每位核心主角立档：双主角即两位主角、团队即主角+主要配角；identity 含其定位/担当，各成员字段齐全，杜绝正文时临时造名）');
-    if(sourceHasGlossary((o.glossary)||{})) parts.push(`【现有词典】${JSON.stringify(o.glossary,null,2)}`);
-    const user = parts.join('\n\n');
-    const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const res = await callAIWithContract(callDeepSeek(PLANNER_GLOSSARY_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.6, maxTokens:clampMaxTokens('glossary'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-词典'});   // v242/911-② 词典 8192 档
-    if(!res.ok) throw new Error(res.error);
-    const g = res.data && res.data.glossary;
-    if(!g || (!Array.isArray(g.characters) && !Array.isArray(g.places) && !Array.isArray(g.propernouns))) throw new Error('词典结构缺失');
-    // v242/911-⑦：全部重名属合法情形，不再判失败；人名零阻挡（放行+_nameFlag 标记）后统一提示
-    const r = mergeSeedGlossary(g);
-    persist(); render(); markAIDone('chapterPlan'); refreshPlannerStageBar(null, null);
-    if(!opts.silent) toast(r.added > 0
-      ? `万物词典已生成：新增 ${r.added} 条${r.flagged ? `（${r.flagged} 条命名待核，已标⚠）` : ''}`
-      : '万物词典已核对：与现有词典全部重名，无新增');
-    return true;
-  }catch(e){
-    if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'词典：'+e.message});
-    if(!opts.silent) toast(e.name==='AbortError' ? '已停止生成万物词典' : '万物词典生成失败：'+e.message);
-    refreshPlannerStageBar(null, 'glossary');
-    return false;
-  }finally{
-    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='chapterPlan');
-    hideStopBtn(); if(preview) preview.remove(); plannerRunBtn(btn, false);
-  }
-}
-
-// ⑤ 伏笔网（单批；读全部章节标题，产出植入章→回收章配对，写入 _foreshadowLedger）
-async function genPlannerForeshadow(btn, opts){
-  opts = opts || {};
-  if(!plannerGate(opts)) return false;
-  // v1.0.155：④伏笔前置要求章节标题（②），避免基于空标题设计跨章伏笔、质量下降
-  if(!((state.outline && state.outline.chapters || []).some(c=>String((c&&c.title)||'').trim()))){
-    if(!opts.silent) toast('请先生成章节标题（规划师第②步），再生成伏笔网');
-    refreshPlannerStageBar(null,'foreshadow'); return false;
-  }
-  // v234/P3：缺上游只提示不阻断——伏笔网跨章设计有节拍表参考更佳
-  const o0 = state.outline || {};
-  const hasBeats0 = (o0.chapterPlans||[]).some(p=>p && Array.isArray(p.beats) && p.beats.length);
-  if(!hasBeats0 && !opts.silent && !confirm('尚无①节拍表，伏笔网只能基于标题设计、质量会下降（建议先跑①）。仍要直接生成吗？')) return false;
-  markAIRunning('chapterPlan');
-  refreshPlannerStageBar('foreshadow', null);
-  let preview = plannerPreview(btn, '正在生成伏笔网…'), _streamBuf = '';
-  plannerRunBtn(btn, true);
-  const o = state.outline;
-  const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
-  if(stopParent) showStopBtn(stopParent);
-  try{
-    const total = (o.chapters||[]).length;
-    if(!total){ if(!opts.silent) toast('请先生成章节标题'); return false; }
-    const titles = (o.chapters||[]).map((c,i)=>`第${i+1}章《${c&&c.title||''}》`).join(' / ');
-    const parts = [];
-    const anchor = outlineAnchorBlock(); if(anchor) parts.push(anchor);
-    parts.push(`【小说标题】${o.title||''}\n【小说简介】${o.logline||''}`);
-    const skel = structureSkeletonBlock(); if(skel) parts.push(skel);   // v1.0.139：伏笔网注入全书结构骨架
-    parts.push(`【章节标题】${titles||'(无)'}`);
-    parts.push(`【全书章数】${total}`);
-    const tlBlock = globalTimelineBlock(); if(tlBlock) parts.push(tlBlock);   // v1.0.184：注入全局时间线+每章节拍事件，伏笔贴着时间布线
-    const _tb = teamShapeBrief();   // v1.0.186 团队设定注入伏笔网：每位成员一条个人线伏笔
-    if(_tb) parts.push(_tb);
-    const user = parts.join('\n\n');
-    const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const res = await callAIWithContract(callDeepSeek(PLANNER_FORESHADOW_SYS, user, {temperature:resolveActiveSpec().planTemp, topP:0.6, maxTokens:clampMaxTokens('json'), onStream, signal:_abortCtl?.signal, taskKey:'plannerAux'}), {needJson:true, taskName:'规划师-伏笔'});
-    if(!res.ok) throw new Error(res.error);
-    const fs = (res.data && Array.isArray(res.data.foreshadows)) ? res.data.foreshadows : [];
-    if(!fs.length) throw new Error('未提取到伏笔条目');
-    const ledger = o._foreshadowLedger = o._foreshadowLedger || { planted:[], resolved:[], overdue:[] };
-    let cnt = 0;
-    fs.forEach(f=>{
-      const text = String(f && f.text || '').trim(); if(!text) return;
-      if(ledger.planted.some(x=>x.text===text)) return;
-      // v1.0.140：AI 的 plantChapter/payoffChapter 是 1 基章号，统一转 0 基并钳制。
-      // 原 pay 用 min(total,…) 且未 -1，导致 6 章书回收章被存成 6（显示成"第 7 章"）。
-      const maxCh = total - 1;
-      const plant = Math.max(0, Math.min(maxCh, (Math.round(Number(f.plantChapter)||1) - 1)));
-      let pay = Math.round(Number(f.payoffChapter)||(plant+2)) - 1;   // 转 0 基
-      pay = Math.max(plant + 1, Math.min(maxCh, pay));
-      if(pay <= plant) pay = plant;   // 植入章已是最后一章时兜底
-      ledger.planted.push({ id:'pf_'+Date.now()+'_'+Math.random().toString(36).slice(2,7), text, chPlanted:plant, expectedCh:pay, type:String(f.type||'事件') });
-      cnt++;
-    });
-    if(!cnt) throw new Error('伏笔条目均重复或无效');
-    ledger.overdue = ledger.planted.filter(x=>0>=x.expectedCh && !ledger.resolved.some(r=>r.id===x.id));
-    persist(); render(); markAIDone('chapterPlan'); refreshPlannerStageBar(null, null);
-    if(!opts.silent) toast(`伏笔网已生成：${cnt} 条（植入章→回收章）`);
-    return true;
-  }catch(e){
-    if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'伏笔：'+e.message});
-    if(!opts.silent) toast(e.name==='AbortError' ? '已停止生成伏笔网' : '伏笔网生成失败：'+e.message);
-    refreshPlannerStageBar(null, 'foreshadow');
-    return false;
-  }finally{
-    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='chapterPlan');
-    hideStopBtn(); if(preview) preview.remove(); plannerRunBtn(btn, false);
-  }
-}
-
 const PLANNER_GEN = {
   beats: genPlannerBeats,
-  timeline: genPlannerTimeline,   // v1.0.183 ④ 全局时间线
+  timeline: genPlannerTimeline,   // v1.0.183 ③ 全局时间线
   titles: genPlannerTitles,
-  glossary: genPlannerGlossary,
-  foreshadow: genPlannerForeshadow
+  dictEnrich: genDictEnrich      // v1.0.29x：④ 词典充实（btn=null 时总控直跑，卡片无按钮亦可触发）
 };
 // 单阶段入口：独立重跑某个规划师阶段（只跑失败的那一步，不重跑前面已成功的）
 async function genPlannerStage(btn, stage){
   const fn = PLANNER_GEN[stage]; if(!fn) return false;
   return await fn(btn, {});
 }
-// 总控：按顺序执行 4 阶段；v234/P1 智能跳过——confirm 二选一「跳过已完成（默认）/ 全部重跑」，
+// 总控：按顺序执行 3 阶段；v234/P1 智能跳过——confirm 二选一「跳过已完成（默认）/ 全部重跑」，
 // 跳过模式按 plannerStageDone 过滤并列出将执行/跳过清单（修"已有进度仍全量重跑、卡在第一步特别久"）
 async function genPlannerAll(btn){
   const o = state.outline; if(!isLong() || !o) return;
@@ -10830,18 +11817,18 @@ async function genPlannerAll(btn){
     skipDone = confirm(
       `已完成：${doneList.join('、')}\n\n` +
       `【确定】智能执行：跳过已完成，只跑 ${PLANNER_STAGES.filter(s=>!plannerStageDone(s.id)).map(s=>stageLabel(s.id)).join('、') || '（全部已完成，无事可做）'}\n` +
-      `【取消】全部重跑：五步按顺序覆盖生成（直接覆盖现有内容）`
+      `【取消】全部重跑：四步按顺序覆盖生成（直接覆盖现有内容）`
     );
     if(!skipDone){
-      if(!confirm(`全部重跑将按顺序生成：①章节标题→②万物词典→③节拍表（${currentBeatCfg().label}）→④全局时间线→⑤伏笔网，会覆盖现有规划内容，继续？`)) return;
+      if(!confirm(`全部重跑将按顺序生成：①章节标题→②节拍表（${currentBeatCfg().label}）→③全局时间线→④词典充实，会覆盖现有规划内容，继续？`)) return;
     }
   }
   const stages = skipDone ? PLANNER_STAGES.map(s=>s.id).filter(id=>!plannerStageDone(id)) : PLANNER_STAGES.map(s=>s.id);
-  if(!stages.length){ toast('五步均已完成，无需生成；如需重做请点击对应步骤按钮'); return; }
+  if(!stages.length){ toast('四步均已完成，无需生成；如需重做请点击对应步骤按钮'); return; }
   // v241/907-1 自锁修复：原给总控按钮走 busy() 加 .is-busy，而各阶段的 plannerGate→genBusy() 扫描
   // .is-busy 会命中总控自身 → 每步 0 进度即被拦截（单步正常、一键必断，v238 起历史问题）。改用
   // .cp-stage-all.running 视觉态（refreshPlannerStageBar 本就维护该类）+ textContent 文案，不进 genBusy 扫描面。
-  // v250/933-T3A：每步完成后阶段函数内部 render() 重建视图，「⚡ 一键五步」按钮 DOM 被替换——
+  // v250/933-T3A：每步完成后阶段函数内部 render() 重建视图，「⚡ 一键四步」按钮 DOM 被替换——
   // 闭包持有旧节点导致进度停在 1/N（2/5-5/5 全部写进孤立节点）。改为每次现查 DOM。
   const allBtn = ()=> document.querySelector('[data-cp-all]');
   const setTxt = t=>{ const b = allBtn(); if(b){ if(b._txt === undefined) b._txt = b.innerHTML; b.textContent = t; } };
@@ -10849,13 +11836,13 @@ async function genPlannerAll(btn){
     const b = allBtn();
     if(b){ if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; } b.classList.remove('running'); }
   };
-  if(btn){ btn.classList.add('running'); setTxt(`五步生成中（0/${stages.length}）…`); }
+  if(btn){ btn.classList.add('running'); setTxt(`四步生成中（0/${stages.length}）…`); }
   try{
     for(let si=0; si<stages.length; si++){
       const st = stages[si];
-      setTxt(`五步生成中（${si+1}/${stages.length}）…`);
+      setTxt(`四步生成中（${si+1}/${stages.length}）…`);
       refreshPlannerStageBar(st, null);
-      // v241/908-2：每步开始把 ⏹ 挂到「⚡ 一键五步」所在动作行（阶段收到的 btn=null，其内部不再自建停止按钮，
+      // v241/908-2：每步开始把 ⏹ 挂到「⚡ 一键四步」所在动作行（阶段收到的 btn=null，其内部不再自建停止按钮，
       // 全程共用这里的一个 AbortController）；cp-stopping 类给 ⚡ 让位；abort 事件置 stopped，区分「用户停止」与「阶段失败」
       // v250/933-T3A：⏹ 挂载点同样现查（同源问题——render 后旧 btn.closest 是 detached 子树）
       const _allNow = allBtn();
@@ -10872,12 +11859,13 @@ async function genPlannerAll(btn){
       if(stopParent) stopParent.classList.remove('cp-stopping');
       if(!ok){
         refreshPlannerStageBar(null, st);
-        toast(stopped ? `已停止一键五步（停在「${stageLabel(st)}」）` : `一键生成中断于「${stageLabel(st)}」，可单独点击该步骤按钮重试`);
+        toast(stopped ? `已停止一键四步（停在「${stageLabel(st)}」）` : `一键生成中断于「${stageLabel(st)}」，可单独点击该步骤按钮重试`);
         return;
       }
       refreshPlannerStageBar(null, null);
     }
-    toast(skipDone ? `智能五步完成（${stages.length} 步）` : '规划师五步全部完成');
+    toast(skipDone ? `智能四步完成（${stages.length} 步）` : '规划师四步全部完成');
+    playDoneSound('all');   // 全部完成（学校一键全跑完）响快速两声
   }finally{
     finish();
     hideStopBtn();
@@ -10887,108 +11875,36 @@ async function genPlannerAll(btn){
 
 // 4.5：前文骨架（供规划师批间衔接）：全部前序标题
 // v1.0.183：增强为「前文内容骨架」——除标题外，注入前序章节已生成的节拍事件梗概与时间锚，让后批规划师拥有真实的前文内容与时间承接依据，不再只见标题。
+// v1.0.240：前文骨架收敛为「最近 6 章承接串」——更早章节压缩为一行「已定稿」，不再随批次线性膨胀（100 章书最后一批原来注入前 80 章 ≈ 11000+ 字，现在恒定 ≤6 章）。
+// 承接只需最近几章的结尾态势；全局走向由「全书节拍」阶段列表负责，不依赖骨架。
 function buildPrevSkeleton(endIdx){
   const o = state.outline;
   const ch = (o.chapters||[]).slice(0, endIdx);
+  if(!ch.length) return '';
   const plans = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
+  const KEEP = 6;
+  const keep = ch.slice(Math.max(0, ch.length - KEEP));
   const lines = [];
-  ch.forEach((c,i)=>{
+  keep.forEach((c,i)=>{
+    const abs = ch.length - keep.length + i;
     const t = String((c&&c.title)||'').trim();
-    let line = `第${i+1}章${t?`《${t}》`:'（标题未定）'}`;
-    const p = plans[i];
-    if(p && Array.isArray(p.beats) && p.beats.length){
-      const b0 = String((p.beats[0]&&p.beats[0].time)||'').trim();
-      const b1 = String((p.beats[p.beats.length-1]&&p.beats[p.beats.length-1].time)||'').trim();
-      if(b0 || b1) line += `【时间 ${b0||'?'} → ${b1||'?'}】`;
-      const evs = p.beats.map(b=>String((b&&b.event)||'').replace(/\s+/g,'').slice(0,28)).filter(Boolean).join(' -> ');
-      if(evs) line += `（${evs}）`;
+    let line = `第${abs+1}章${t?`《${t}》`:'（标题未定）'}`;
+    const p = plans[abs];
+    // v1.0.285：beats 数组退役——前文骨架改从编排纯文本提炼「承接点/情境」摘要（时间承接由正文【本章时间】块负责）
+    if(p && String(p.beatsText||'').trim()){
+      const _sn = beatsTextSceneSnippet(String(p.beatsText||''), 60);
+      if(_sn) line += `（${_sn}）`;
     }
     lines.push(line);
   });
-  return `【已定稿的前文骨架】\n${lines.join('\n')||'（无）'}`;
+  const head = ch.length > KEEP
+    ? `【已定稿的前文骨架（第 1—${ch.length - KEEP} 章已定稿；承接最近 ${KEEP} 章态势）】\n`
+    : `【已定稿的前文骨架】\n`;
+  return head + (lines.join('\n') || '（无）');
 }
 
-// 4.5：规划师批次输出 schema 校验（titles/chapterPlans 结构、beats 四段完整性）
-function validateBatchPlanOutput(j){
-  if(!j || typeof j !== 'object') return '返回不是对象';
-  if(!Array.isArray(j.titles)) return '缺少 titles 数组';
-  if(!Array.isArray(j.chapterPlans)) return '缺少 chapterPlans 数组';
-  for(const [i, p] of j.chapterPlans.entries()){
-    if(!p || typeof p !== 'object') return `第 ${i+1} 个 chapterPlan 不是对象`;
-    if(!Array.isArray(p.beats) || p.beats.length < 4) return `第 ${i+1} 个 chapterPlan 的 beats 不足 4 段`;
-    for(const [k, b] of p.beats.entries()){
-      if(!['setup','rise','climax','hook'].includes(b.type)) return `第 ${i+1} 章第 ${k+1} 个 beat 类型非法`;
-      if(!String(b.event||'').trim()) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 event`;
-      if(!Array.isArray(b.requiredEntities)) return `第 ${i+1} 章第 ${k+1} 个 beat 缺少 requiredEntities`;
-    }
-  }
-  // v242/911-Q2：人名硬约束已移除——规划师批次词典人名不再令整批重试（零阻挡）；入库时不合规范仅打 _nameFlag 标记
-  return '';
-}
-
-// 4.8 旗舰版（板块二-5）：规划师批次多候选择优。评分维度：schema 通过、beats 完整性。
-function pickBestChapterPlan(cands, expectedN){
-  const valid = cands.filter(c => c && c.ok && c.data && Array.isArray(c.data.chapterPlans));
-  if(!valid.length) return cands.find(c => c && !c.ok) || {ok:false, error:'所有规划师候选均失败'};
-  const score = (res) => {
-    const j = res.data;
-    const plans = (j.chapterPlans || []);
-    let s = 0;
-    // 数量与格式
-    if(Array.isArray(j.titles) && j.titles.length === expectedN) s += 10;
-    if(plans.length === expectedN) s += 10;
-    // 每章 beats 四段完整
-    plans.forEach(p => {
-      if(p && Array.isArray(p.beats) && p.beats.length >= beatCnt()){
-        s += 4;
-        const types = p.beats.map(b => b.type);
-        if(beatTypeKeys().every(t => types.includes(t))) s += 4;
-        if(_timeAnchorOn() && p.beats.every(b => String(b.time||'').trim())) s += 3;   // v1.0.175：时间锚齐全者加分
-      }
-    });
-    return s;
-  };
-  valid.sort((a,b) => score(b) - score(a));
-  return valid[0];
-}
-
-// 4.7 Pro（3.4 原码）：规划师统一 user 拼装（注入 tone / navBeacon / 标题参考稿 / 词典 / 风格）
-function chapterPlanUser(){
-  const o = state.outline || {};
-  const parts = [];
-  const anchor = outlineAnchorBlock();
-  parts.push(anchor ? `${anchor}\n【小说标题】${o.title||''}\n【小说简介】${o.logline||''}` : `【小说标题】${o.title||''}\n【小说简介】${o.logline||''}`);
-  parts.push(`【原始构想】${o.userIdea||state.idea||''}`);
-  parts.push(`【整体情绪基调】${o.tone || '未指定'}`);
-  parts.push(`【章节标题参考稿】${(o.chapters||[]).map((c,i)=>`第${i+1}章 ${cleanChapterTitle(c&&c.title)}`).join('\n')}`);
-  parts.push(`【设定词典】${chapterGlossaryBlock()}`);
-  const _tb = teamShapeBrief();   // v1.0.186 团队设定注入节拍用户（chapterPlan 通道）
-  if(_tb) parts.push(_tb);
-  const styleNote = chapterStyleNote();
-  if(styleNote) parts.push(styleNote);
-  return parts.join('\n\n');
-}
-
-// 4.7 Pro（3.4 原码）：规划师解析后整体校验（titles/chapterPlans 数量一致、beats 恰好 4 段且 type 顺序固定）
-function validateChapterPlanOutput(j){
-  const o = state.outline || {};
-  const N = (o.chapters||[]).length;
-  if(!j) return {ok:false, code:'JSON_EMPTY'};
-  if(!Array.isArray(j.titles)) return {ok:false, code:'TITLES_MISSING'};
-  if(!Array.isArray(j.chapterPlans)) return {ok:false, code:'PLANS_MISSING'};
-  if(j.titles.length !== N || j.chapterPlans.length !== N) return {ok:false, code:'COUNT_MISMATCH'};
-  for(let i=0;i<N;i++){
-    const p = j.chapterPlans[i];
-    if(!p || typeof p !== 'object') return {ok:false, code:'PLAN_MISSING', idx:i};
-    if(!Array.isArray(p.beats) || p.beats.length !== 4) return {ok:false, code:'BEATS_COUNT', idx:i};
-    const types = ['setup','rise','climax','hook'];
-    for(let k=0;k<4;k++){
-      if(p.beats[k].type !== types[k]) return {ok:false, code:'BEAT_TYPE', idx:i, beat:k};
-      if(typeof p.beats[k].event !== 'string' || p.beats[k].event.length < 3) return {ok:false, code:'BEAT_EVENT', idx:i, beat:k};
-    }
-  }
-  return {ok:true};
-}
+// v1.0.285：旧 JSON 节拍表整链死代码已随 beats 数组退役整体删除——validateBatchPlanOutput / pickBestChapterPlan /
+// chapterPlanUser / validateChapterPlanOutput（规划师节拍表已改 buildBeatsSys + plannerBeatsUser 纯文本直出，无 JSON 校验/多候选择优）
 
 // v240/906-2：规划师「主线简述批量版本」整套历史功能按用户决定移除（pushChapterPlansSnapshot / applyChapterPlansVersion /
 // deleteChapterPlansVersion / openChapterPlansHistoryPanel / closeChapterPlansHistoryPanel 均已删）；旧存档残留数据在 applyProject 恢复时静默清除（见 applyProject 内 delete）。
@@ -11011,10 +11927,10 @@ function openCpRawPanel(){
       <div class="gs-modal-head"><b>🔧 原始 AI 响应 — 节拍表</b>
         <span style="display:flex;gap:6px">
           <button class="btn small ghost" data-cpraw-searchlog>📋 搜索最近日志</button>
-          <button class="btn small ghost" data-cpraw-import>📂 导入 JSON</button>
-          <button class="btn small ghost" data-cpraw-export ${hasRaw?'':'disabled'}>💾 导出 JSON</button>
+          <button class="btn small ghost" data-cpraw-import>📂 导入文本</button>
+          <button class="btn small ghost" data-cpraw-export ${hasRaw?'':'disabled'}>💾 导出文本</button>
           <button class="btn small ghost" data-cpraw-copy ${hasRaw?'':'disabled'}>📋 复制全部</button>
-          <input type="file" id="cprawImportFile" accept=".json,application/json" hidden />
+          <input type="file" id="cprawImportFile" accept=".txt,.json,text/plain,application/json" hidden />
           <button class="gs-x" data-cpraw-close>✕</button>
         </span></div>
       <div class="cv-body">
@@ -11035,7 +11951,7 @@ function openCpRawPanel(){
           </div>
         </div>
         <pre class="cpraw-pre">${hasRaw?escRaw:'(暂无原始响应数据。生成一次节拍表后，原始响应会自动保存至此。)'}</pre>
-        <p class="muted" style="margin:6px 0 0;font-size:11px">💡 提示：导入 JSON 文件后自动解析并应用；替换后点「解析并应用到节拍表」写入。</p>
+        <p class="muted" style="margin:6px 0 0;font-size:11px">💡 提示：导入文本文件后自动解析并应用；替换后点「解析并应用到节拍表」写入。</p>
       </div>
     </div>`;
   document.body.appendChild(ov);
@@ -11058,7 +11974,7 @@ function openCpRawPanel(){
       }
     }, 300);
   };
-  // 导入 JSON：点击按钮 → 触发隐藏 file input → 读取后自动调用 applyCpRawResponse
+  // 导入文本：点击按钮 → 触发隐藏 file input → 读取后自动调用 applyCpRawResponse（v1.0.285：按「===== 第N章 =====」纯文本解析）
   const importBtn = ov.querySelector('[data-cpraw-import]');
   const importFile = ov.querySelector('#cprawImportFile');
   if(importBtn && importFile){
@@ -11075,12 +11991,12 @@ function openCpRawPanel(){
       }
     };
   }
-  // 导出 JSON：导出当前 pre 元素内容为 .json 文件
+  // 导出文本：导出当前 pre 元素内容为 .txt 文件
   ov.querySelector('[data-cpraw-export]').onclick = ()=>{
     const txt = ov.querySelector('.cpraw-pre').textContent;
     const blob = new Blob([txt], {type:'text/plain;charset=utf-8'});
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = '节拍表原始响应.json';
+    a.href = URL.createObjectURL(blob); a.download = '节拍表原始响应.txt';
     document.body.appendChild(a); a.click(); document.body.removeChild(a);
     URL.revokeObjectURL(a.href); toast('✅ 已导出');
   };
@@ -11104,105 +12020,36 @@ function openCpRawPanel(){
   };
 }
 function closeCpRawPanel(){ const p=$('#cpRawPanel'); if(p) p.remove(); }
-// v1.0.138：手动解析原始响应并应用到节拍表（对象数组：beats + emotionalArc + requiredEntities）
+// v1.0.285：手动解析原始响应并应用到节拍表——纯文本章节编排（「===== 第N章 =====」分隔），逐块写回 beatsText（beats 数组已退役）
 function applyCpRawResponse(raw){
   if(!raw){ toast('无原始响应数据'); return; }
   const o = state.outline;
   if(!o){ toast('无当前项目'); return; }
   try{
-    const j = parseJson(raw) || {};
-    const arr = Array.isArray(j.chapterPlans) ? j.chapterPlans : [];
-    if(!arr.length || !arr.some(Boolean)){ toast('解析失败：未找到 chapterPlans 数组'); return; }
-    const n = (o.chapters||[]).length || arr.length;
+    const blocks = splitBeatsTextBlocks(String(raw||''));
+    if(!blocks.length){ toast('解析失败：未找到「===== 第N章 =====」章节块'); return; }
+    const n = (o.chapters||[]).length;
+    if(!n){ toast('请先设置全书章节数'); return; }
     if(!Array.isArray(o.chapterPlans)) o.chapterPlans = new Array(n).fill(null);
-    arr.forEach((p,i)=>{
-      if(i >= n) return;
-      const cur = (o.chapterPlans[i] && typeof o.chapterPlans[i]==='object') ? o.chapterPlans[i] : {};
-      o.chapterPlans[i] = Object.assign({}, cur, {
-        beats: Array.isArray(p.beats) ? p.beats : (Array.isArray(cur.beats)?cur.beats:[]),
-        emotionalArc: String(p.emotionalArc||cur.emotionalArc||'').trim(),
-        requiredEntities: Array.isArray(p.requiredEntities)&&p.requiredEntities.length ? p.requiredEntities : (Array.isArray(cur.requiredEntities)?cur.requiredEntities:[])
-      });
+    let got = 0;
+    blocks.forEach(blk=>{
+      const idx = blk.n - 1;
+      if(idx >= 0 && idx < n){
+        const cur = (o.chapterPlans[idx] && typeof o.chapterPlans[idx]==='object') ? o.chapterPlans[idx] : {};
+        o.chapterPlans[idx] = Object.assign({}, cur, { beatsText: blk.text, tlEssence: (blk.essence||''), tlEntities: (blk.entities||'') });
+        got++;
+      }
     });
     persist();
     closeCpRawPanel();
     render();
-    const okN = arr.filter(p => p && Array.isArray(p.beats) && p.beats.length).length;
-    toast(`✅ 已手动解析并应用 ${okN} 章节拍表`);
+    toast(`✅ 已手动解析并应用 ${got} 章节拍编排`);
   }catch(e){
-    toast('解析失败：'+e.message+'。请检查原始数据格式');
+    toast('解析失败：'+e.message+'。请检查原始数据格式（应含「===== 第N章 =====」分隔）');
   }
 }
 
-/* ---------- P1-1v4 标题原始响应手动提取 ---------- */
-function openTitlesRawPanel(){
-  closeTitlesRawPanel();
-  let raw = state._lastTitlesRaw || '';
-  const hasRaw = !!raw;
-  const escRaw = esc(raw);
-  const ov = document.createElement('div'); ov.id='titlesRawPanel'; ov.className='gs-overlay';
-  ov.innerHTML = `
-    <div class="gs-modal" style="max-width:780px">
-      <div class="gs-modal-head"><b>🔧 原始 AI 响应 — 重生成全部标题</b>
-        <span style="display:flex;gap:6px">
-          <button class="btn small ghost" data-traw-searchlog>📋 搜索最近日志</button>
-          <button class="gs-x" data-traw-close>✕</button>
-        </span></div>
-      <div class="cv-body">
-        <div class="cv-div">这里是最近一次「重生成全部标题」时 AI 返回的原始 JSON 响应。如果自动更新失败，可手动点击「解析并应用到标题」来提取数据。</div>
-        <div class="cpraw-actions">
-          <button type="button" class="btn primary" data-traw-apply ${hasRaw?'':'disabled'}>解析并应用到标题</button>
-          <span style="font-size:12px;color:var(--sub);align-self:center">${hasRaw?`共 ${raw.length} 字`:'（暂无原始响应数据）'}</span>
-        </div>
-        <pre class="cpraw-pre">${hasRaw?escRaw:'(暂无原始响应数据。执行一次「重生成全部标题」后，原始响应会自动保存至此。)'}</pre>
-        <p class="muted" style="margin:6px 0 0;font-size:11px">💡 提示：也可点击「搜索最近日志」从 AI 请求日志中查找最近一次标题重生成响应。</p>
-      </div>
-    </div>`;
-  document.body.appendChild(ov);
-  ov.querySelector('[data-traw-close]').onclick = closeTitlesRawPanel;
-  ov.addEventListener('click', e=>{ if(e.target===ov) closeTitlesRawPanel(); });
-  ov.querySelector('[data-traw-apply]').onclick = ()=> applyTitlesRawResponse(raw);
-  ov.querySelector('[data-traw-searchlog]').onclick = ()=>{
-    closeTitlesRawPanel(); openAiLogPanel();
-    setTimeout(()=>{
-      const rows = $$('[data-ailog-toggle]');
-      if(rows.length){
-        for(let i=rows.length-1; i>=0; i--){
-          const row = rows[i]; const taskEl = row.closest('.ailog-row') && row.closest('.ailog-row').querySelector('.ailog-task');
-          if(taskEl && taskEl.textContent.includes('重生成全部标题')){ row.click(); break; }
-        }
-      }
-    }, 300);
-  };
-}
-function closeTitlesRawPanel(){ const p=$('#titlesRawPanel'); if(p) p.remove(); }
-function applyTitlesRawResponse(raw){
-  if(!raw){ toast('无原始响应数据'); return; }
-  const o = state.outline;
-  if(!o){ toast('无当前项目'); return; }
-  try{
-    const j = parseJson(raw) || {};
-    const titles = Array.isArray(j.titles) ? j.titles.map(t=>String(t||'').trim()).filter(Boolean) : [];
-    if(!titles.length){ toast('解析失败：未找到 titles 数组'); return; }
-    snapshotTitleBatch('手动提取前');
-    const cnt = setAllTitles(titles);
-    snapshotTitleBatch('本次提取结果');   // v10.34 记录手动提取的结果版本
-    persist();
-    closeTitlesRawPanel();
-    // 就地更新标题行
-    document.querySelectorAll('.ct-row').forEach((row,i)=>{
-      const el = row.querySelector('.ct-title');
-      if(el && o.chapters[i] && o.chapters[i].title){ el.textContent = o.chapters[i].title; el.title = o.chapters[i].title; }
-    });
-    // 刷新标题版本按钮
-    const ctRow2 = document.querySelector('.ct-block .ct-row2');
-    if(ctRow2){
-      const batchBtn = ctRow2.querySelector('[data-ct-batch]');
-      if(batchBtn) batchBtn.innerHTML = '版本('+chTitleBatches().length+'/50)';
-    }
-    toast('✅ 已手动解析并应用 '+cnt+' 个章节标题');
-  }catch(e){ toast('解析失败：'+e.message+'。请检查原始数据格式'); }
-}
+/* ---------- P1-1v4 标题原始响应手动提取（v1.0.286 已整体移除：只解析旧 JSON {titles:[...]}，与逐行纯文本标题不兼容且入口「重生成全部标题」已失效） ---------- */
 
 /* ---------- v1.0.115 单章速读梗概（成文后回顾 · 本章正文压缩至约 1/3）生成 · 面板 ---------- */
 function closeChapterSummaryPanel(){ const p=document.getElementById('chSumPanel'); if(p) p.remove(); }
@@ -11315,21 +12162,7 @@ function openChapterSummaryPanel(i){
   ov.querySelector('#chSumCopy').onclick = ()=>{ const s=(c.strip||'').trim(); if(s) copyText(s); };
   renderChapterSummaryBody(i);
 }
-// 长篇：写作范式选择器（结构 + 可复用词典，均折叠；节奏/标题/质量 v10.18/10.60 移除）
 // 长篇：写作范式选择器（可复用词典折叠；结构/节奏/标题风格已移除 v11）
-function loglineRangeHtml(){
-  const lr = state.loglineRange || {min:100, max:300};
-  const _m = Number.isFinite(lr.min)?Math.max(1,Math.min(5000,Math.floor(lr.min))):100;
-  const _x = Number.isFinite(lr.max)?Math.max(1,Math.min(5000,Math.floor(lr.max))):300;
-  const _lo = Math.min(_m,_x), _hi = Math.max(_m,_x);
-  return `<div class="logline-range">
-    <span class="llr-label">简介字数范围：</span>
-    <input type="number" id="llMin" class="llr-input" min="1" max="5000" step="1" value="${_lo}" aria-label="简介最少字数">
-    <span class="llr-sep">—</span>
-    <input type="number" id="llMax" class="llr-input" min="1" max="5000" step="1" value="${_hi}" aria-label="简介最多字数">
-    <span class="llr-hint">字（生成大纲时 AI 严格遵守此区间；两数颠倒会自动对调）</span>
-  </div>`;
-}
 
 // 遵从度 → 语义化说明（v8：把百分比翻译成给用户看的自然语言）
 function adherenceHint(a){
@@ -11363,31 +12196,6 @@ function stripSegmentMarkers(txt){
   if(!changed) return s;
   return out.join('\n').replace(/\n{3,}/g,'\n\n').trim();
 }
-// v1.0.173：为【分段达成契约】把全章目标按「微拍配比」分配到各拍，返回 [{k, t, label}]。
-// 以目标字数(lo，默认3000)为基数逐拍预分配——模型擅长把有界小节写满、不擅长自我拉长一整章，
-// 故把"拉长一整章"改成"逐拍填满有界小节"，确保落地即达 3000 上下、稳过硬下限。
-function segWordTargets(bounds, plan){
-  const totalBase = (bounds && +bounds.lo > 0) ? Math.round(+bounds.lo) : 3000;
-  const beats = (plan && Array.isArray(plan.beats) && plan.beats.length) ? plan.beats : null;
-  if(!beats) return [];
-  const cfg = currentBeatCfg();
-  const raw = String((cfg && cfg.wc) || '');
-  const m = raw.match(/^\s*([\d/]+)/);
-  let ratios = null;
-  if(m){
-    const parts = m[1].split('/').map(Number);
-    if(parts.length === beats.length && parts.every(n => n > 0)) ratios = parts;
-  }
-  const res = [];
-  const sum = ratios ? ratios.reduce((a,b)=>a+b,0) : 0;
-  for(let k=0;k<beats.length;k++){
-    let t;
-    if(ratios) t = Math.max(120, Math.round(totalBase * ratios[k] / sum));
-    else t = Math.max(120, Math.round(totalBase / beats.length));
-    res.push({ k, t, label: beatLabelFor((beats[k] && beats[k].type)) });
-  }
-  return res;
-}
 function splitChapterOutput(txt){
   return { content: stripSegmentMarkers(txt), strip: '' };
 }
@@ -11419,8 +12227,27 @@ async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride,
   }
   const sp = splitChapterOutput(txt);
   // v1.0.165：去除后验字数续写补齐（避免额外多生成一次）——长度改由【篇幅体量】在首写阶段用硬性目标约束，首轮即写足
-  const content = String(sp.content).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
+  let content = String(sp.content).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
+  // v1.0.295（M3-1）：正文同源附带【本章出场人物】行剥离为 castOut，落库供「正文收编」做跨章聚合；正文本体保持纯净
+  const _cs = splitChapterCastout(content);
+  content = _cs.body;
+  if(state.chapters && state.chapters[i]){ state.chapters[i].castOut = _cs.castOut; }
+  const _o = state.outline;
+  if(_o && Array.isArray(_o.chapters) && _o.chapters[i]){ _o.chapters[i].castOut = _cs.castOut; }
   return content;
+}
+// v1.0.295（M3-1）：从正文尾部剥离「【本章出场人物】」行级标记——该行是正文生成器同源附带、供「正文收编」环节跨章聚合的元数据，
+// 只登记本章新出现且值得被词典收编的核心新实体（不列词典已有常驻名、不列一次性氛围路人）；缺失则 castOut 为空串（不兜底老数据）。
+function splitChapterCastout(prose){
+  const lines = String(prose||'').split(/\r?\n/);
+  const re = /^[ \t]*【\s*本章出场人物\s*】\s*[:：]?\s*([\s\S]*)$/;
+  let castOut = '', bodyLines = [];
+  for(const ln of lines){
+    const mk = ln.match(re);
+    if(mk){ const t = String(mk[1]||'').trim(); if(t) castOut = t; }
+    else bodyLines.push(ln);
+  }
+  return { body: bodyLines.join('\n').replace(/\s+$/, '').trim(), castOut };
 }
 // v1.0.165：后验续写补齐 lengthenChapterToTarget 已整体移除——字数由首写阶段的硬性约束保证，不再额外多生成一次
 // 组装单章生成的 user 提示词。恒定前缀块（标题/梗概/全部章节标题/一致性词典）保持在前、全章不变，
@@ -11434,15 +12261,18 @@ async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride,
 // v2.4 章节 User 组装：按用户指定优先级（人工干预 > 写作风格 > 词典）——
 // ① 写作风格（第一优先）② 上一章真实正文（必须接着写）③ 本章任务+节拍表 ④ 本章/下一章边界（禁越界，末章收束）⑤ 大纲/结构/词典 ⑥ 人工干预（重生成，最高优先）
 // 不注入"全部章节标题"（v2.3 零夹带）；词典全字段经 chapterGlossaryBlock 注入。
-const USER_PRIO_BILL = '\n\n【优先级契约】当同时存在多条用户要求时，按此裁决（高→低）：写作风格（第一优先，压过所有） > 人工干预要求 > 设定词典。前者与后者冲突时以前者为准；设定词典（人名/地名/专名一致性）为不可逾越红线，任何要求不得破坏；上一章全文（如有）为承接类事实的最高权威，任何要求不得使其另起炉灶。';
-// 4.5 buildChapterUser 升级：L1 节拍表 / L2 上一章全文 / L3 相关词典（替代全量词典）/ L4 滚动摘要；
+const USER_PRIO_BILL = '\n\n【优先级契约】当同时存在多条用户要求时，按此裁决（高→低）：写作风格（第一优先，压过所有） > 人工干预要求 > 设定词典。前者与后者冲突时以前者为准；设定词典中有台词/有戏份/反复出现的重要人地专名一致性为不可逾越红线，任何要求不得破坏；仅作氛围的临时路人/小地名/小专名（见正文【临时闲人】段）不属红线，可现场点缀、不入词典；上一章全文（如有）为承接类事实的最高权威，任何要求不得使其另起炉灶。';
+// 4.5 buildChapterUser 升级：L1 节拍表 / L2 上一章节拍表(优先)或上一章全文 / L3 相关词典（替代全量词典）/ L4 滚动摘要；
 // 原边界逻辑（本章任务/本章边界/下一章边界/末章收束/开篇与上章兜底说明）按 4.5 方案要求保留。
 // 4.8 旗舰版（板块一-2）：上下文长度预算器。按优先级从低到高（L4→L3→简介→L1 详细说明）逐级裁剪，
 // 保证 system+user 不超限，同时保住 L0、L1 节拍骨架、L2 承接锚点、本章任务与边界。
+// v1.0.204 阶段4/4.4：词典（L3 设定词典）= 不可裁红线，永不裁剪。
+// 超限时按 L4(L4滚动摘要) → 简介 → 衔接事实 → L1节拍详述(保留骨架) 依次裁剪；
+// 仍超限则保留词典+节拍、置 _dictRedlineOver 让调用方提示「提示提升上限」（不静默降质、绝不砍词典）。
+let _dictRedlineOver = false;
 function budgetChapterContext(parts, maxChars){
   const total = () => parts.join('\n\n').length;
   if(total() <= maxChars) return parts;
-  // 辅助：找到并替换/删除某个块的文本
   const idx = (label) => parts.findIndex(s => s.startsWith(label));
   // 1) 截断 L4 滚动摘要（只保留前 200 字）
   const l4 = idx('【L4 前文滚动摘要】');
@@ -11452,7 +12282,13 @@ function budgetChapterContext(parts, maxChars){
     parts[l4] = head + body.slice(0, 200) + (body.length > 200 ? '…' : '');
   }
   if(total() <= maxChars) return parts;
-  // 2) 截断衔接事实
+  // 2) 截断简介定位
+  const ref = idx('【小说简介】');
+  if(ref >= 0){
+    parts[ref] = parts[ref].slice(0, 260) + (parts[ref].length > 260 ? '…' : '');
+  }
+  if(total() <= maxChars) return parts;
+  // 3) 截断衔接事实
   const bridge = idx('【衔接事实】');
   if(bridge >= 0){
     const head = '【衔接事实】';
@@ -11460,38 +12296,18 @@ function budgetChapterContext(parts, maxChars){
     parts[bridge] = head + body.slice(0, 160) + (body.length > 160 ? '…' : '');
   }
   if(total() <= maxChars) return parts;
-  // 3) 截断 L3 相关词典
-  const l3 = idx('【L3 相关设定词典');
-  if(l3 >= 0){
-    const lines = parts[l3].split('\n');
-    parts[l3] = lines.slice(0, 3).join('\n') + (lines.length > 3 ? '\n…（词典已截断）' : '');
-  }
-  if(total() <= maxChars) return parts;
-  // 4) 截断简介定位
-  const ref = idx('【小说简介】');
-  if(ref >= 0){
-    parts[ref] = parts[ref].slice(0, 260) + (parts[ref].length > 260 ? '…' : '');
-  }
-  if(total() <= maxChars) return parts;
-  // 5) 截断 L1 的详细说明，只保留 beats 列表和情绪弧/实体汇总
-  const l1 = idx('【L1 本章节拍表');   // v1.0.139：块名升级为「硬性执行清单」，改用前缀匹配
+  // 4) 截断 L1 编排纯文本的详细内容（v1.0.285：beats 数组退役，L1 即 beatsText 纯文本——保留标题与前两行，其余行按 120 字截断）
+  const l1 = idx('【L1 本章节拍');   // v1.0.273 纯文本化：块名改为「本章节拍编排」，与旧「本章节拍表」统一前缀匹配，确保超限时可裁剪
   if(l1 >= 0){
     const lines = parts[l1].split('\n');
-    // 保留标题行、情绪弧、实体汇总、以及每节拍的前 60 字
     parts[l1] = lines.map((line, i) => {
-      if(i <= 2) return line;   // 标题/情绪弧/实体汇总
+      if(i <= 2) return line;   // 标题行与编排开头两句保留完整
       if(line.startsWith(' ')) return line;
       return line.slice(0, Math.min(line.length, 120)) + (line.length > 120 ? '…' : '');
     }).join('\n');
   }
-  if(total() <= maxChars) return parts;
-  // 6) 最后防线：直接截断末尾（人工干预与优先级契约之前）
-  let s = parts.join('\n\n');
-  if(s.length > maxChars){
-    s = s.slice(0, maxChars) + '…';
-    // 直接返回单字符串会丢失 parts 结构，但总比崩溃好；这里保留原数组并截断最后非关键块
-    // 实际不会走到这里，因为前面已大幅裁剪
-  }
+  // 5) 词典(L3)与节拍(L1)为不可裁红线：不再裁剪；若仍超限，置红标让调用方提示提升上限，且不做任何硬截断（保住词典+节拍）
+  if(total() > maxChars){ _dictRedlineOver = true; return parts; }
   return parts;
 }
 
@@ -11500,28 +12316,32 @@ function buildChapterUser(i, opt={}){
   const chap = state.chapters[i];
   const curN = i + 1;
   const parts = [];
+  // v1.0.311（单一对接）：正文 AI=「学生」，闭卷考试——凡本组老师已备网本章教案，正文只以老师教案为唯一内容体作答；
+  // 学生不得自行翻阅原始素材（全量词典/节拍表/时间线/上章全文等）以免自己乱组合、提前剧透；
+  // 原始素材仅作「附录·老师教案的补充参考」，且由系统口令收敛：正文引用源头只能是本章教案。
+  const _lesson = teacherChapterPlan(i);
+  const _closed = !!_lesson;   // 有本章教案 → 闭卷，仅以教案为主语
   // 4.8 旗舰版（板块二-1）：恒定前缀块前置（简介定位 → L3 词典 → L4 摘要 → 事实衔接），可变信息（L1 节拍、L2 上章、任务边界）放后，提升 DeepSeek 上下文缓存命中率
-  // 简介定位
-  let ref = outlineAnchorBlock() ? `${outlineAnchorBlock()}\n【小说简介】书名：${o.title||''}｜一句话概览：${o.logline||''}` : `【小说简介】书名：${o.title||''}｜一句话概览：${o.logline||''}`;
-  parts.push(ref);
-  // v1.0.186 团队设定注入正文：让正文在各拍出场角色与分工上贴合团队（非 solo 时才有）
+  // 简介定位（v1.0.287：删除「一句话概览」标签——小说简介已是长文，旧标签会误导 AI 误判简介形态）
+  parts.push(_closed ? `【书名锚点（仅作标题，设定一律以本节教案为准，不另行展开简介）】${o.title||''}` : `【小说简介】书名：${o.title||''}\n${o.logline||''}`);
+  // v1.0.186 团队设定注入正文：让正文在各拍出场角色与分工上贴合团队（非 solo 时才有）；闭卷时以教案为准、不直读团队
   const _tb = teamShapeBrief();
-  if(_tb) parts.push(_tb);
-  // L3 相关词典（替代全量）
-  const rg = relevantGlossaryForChapter(i);
-  const rgBlock = formatRelevantGlossary(rg);
-  if(rgBlock) parts.push(`【L3 相关设定词典（本章必须采用）】\n${rgBlock}`);
-  // L4 滚动摘要
+  if(!_closed && _tb) parts.push(_tb);
+  // v1.0.204 阶段4/4.4：L3 设定词典。开卷时用原「全量名单+出场全字段」（不可裁红线）；
+  // v1.0.312（点名兑换制·第二刀）：闭卷时改用 rollCallGlossary——只供给「本章出场名单」内人物的档案卡，名单外不注入、不可写、不可提，封死剧透。
+  const dmBlock = _closed ? rollCallGlossary(i) : fullGlossaryChapterBlock(i);
+  if(dmBlock) parts.push(`【L3 设定词典${_closed ? '（闭卷·点名制·只读名单档案卡）' : '（万物词典·全量名单+出场全字段，不可裁）'}】\n${dmBlock}`);
+  // v1.0.211：本章「世界情报·迷雾版」选择性注入——世界观规则全量必给；闭卷时交给教案
+  const fog = fogWorldInject(i);
+  if(!_closed && fog) parts.push(fog);
+  // L4 滚动摘要（闭卷时不直读前文摘要，承接一律以教案「连续性」字段为准）
   const rolling = buildRollingSummary(i);
-  if(rolling) parts.push(`【L4 前文滚动摘要】\n${rolling}`);
+  if(!_closed && rolling) parts.push(`【L4 前文滚动摘要】\n${rolling}`);
   // 4.7 Pro（3.5）：L3/L4 补充事实卡衔接——v247/926-Q3：上一章有正文时（全文形态或失败稿说明块）lastScene 已重复，仅伏笔清单保留；
-  // 仅当上一章无正文（或首章导入残留）才显示结尾状态
+  // v1.0.280：伏笔清单注入已随伏笔网移除；仅当上一章无正文（或首章导入残留）才显示结尾状态
   const fc = (o._factCard || {});
   const _prevHasBody = i > 0 && !!(state.chapters[i-1] && state.chapters[i-1].content && String(state.chapters[i-1].content).trim());
-  const _hookList = (fc.unresolvedHooks||[]).map(h=>h.text).filter(Boolean);
-  // A fix: 把伏笔台账「已逾期」的伏笔一并注入后续章节，兑现看板"逾期会提醒 AI 必须兑现"的承诺（与未收束伏笔分开呈现、避免重复）
-  const _ovdText = (((state.outline&&state.outline._foreshadowLedger)||{}).overdue||[]).map(x=>(x&&x.text)?String(x.text):'').filter(Boolean);
-  if(fc.lastScene || _hookList.length || _ovdText.length){
+  if(!_closed && fc.lastScene){
     const _seg = [];
     // v1.0.175：承接真相源——上一章正文末尾时间锚（轻量模型从事后正文提取，最可信），仅当可用时注入
     if(i > 0){
@@ -11529,37 +12349,56 @@ function buildChapterUser(i, opt={}){
       if(_prevEndA && _prevEndA.time) _seg.push(`上一章正文末尾时间锚（真实结尾）：${_prevEndA.time}`);
     }
     if(!_prevHasBody) _seg.push(`上一章结尾状态：${fc.lastScene||'（未记录）'}`);
-    if(_hookList.length) _seg.push(`未收束伏笔：${_hookList.join('、')}`);
-    if(_ovdText.length) _seg.push(`⚠️ 已逾期伏笔（本章必须兑现或明显推进，不得遗漏）：${_ovdText.join('、')}`);
     parts.push(`【衔接事实】${_seg.join('；')}`);
   }
   // L1 节拍表（每章必变，放恒定前缀之后）
   const plan = (Array.isArray(o.chapterPlans) && o.chapterPlans[i]) || null;
-  if(plan && Array.isArray(plan.beats)){
-    // v1.0.139：节拍表为本章唯一硬性执行清单（主线简述功能已彻底移除，不再注入）
-    let beatText = `【L1 本章节拍表（硬性执行清单）】\n`;
-    // 4.7 Pro（3.5）：补情绪弧 + 本章必须使用实体汇总
-    beatText += `情绪弧：${plan.emotionalArc||'按上下文自然推进'}\n`;
-    beatText += `必须使用实体汇总：${(plan.requiredEntities||[]).join('、')||'无'}\n`;
-    // v1.0.153：节拍表是本章「一条连续叙事线」上的关键节点，须用过渡衔接成一个整体，禁止各拍割裂成独立断篇
-    beatText += `串联要求：下面 ${(currentBeatCfg().types||[]).length} 个节拍是本章同一段连续剧情上的关键节点——写作时必须用因果、情绪递进、动作延续或时间/空间过渡把它们紧密衔接成一篇流畅的正文；节拍之间禁止生硬跳切、禁止各写各的断章；只要叙事连续，相邻节拍可融合在同一场景内推进，节拍之间的衔接过渡文字同样是正文的一部分。\n`;
-    beatText += `【微拍配比】当前「${currentBeatCfg().label}」：${currentBeatCfg().wc||''}；本章设一个明确的事件节点，强度与篇幅匹配，勿把后续才应出现的转折或资源提前用尽；只推进一件具体的小事。\n`;
-    plan.beats.forEach((b, idx)=>{
-      beatText += `${idx+1}. [${beatLabelFor(b.type)}]${_timeAnchorOn() && String(b.time||'').trim() ? `（时间：${b.time}）` : ''} ${b.event}（情绪：${b.emotional||'按上下文'}）——必须出现：${(b.requiredEntities||[]).join('、')||'无'}${(b.foreshadowing||[]).length ? '；埋伏笔：'+b.foreshadowing.join('、') : ''}\n`;
-    });
-    parts.push(beatText);
+  // v1.0.273 纯文本化：注入「章节编排」纯文本（含承接点/场景链/逐拍推进/情绪弧/出场实体/埋设伏笔/收束）——正文按图索骥、直接据此展开
+  // v1.0.285：旧 JSON beats 存档兜底已随 beats 数组退役移除——无编排纯文本则不注入 L1
+  // v1.0.294：本块由「硬性执行清单」降级为「可依照的素材重心」——正文有权依叙事自然度取舍，不为凑名单而生硬点名
+  // v1.0.302：注入前过 cleanBeatDividerTrailer，剔除历史脏数据章尾残留的「===== 第N章 =====」分隔行，防正文 AI 误判章节边界
+  if(!_closed && plan && String(plan.beatsText||'').trim()){
+    const _l1txt = cleanBeatDividerTrailer(plan.beatsText);
+    if(_l1txt) parts.push(`【L1 本章节拍编排（可依照的素材重心·纯文本）】\n${_l1txt}\n`);
   }
-  // v1.0.139：本章结构定位（所在幕使命/必须事件）——让正文明确本章在全书结构中的任务
+  // v1.0.311：老师「本章教案」注入——剧本由老师撰写，学生正文唯一内容体（闭卷考试·最高优先级），正文按图索骥
+  // 下方其它板块（简介/团队/词典/世界情报/节拍/时间线/上章）在闭卷模式下全部退化为「只读附录·补充老师没写明的已知设定」，
+  // 学生不得用它们另起炉灶、不得依据附录自行越权发挥剧情或提前剧透。
+  if(_lesson) parts.push(`【本节上课正文（唯一权威内容体·闭卷作答）：本章正文以本节教案为唯一依据，严格按教案六栏（功能与位置 / 剧情时间落点 / 本章推进骨架 / 情绪走向与突出点 / 连续性 / 本章出场名单）动笔，不得另起炉灶；下方各附录仅供"老师教案未写明的已知人物/设定"补白用，不得依靠附录自行编排剧情、不得提前章内未到之处、不得剧透后续。进行正文落笔时，章节走向、时间、承接一律以本教案为准。】
+${_lesson}`);
+  // v1.0.273：纯文本时间线——摘出本章时点供正文承接（全局时间线未排定则静默为空）；闭卷时以教案「时间落点」为准、不直读
+  const tlCh = timelineChapterBlock(i);
+  if(!_closed && tlCh) parts.push(tlCh);
+  // v1.0.139：本章结构定位（所在幕使命/必须事件）——让正文明确本章在全书结构中的任务；闭卷时以教案「功能与位置」为准
   const actBlk = chapterActBlock(i);
-  if(actBlk) parts.push(actBlk);
-  // L2 上一章：无条件注入上一章全文作为承接依据（质检已移除，不再区分失败稿/通过稿）
+  if(!_closed && actBlk) parts.push(actBlk);
+  // L2 上一章：优先注入「上一章节拍表全文」作承接依据（v1.0.297：由「上一章全部正文」改为「上一章节拍表内全部内容」——正文据此接续上章的走向/收束/悬念钩子，省 token 且不以上章落成散文硬接）
   if(i > 0){
     const pc = state.chapters[i-1];
-    if(pc && pc.content && String(pc.content).trim()){
-      // v247/925-927（拍板）：上一章无条件全文注入——非节选、用途声明前置、产出要求明确；System 的「上一章全文」口径由此名实相符。
-      // 冗余取缔（Q3 拍板）：旧形态的 lastScene 行 / 整份滚动摘要 / 尾段 1500 字锚点全部退出本块，滚动摘要只在 L4 出现一次。
+    // v1.0.31x（第三刀）：上一章承接权威优先「上一章教案」——老师教案里的连续性/收束是老师排定的衔接设计，正文应据此接续；无教案再退回节拍表/正文
+    const prevLesson = teacherChapterPlan(i-1);
+    if(prevLesson){
+      parts.push(`【L2 上一章教案（第 ${i-1} 章《${pc ? pc.title||'' : ''}》，老师备课写作框架·承接本段的最权威依据）】
+用途声明：这是上一章老师确认的全章教案（尤其「连续性/收束」字段）。本章开头必须从上一章教案排定的收尾状态自然承接：① 上一章教案的「收束设计/悬念/伏笔」是本章需接续兑现的钩子；② 上一章教案中的人物处境、时间落点、情绪走向以教案为准；③ 本段为最权威承接源，L1 本章节拍表不得与之冲突，若冲突以本节拍表承接点与本教案「连续性」共同校准。
+产出要求：一个能承接上一章教案收尾、并推进本章教案的本章开头；不得重复展示已收束内容。
+
+——— 上一章教案开始 ———
+${prevLesson}
+——— 上一章教案结束 ———`);
+    } else if(!_closed){   // v1.0.311：闭卷（有教案）时学生不直读上章节拍表/上章正文，承接只由本章教案「连续性」承担
+    const prevBt = (Array.isArray(o.chapterPlans) && o.chapterPlans[i-1] && typeof o.chapterPlans[i-1].beatsText==='string' && o.chapterPlans[i-1].beatsText.trim()) ? cleanBeatDividerTrailer(o.chapterPlans[i-1].beatsText) : '';   // v1.0.302：剔除章尾残留分隔行，防正文 AI 误判
+    if(prevBt){
+      parts.push(`【L2 上一章节拍表（第 ${i} 章《${pc ? pc.title||'' : ''}》，全文注入，非节选）】
+用途声明：这是上一章全书排定的节拍表全部内容——① 本章沿用其「承接点」自然接续，前后章事件走向衔接，禁止重复描写上章已排定的情节；② 其「收束设计/悬念/伏笔」是本章需接着兑现或接续的钩子，不得无视或改写；③ 其已排定的实体避免与本章重复引入。
+产出要求：一个能承接上一章节拍表收束、并继续推进本章节拍编排的本章开头。
+
+——— 上一章节拍表开始 ———
+${prevBt}
+——— 上一章节拍表结束 ———`);
+    } else if(pc && pc.content && String(pc.content).trim()){
+      // 上一章尚无节拍表纯文本（旧数据/未规划）时退回注入上一章正文，避免接续悬空
       const prevFull = String(pc.content).trim();
-      parts.push(`【L2 上一章全文（第 ${i} 章《${pc.title||''}》，共 ${prevFull.length} 字，非节选）】
+      parts.push(`【L2 上一章全文（第 ${i} 章《${pc.title||''}》，共 ${prevFull.length} 字，非节选；该章未排定节拍表，退回正文）】
 用途声明：这是上一章的全部内容——① 本章开头必须从其结尾自然承接，未完成的动作/对话/悬念直接续写，禁止另起炉灶或时间跳跃开场；② 人物的情绪与处境以其结尾状态为准；③ 其中已交代的设定、事件与人物信息禁止复述或重新介绍；④ 其中埋设的伏笔与章末钩子以原文为准，不得无视或改写。
 产出要求：一个从上一章结尾自然生长出来的本章开头。
 
@@ -11567,26 +12406,28 @@ function buildChapterUser(i, opt={}){
 ${prevFull}
 ——— 上一章正文结束 ———`);
     } else {
-      parts.push(`【上一章说明】上一章（第 ${i} 章）尚无正文，本章按大纲独立展开，但不得违背全局设定。`);
+      parts.push(`【上一章说明】上一章（第 ${i} 章）既无节拍表也无正文，本章按大纲独立展开，但不得违背全局设定。`);
     }
-  } else {
+    }   // ← v1.0.31x 第三刀：闭合「上一章教案优先」外层 else
+  } else if(!_closed) {   // v1.0.311：闭卷（首章有教案）时不注入「开篇任务书」从节拍侧读取的承接点/收束，交给一刀教案「功能与位置/连续性」
     // v243/910-⑴：一行开篇说明升级为结构化「第一章开篇任务书」——全书门面，素材全部来自现成字段
     const nb = o.navBeacon || {};
-    // v1.0.141：断掉旧 structure.acts.act1，改取「大纲节拍的结构」第一阶段
+    // v1.0.141：断掉旧 structure.acts.act1，改取「全书节拍」第一阶段
     const _openStages = chapterPlanStages(o);
     const _openSt = _openStages.length ? _openStages[0] : null;
-    const setupBeat = (plan && Array.isArray(plan.beats) && plan.beats[0]) || null;
-    const hookBeat  = (plan && Array.isArray(plan.beats) && plan.beats[plan.beats.length-1]) || null;
+    // v1.0.285：beats 数组退役——首章起点/章末收束信息统一从本章 beatsText 提取「承接点/收束设计」
+    const _openBt = (plan && typeof plan.beatsText==='string' && plan.beatsText.trim()) ? plan.beatsText.trim() : '';
+    const _openCj = _openBt ? beatsTextSection(_openBt, '承接点', '承接') : '';
+    const _openSs = _openBt ? beatsTextSection(_openBt, '收束设计', '收束') : '';
     const obLines = [];
-    if(o.anchor || o.thesis) obLines.push(`- 定位锚：严格执行上方【核心定位】与【深层主题】，首章即确立全书基调`);
     if(nb.protagonist) obLines.push(`- 主角入场：${nb.protagonist}——开篇即以行动/对话立住人设，忌静态介绍式出场`);
     if(nb.coreConflict) obLines.push(`- 核心冲突：${nb.coreConflict}——首章让读者看清冲突的存在或阴影`);
     if(_openSt){
       const _openTxt = (_openSt.titles||[]).map(t=>t.replace(/^第\s*\d+\s*章\s*/, '')).filter(Boolean).join('、');
       obLines.push(`- 开局阶段（第 ${_openSt.first}—${_openSt.last} 章「${_openSt.name}」）：首章即确立该阶段基调${_openTxt?`，本阶段涵盖：${_openTxt}`:''}`);
     }
-    if(setupBeat && setupBeat.event) obLines.push(`- 本章起点节拍（${beatLabelFor(setupBeat.type)}）：${setupBeat.event}`);
-    if(hookBeat && hookBeat.event) obLines.push(`- 章末钩子节拍（${beatLabelFor(hookBeat.type)}）：${hookBeat.event}`);
+    if(_openCj) obLines.push(`- 本章承接点：${_openCj}`);
+    if(_openSs) obLines.push(`- 章末收束设计：${_openSs}`);
     parts.push(`【第一章开篇任务书（全书门面，质量优先）】
 本章是全书第一章：无前文可承接，且承担"让读者决定是否读下去"的全部责任。${obLines.length ? '\n' + obLines.join('\n') : ''}
 【开篇硬规则】
@@ -11596,41 +12437,37 @@ ${prevFull}
 4. 直接以叙事开场：不要序言、不要作者旁白、不要"话说"式套头。`);
   }
   // v246/920-①：承接任务书（i≥1 全部章，对标第一章开篇任务书）——素材全部来自现成字段，纯本地拼装零 AI 成本。
-  if(i > 0){
+  // v1.0.311：闭卷（有教案）时抑制——承接/延续人物由本章教案「连续性」承担，不再从节拍侧直读，防学生自行拼接
+  if(i > 0 && !_closed){
     const pcC = state.chapters[i-1];
     const pcOk = pcC && pcC.content && String(pcC.content).trim();
     const prevPlanC = (Array.isArray(o.chapterPlans) && o.chapterPlans[i-1]) || null;
     if(pcOk && prevPlanC){
-      const hookBeatPrev = (Array.isArray(prevPlanC.beats) && prevPlanC.beats.length) ? prevPlanC.beats[prevPlanC.beats.length-1] : null;
-      const newHooks = (((o._factCard || {}).unresolvedHooks) || []).filter(h => h && h.plantedIn === i-1 && h.text).map(h => h.text);
-      const prevRe = (prevPlanC.requiredEntities || []).map(s => String(s).trim()).filter(Boolean);
-      const curRe = new Set(((plan && plan.requiredEntities) || []).map(s => String(s).trim()).filter(Boolean));
+      // v1.0.285：beats 数组退役——「上章章末钩子/延续人物」从上一章与本章 beatsText 提取（收束设计/必须使用实体）
+      const _prevBt = (prevPlanC && typeof prevPlanC.beatsText==='string' && prevPlanC.beatsText.trim()) ? prevPlanC.beatsText.trim() : '';
+      const _curBt = (plan && typeof plan.beatsText==='string' && plan.beatsText.trim()) ? plan.beatsText.trim() : '';
+      const _prevSs = _prevBt ? beatsTextSection(_prevBt, '收束设计', '收束') : '';
+      const _prevEntTxt = _prevBt ? (beatsTextSection(_prevBt, '出场实体', '必须使用实体', '必须实体', 400)||'') : '';
+      const _curEntTxt = _curBt ? (beatsTextSection(_curBt, '出场实体', '必须使用实体', '必须实体', 400)||'') : '';
+      const splitEnts = txt => txt.split(/[、，,;；\/|]/).map(s=>s.replace(/^[（(]?\d+[)）]?[.．、]?\s*/,'').replace(/^「|」$/g,'').trim()).filter(Boolean);
+      const prevRe = _prevEntTxt ? splitEnts(_prevEntTxt) : ((prevPlanC.requiredEntities || []).map(s => String(s).trim()).filter(Boolean));
+      const curRe = _curEntTxt ? new Set(splitEnts(_curEntTxt)) : new Set(((plan && plan.requiredEntities) || []).map(s => String(s).trim()).filter(Boolean));
       const carry = prevRe.filter(e => curRe.has(e));
       const ob2 = [];
       // v1.0.194 轻量版选项A：开场招式菜单 + 模型自选 + 读 L2 防连重 + 单招占比封顶（治"每章主角+动作"）
       ob2.push(`- 本张开场方式（核心指令）：本章开头只能且必须选用下面 6 类之一（超出范围即违规）：①场景/环境式 ②他人/群像式 ③悬念回接式 ④续写式 ⑤人物开句式 ⑥时间开句式。规则：请先读【L2 上一章全文】首句判断它属于哪一类，本章**必须避免与上一章同类开头**；全书任一种开场占比不超过三成，勿反复使用同一招；时间开句仅允许"借时景入情"式（如"檐角的雪化到一半"），不算生硬报时。`);
-      if(hookBeatPrev) ob2.push(`- 上章章末钩子：${hookBeatPrev.event}`);
-      if(newHooks.length) ob2.push(`- 上章新埋伏笔（保持在线，可推进或暗示，不得无视）：${newHooks.join('；')}`);
-      if(carry.length) ob2.push(`- 延续人物（上章出场、本章必用，再现时情绪与处境须延续上章结尾）：${carry.join('、')}`);
-      // v1.0.175：时间锚承接——上章末拍时间 → 本章首拍时间，正文须从该时点自然续写、禁止倒退
-      if(_timeAnchorOn()){
-        const _prevTailT = String((hookBeatPrev && hookBeatPrev.time)||'').trim();
-        const _curHeadT = (plan && Array.isArray(plan.beats) && plan.beats.length) ? String((plan.beats[0]&&plan.beats[0].time)||'').trim() : '';
-        if(_prevTailT || _curHeadT){
-          ob2.push(`- 时间承接：上章末拍时间${_prevTailT?`「${_prevTailT}」`:'（未标注）'} → 本章首拍时间${_curHeadT?`「${_curHeadT}」`:''}。本章正文开头从该时点自然续写、禁止把剧情安排到更早时段；异支线开场须显式进入并随后收回。续写仍以情节与人物切入，时间用场景细节自然体现（天色/光线/动静/人物状态），禁止"现在是/此刻是/此时是"式生硬报时，禁止把时间锚原样照抄进正文；时间开句**可以**但**禁止**每章都从时间起、也**禁止**连续两章都用时间词开句，时间尽量自第二句起用场景细节自然带出，仅当本章时间较上章确已跳变时才允许紧接首句交代一次且仍融入叙述。`);
-        }
-      }
+      if(_prevSs) ob2.push(`- 上章收束设计（含章末钩子线索）：${_prevSs}`);
+      // v1.0.280：上章新埋伏笔（unresolvedHooks 管线）已随伏笔网移除
+      if(carry.length) ob2.push(`- 延续人物（上章出场、本章宜延续情绪/处境的候选名单，可依照；场景不适可不出现，禁止为凑名单而生硬点名）：${carry.join('、')}`);   // v1.0.294：由「本章必用」降级为「可依照候选」
+      // v1.0.285：beats 数组退役——拍级 time 无数据源，拍级时间承接移除；时点承接由上方【本章时间（全局时间线）】块（timelineChapterBlock）统一提供
       if(ob2.length){
         // v247/926-Q3：上章结尾状态行删除——L2 全文在手（其末段即结尾状态），避免重复
         parts.push(`【承接任务书（${i===1?'开局承上启下，':''}质量优先）】
 本章承接上一章（第 ${i} 章《${pcC.title||''}》）：
 ${ob2.join('\n')}
 【承接硬规则】
-1. 前 20% 篇幅内自然承接上章章末钩子：未完成的动作/对话/悬念直接续写，禁止另起炉灶或时间跳跃开场。
-2. 禁止复述或重新介绍上章已交代的设定与人物信息，直接推进剧情。
-3. 若上章结尾（见 L2 上一章全文末段）与本章节拍表冲突，以上章真实结尾为准。
-4. 时间锚（若 L1 节拍表标注了时间）：本章各段时间/时点须与节拍表标注一致——但这只是"落在哪个时点就写那一时段的场景"的内部约束，绝不等于要写"报时"；时间必须靠场景细节自然交代（熹微/烈日/夕照/星夜/烛火/虫鸣/人物衣物与倦意等），严禁段落以"现在是/此刻是/此时是/当下是"等报时句开头，严禁把节拍锚或"第X天"字样原样写进读者视野；仅当进入下一段时间确实发生跳跃时给出自然的过渡时间语（如"翌日清晨""三日后的黄昏"）并融入叙述，不作注释式开场。本章开头须落在上章末尾时间之后或与之衔接（同主线时点禁止倒退）；闪回/梦境/穿越等异支线开场须在文中显式交代进入并随后收回，不扰乱主线时间顺序。
-5. 本张开场方式（见上「本张开场方式」）为本章核心指令：本章开场只能从菜单 6 类中选择、禁止越界成其他套路；须对照【L2 上一章全文】首句避免与上一章同类；全书任一种开场占比不超过三成；除「人物开句 / 时间开句」两式外，本张开场首个字符严禁出现任何人物姓名或称谓。
+1. 前 20% 篇幅内自然承接上章章末钩子：未完成的动作/对话/悬念直接续写，禁止另起炉灶或时间跳跃开场；禁止复述或重新介绍上章已交代的设定与人物信息（承接细则见上方【L2 上一章全文】用途声明①-④）；若上章结尾（见 L2 末段）与本章节拍表冲突，以上章真实结尾为准。
+（v1.0.24x：原第 2 条"时间锚"删除——时间承接细则统一收拢至系统第 10 条【时间锚铁律】单一权威，本章具体时点数据见上方 ob2「时间承接」行；原第 5 条"开场方式菜单重述 + 首字符禁人名"删除——菜单以 ob2【本张开场方式】为唯一出处，"首字符禁人名"与章首铁律③「人物开句可用」冲突；三成占比 ob2 已含。）
 `);
       }
     }
@@ -11655,32 +12492,124 @@ ${ob2.join('\n')}
   }
   parts.push(boundary);
   // v247/926-Q1：发挥空间条款——让 AI 知道新东西有归宿（新实体自动入典），与承接约束形成收放平衡
-  parts.push('【发挥空间】在不违背上一章承接、本章主线与标题的前提下，鼓励引入推进剧情所需的新人物、新线索、新细节——新实体将自动收录进万物词典，后续章节自动沿用。');
+  // v1.0.294：正文不再自行回填词典（收编统一交给词典充实/正文收编环节）；本章新出现的「有名有台词/有戏份」角色在章末【本章出场人物】登记供后续收编，一次性氛围路人仍仅现场点缀、不入词典
+  parts.push('【发挥空间】在不违背上一章承接、本章主线与标题的前提下，可依剧情引入新人物、新线索、新细节：词典已有名一律取用保持一致；本章新出现、且"有名有台词/有戏份"的角色，写出来后统一登记到章末【本章出场人物】（供后续「正文收编」环节自动收进词典，正文自身不直接回填万物词典）；仅一句台词、一个镜头、一个场景的氛围路人/小地名/小专名，允许现场随手点缀、不入词典、点到即收（见正文【临时闲人】段），切忌每章机械化凑数。');
   parts.push(USER_PRIO_BILL);
   if(opt.advice) parts.push(`【人工干预要求（用户指定 · 第二优先）】\n${opt.advice}`);
-  // v1.0.173：末位篇幅契约 → 分段达成契约（采用图片策略：模型擅长把有界小节写满、不擅长把一整章自我拉长）。
-  // 把"一次写足一整章"改为"强制按节拍逐段填满"：先按微拍配比给每拍分配有界目标字数，
-  // 要求每拍以（节拍N：拍名）括号小标起段、写足该拍后才进入下一拍，全部拍写足才算交付。
-  // 仍放在 user 提示词最末端（紧挨生成的最后 token，模型最优先服从）；小标写法与 splitChapterOutput 的去标记正则严格一致，落库时被剥掉、不留结构残留。
+  // v1.0.268：从「逐拍分段写满」改为「整体连续成篇」。
+  // 原【分段达成契约】强制每拍加（节拍N：拍名）小标并逐拍写满足字，与系统提示词"全章连续流动、节拍可融合"方向相悖，
+  // 且位于 user 提示词最末、最优先服从，导致逐拍扩写：节拍少（如双拍）时首拍"长段铺垫"被当成整章自写自满，
+  // 第二拍被迫倒回更早进度续写，产生"已去图书馆回家 / 第二拍才决定去图书馆"的时序倒错。
   const _lb = chapterLenBounds() || {floor:2700, lo:3000, hi:3600};
   const _lo = (_lb.lo>0?Math.round(+_lb.lo):3000), _hi = (_lb.hi>0?Math.round(+_lb.hi):3600);
   const _cap = Math.max(_hi, Math.round(_hi*1.15));   // 硬顶：成文绝不可超过（防止把 3000 的目标拖成 1.6w）
-  const _segs = segWordTargets(_lb, plan);            // 每拍下限：合计 = 目标 lo，保证达标
-  const _segScale = _segs.length ? (_cap / Math.max(1,_lo)) : 1;   // 每拍上限比例
-  const _segHead = _segs.length
-    ? `已把目标预分配到各拍（各拍下限合计 ${_lo.toLocaleString()} 字左右）。请逐拍完成：`
-    : `本章无节拍表，请分段铺满全章、落进目标区间，禁止一口气推完再回头补字数。`;
-  const _segLines = _segs.length
-    ? '\n　' + _segs.map(seg => `（节拍${seg.k+1}：${seg.label}）→ 该拍写足约 ${seg.t.toLocaleString()} 字（上限约 ${Math.round(seg.t*_segScale).toLocaleString()} 字）`).join('\n　')
-    : '';
-  parts.push(`【分段达成契约 · 逐拍写满、达标即收束】全章正文字数必须 ≥ ${_lb.floor.toLocaleString()} 字（目标 ${_lo.toLocaleString()}—${_hi.toLocaleString()} 字，硬顶 ${_cap.toLocaleString()} 字，超过即判超长）。${_segHead}${_segLines}
-【逐拍写法】
-1. 每拍各写一个"有起承、场景/动作/对话/心理完整"的有界小节（小节内容正在当下场景里实时展开，不是转述梗概）：第一拍从上一章结尾/开篇任务自然承接，后续每拍由上拍结尾的剧情顺势续写，整章保持一条连续流动的叙事线、禁止硬跳切。
-2. 进入每一拍时，在正文中单独起一行写出该拍的分段小标，格式严格为（节拍N：拍名），例如（节拍1：开篇铺垫）——它是长度自检锚点，原样单独成行、不得藏进句子里，成文后由程序自动剥落。
-3. 每一拍到"把这一拍的内容自然讲完整"即可推进下一拍；写足上方"约"字数就收束本拍，禁止为凑字数把一句话扩写成一整页、禁止对同一拍无限铺陈（否则只会在 3000—3600 的目标外越拖越长）。
-4. 达标保障：未达到 ${_lb.floor.toLocaleString()} 字前不得输出"收束/尾声/结尾/本章完"式结语；一旦全章达到 ${_hi.toLocaleString()} 字左右（上限 ${_cap.toLocaleString()} 字），应立即自然收束本章并交付，不要为了"再多写点"继续追加内容。`);
+  parts.push(`【篇幅契约 · 覆盖各段事件、整体连续成篇、达标即收束】全章正文字数必须 ≥ ${_lb.floor.toLocaleString()} 字（目标 ${_lo.toLocaleString()}—${_hi.toLocaleString()} 字，硬顶 ${_cap.toLocaleString()} 字，超过即判超长）。
+【成篇写法】
+1. 节拍表里每一段节拍事件都必须写到、不得遗漏（覆盖事件），但它们不是互不相干的独立小节，而是本章内按因果连续推进的故事小节：写正文时由上拍的剧情自然引到下拍，相邻节拍之间必须有自然的衔接与过渡（剧情因果驱动、情绪递进、动作延续，或时间/空间切换的过渡句），只要叙事连续，相邻节拍允许融合在同一场景内连续推进，不必每拍单起一段、各换一个场景。禁止硬跳切、禁止把某段事件单独拎出来另起一段自写自满，再倒回去从更早的进度续写（那样会造成时序倒错、剧情反复）。
+2. 以目标约 ${_lo.toLocaleString()} 字为全章落点，让情节从本章承接点持续推进到章末钩子/收束；正文直接以小说段落呈现，不写任何节拍小标、不做逐拍分段的拼装痕迹。
+3. 达标即自然收束：未达 ${_lb.floor.toLocaleString()} 字前不得输出"收束/尾声/结尾/本章完"式结语；一旦全章达到 ${_hi.toLocaleString()} 字左右（上限 ${_cap.toLocaleString()} 字），应立即自然收束本章并交付，不要为了"再多写点"继续追加内容。`);
   // 4.8 旗舰版（板块一-2）：按 24000 字符预算裁剪上下文，防止超上下文窗口
-  return budgetChapterContext(parts, 24000).join('\n\n');
+  // v1.0.204 阶段4/4.4：词典不可裁红线——若预算器置红标（词典+节拍完整保留但仍超），提示提升上限（不静默降质）
+  _dictRedlineOver = false;
+  const _b = budgetChapterContext(parts, 24000);
+  if(_dictRedlineOver){ setTimeout(()=>toast('设定词典(含关系/关联表)与节拍为不可裁红线，已完整保留；当前上下文超出建议预算，若频繁出现请提高输出上限。'), 0); }
+  return _b.join('\n\n');
+}
+
+// v1.0.204 阶段4/4.4：正文 L3 的「万物词典·全量名单 + 出场全字段」块（替代原按章相关词典）。
+// 全量名单不可裁（词典=红线）；全字段 10 维只给 主角/本章出场人物，其余人物给简表（身份+一句话）。
+function fullGlossaryChapterBlock(i){
+  const o = state.outline;
+  const g = (o && o.glossary) || {};
+  const chars = Array.isArray(g.characters) ? g.characters : [];
+  const places = Array.isArray(g.places) ? g.places : [];
+  const props = Array.isArray(g.propernouns) ? g.propernouns : [];
+  if(!chars.length && !places.length && !props.length) return '';
+  const protagonist = (o && o.navBeacon && o.navBeacon.protagonist) ? String(o.navBeacon.protagonist).split(/[，,：:（(]/)[0].trim() : '';
+  const appearing = new Set();
+  (relevantGlossaryForChapter(i).characters||[]).forEach(c=>{ const n=String(c&&c.name||'').trim(); if(n) appearing.add(n); });
+  if(protagonist) appearing.add(protagonist);
+  const lines = [];
+  // v1.0.243/910-⑵ 接线：出场人物改用 fmtCharFullFields（7 字段上桌，与「人设防火墙」审计字段对齐；空值/未知不输出）；未出场人物保持简表
+  const charLines = chars.map(c=>{
+    const n = String(c&&c.name||'').trim(); if(!n) return '';
+    if(appearing.has(n)){
+      return `\n· ${fmtCharFullFields(c).join('，')}`;
+    }
+    return `\n· ${n}（${(c&&c.identity)||'人物'}）`;
+  }).filter(Boolean);
+  if(charLines.length) lines.push(`人物（全量名单；●=主角/本章出场·给全部7字段）：${charLines.join('')}`);
+  const placeLines = places.map(p=>{ const n=String(p&&p.name||'').trim(); if(!n) return ''; return `\n· ${n}（${(p&&p.type)||''}）${p&&p.note?`：${p.note}`:''}`; }).filter(Boolean);
+  if(placeLines.length) lines.push(`地名（全量）：${placeLines.join('')}`);
+  const propLines = props.map(p=>{ const n=String(p&&p.name||'').trim(); if(!n) return ''; return `\n· ${n}${p&&p.note?`：${p.note}`:''}`; }).filter(Boolean);
+  if(propLines.length) lines.push(`专名（全量）：${propLines.join('')}`);
+  // v1.0.243：人物关系/地名关联/专名关联三表不再在此全量注入——与 fog 迷雾版双写属纯冗余，且全量关系表本身会提前剧透；
+  // 三表改由 fogWorldInject 独家承担「按本章出场实体过滤的迷雾版」（同样受预算红线保护，绝不丢失）。
+  if(Array.isArray(g._worldRules) && g._worldRules.length){
+    lines.push(`世界观规则（全量·正文须遵守不违背）：${g._worldRules.map(fmtWR).join('；')}`);
+  }
+  // v1.0.274 词典充实：把「路人 / 龙套」轻量清单注入正文 L3——只说一句台词/只露一个镜头的闲人，正文按场景就近选用登场
+  const wkOnes = (g.walkons||[]).filter(w=>String(w&&w.name||'').trim()).map(w=>`${String(w.name).trim()}${String(w&&w.note||'').trim()?`（${String(w.note).trim()}）`:''}`).join('、');
+  if(wkOnes) lines.push(`路人龙套（词典充实闲人，可选用登场：只一句台词/一个镜头即可，无需九维）：${wkOnes}`);
+  // v1.0.275 正文自主点缀：放开「不入词典」的临时路人/小地名/小专名——只一句台词/一个镜头即止，点到即收；非机械化、非本章主任务
+  lines.push(`【临时闲人·小地名·小专名（允许现场点缀，不入词典）】当场景自然地需要店小二、摊贩、车夫、茶客、围观者、更夫、报信者这类只出现这一次、只说一两句或只露一眼的过场闲人，或某个只此一现、日后不再提起的小地名/小专名时，可现场信手自拟一个名字，写一句便止、点到即收：只作氛围点缀，不写主持戏份、不给任何设定交代、更不得写入万物词典。硬约束：①仅限真实"过场/一次性泛称"——凡有台词作用、会再登场、或要推动情节的人地专名，一律回到本词典取用，严禁自立核心名绕开词典；②不得与本词典或上方【路人龙套】已有人名/地名/专名重名；③非机械化——这是剧情的自然点缀，不是每章必须完成的任务，切忌刻意凑数、生硬点名或反复秀存在感，多数章节甚至无需新增。`);
+  return '请全程遵循本设定词典（有台词/有戏份或反复出现的人地专名一律取用本词典、保持一致，禁止自造核心名；仅作氛围的临时路人/小地名/小专名允许现场点缀一次、不入词典，见上【临时闲人】段，非机械化凑数；人物关系/性格/地域往来/专名用法与世界规则与此保持统一）：\n' + lines.join('\n');
+}
+
+// v1.0.312（点名兑换制·第二刀）：闭卷时正文只读「本章出场名单」内人物的档案卡，名单外一律不供给、不可写、不可提——封死"正文翻全量词典提前剧透"。
+// 名单来源：老师教案里有「本章出场名单」字段则解析其点名；无名单则保守回退为只给主角一人（宁缺勿剧透）。
+function rollCallGlossary(i){
+  const o = state.outline;
+  const g = (o && o.glossary) || {};
+  const chars = Array.isArray(g.characters) ? g.characters : [];
+  const places = Array.isArray(g.places) ? g.places : [];
+  const props = Array.isArray(g.propernouns) ? g.propernouns : [];
+  if(!chars.length && !places.length && !props.length) return '';
+  const lesson = teacherChapterPlan(i);
+  const names = new Set();
+  // 1) 从教案「本章出场名单」解析点名人物
+  let named = false;
+  const re = /本章出场名单[：:][^\n]*/;
+  if(lesson && re.test(lesson)){
+    const seg = lesson.match(re)[0].replace(/^本章出场名单[：:]/, '').trim();
+    const namedArr = seg.replace(/[，,、；;。]+/g, '|').split('|').map(s=>s.trim()).filter(s=>s && s.length <= 8);
+    if(namedArr.length){
+      named = true;
+      namedArr.forEach(n=>{
+        // 别名归一：把名单名尝试落到词典现名（若不完全匹配则原样保留，交由下方包含匹配）
+        names.add(n);
+        // 兼容别名闪现：若词典里有以此作别名的人物，把其现名加入
+        const aliasMap = (typeof glossaryAliases==='function') ? glossaryAliases() : new Map();
+        if(aliasMap && aliasMap.size){ aliasMap.forEach((cur, al)=>{ if(String(al)===n) names.add(cur); }); }
+      });
+    }
+  }
+  // 2) 主角保护
+  if(o.navBeacon && o.navBeacon.protagonist){
+    const name = String(o.navBeacon.protagonist).split(/[，,：:（(]/)[0].trim();
+    if(name) names.add(name);
+  }
+  // 3) 兜底：开卷点名的名单若无一人命中词典 → 强行留主角（由上面主角保护保证），并把名单里含词典名的也纳入
+  const matched = new Set();
+  chars.forEach(c=>{ const n=String(c&&c.name||'').trim(); if(!n) return; if(names.has(n) || [...names].some(x=>n.includes(x)||x.includes(n))) matched.add(n); });
+  if(!named && matched.size===0 && o.navBeacon && o.navBeacon.protagonist){
+    const pn = String(o.navBeacon.protagonist).split(/[，,：:（(]/)[0].trim();
+    if(pn) matched.add(pn);
+  }
+  const lines = [];
+  if(matched.size || places.length || props.length){
+    const charLines = chars.map(c=>{
+      const n = String(c&&c.name||'').trim(); if(!n) return '';
+      if(matched.has(n)) return `\n· ${fmtCharFullFields(c).join('，')}`;
+      return '';
+    }).filter(Boolean);
+    if(charLines.length) lines.push(`人物（只读本章出场名单档案卡，名单外角色不供给）：${charLines.join('')}`);
+    lines.push(`【本章出场名单（老师点名·正文唯一可用人物范围）】${named ? [...names].join('、') : '（教案未点名，以主角为准）'}`);
+  }
+  if(lines.length){
+    return '【闭卷·点名制设定（唯一人物/设定来源，只读）：本章只为「本章出场名单」内的人地专名供给档案卡；名单外任何人/地/专名一律不可写、不可提、不可依靠参照。人物/地名/专名的一致性以此为准，但剧情走向、时间、承接一律以教案为准，设定不决定剧情。】\n' + lines.join('\n');
+  }
+  return '';
 }
 
 // 4.5：为第 i 章（0 基）生成相关词典，只返回与本周相关的条目 + 主角条目
@@ -11692,11 +12621,9 @@ function relevantGlossaryForChapter(i){
   if(o._relGlossCache && o._relGlossCache[i] && !o._relGlossCache[i]._stale) return o._relGlossCache[i];
   const g = o.glossary || {};
   const plan = (Array.isArray(o.chapterPlans) && o.chapterPlans[i]) || {};
-  const beats = Array.isArray(plan.beats) ? plan.beats : [];
   const prev = i > 0 ? state.chapters[i-1] : null;
-  // 收集关键词
+  // 收集关键词（v1.0.285：旧 JSON beats 数组已退役，仅取计划级 requiredEntities）
   const keywords = new Set();
-  beats.forEach(b => (b.requiredEntities||[]).forEach(e => keywords.add(String(e).trim())));
   (plan.requiredEntities||[]).forEach(e => keywords.add(String(e).trim()));
   // v244/914-⑥：曾用名归一——关键词含旧名（同步漏网/旧规划）时把现名一并加入，确保用户改名后的新名条目上桌
   const _aliasMap = glossaryAliases();
@@ -11750,23 +12677,55 @@ function relevantGlossaryForChapter(i){
 }
 function escapeRegExp(s){ return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
 
+// v1.0.211：章节正文「世界情报·迷雾版」选择性注入——世界观规则全量必给（对每一章都全文给出），
+// 人物关系表/地名关联表/专名关联表按「迷雾」只注入与本章已出场实体直接相关的条目，
+// 其余留给后续章节自然揭示，避免本章正文 AI 提前剧透尚未展示的关系网。
+function fogWorldInject(i){
+  const o = state.outline; if(!o) return '';
+  const g = o.glossary || {};
+  const seg = [];
+  // v1.0.24x：世界观规则不再重复注入——L3 设定词典已含「世界观规则（全量·正文须遵守不违背）」且为不可裁红线（budgetChapterContext 保护），
+  // 此处同源双写属纯冗余，移除；迷雾仅保留「揭示边界」职责。
+  // v1.0.243：人物关系/地名关联/专名关联三表的【唯一注入方】——L3 不再全量注入（双写冗余 + 全量关系表提前剧透）；
+  // 此处按本章出场实体过滤（迷雾版），与 L3 同受预算红线保护（裁剪仅动 L4/简介/衔接/L1，绝不砍本块），信息零丢失。
+  // 迷雾依据：本章已出场实体（relevantGlossaryForChapter 反哺）
+  const rg = relevantGlossaryForChapter(i);
+  const mk = k => new Set((rg[k]||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
+  const chars = mk('characters'), pls = mk('places'), prps = mk('propernouns');
+  // 关系/关联表：仅保留两端至少一端在本章出场的条目（迷雾）
+  const rel = (g._relationshipTable||[]).filter(x=> x && (chars.has(x.a)||chars.has(x.b)));
+  const pc  = (g._placeContacts||[]).filter(x=> x && (pls.has(x.from)||pls.has(x.to)));
+  const prc = (g._properContacts||[]).filter(x=> x && (prps.has(x.from)||prps.has(x.to)));
+  let any = false;
+  if(rel.length){ seg.push(`【人物关系表·迷雾】（仅本章已出场人物直接相关的关系，正文据此写、未揭示的不得提前写）\n${rel.map(x=>`${x.a} ←${x.relation||'？'}→ ${x.b}${x.note?`（${x.note}）`:''}`).join('\n')}`); any = true; }
+  if(pc.length){ seg.push(`【地名关联表·迷雾】（仅本章已出场地点直接相关的关联）\n${pc.map(x=>`${x.from} ↔ ${x.to}${x.relation?`（${x.relation}）`:''}${x.note?`：${x.note}`:''}`).join('\n')}`); any = true; }
+  if(prc.length){ seg.push(`【专名关联表·迷雾】（仅本章已出场专名直接相关的关联）\n${prc.map(x=>`${x.from} ↔ ${x.to}${x.relation?`（${x.relation}）`:''}${x.note?`：${x.note}`:''}`).join('\n')}`); any = true; }
+  if(any){
+    const fogNote = `\n（注：上述关系/关联为「迷雾」版，只列出与本章已出场实体直接相关的部分；未在本章出现或尚未揭示的关系，正文一律不得提前书写、留待后续章节自然展开，以免提前剧透。）`;
+    return `${seg.join('\n')}${fogNote}`;
+  }
+  return '';
+}
+
 // v243/910-⑵：人物条目 7 字段上桌（对齐人设防火墙审计的 7 字段）——此前生成只见 identity/age/gender，
 // 审计却按 appearance/hobby/relation/trait 全量判漂移，供给/审计不对称。空值与「未知」不输出，不浪费 token。
+// v1.0.243：提取为 fmtCharFullFields 供 L3（fullGlossaryChapterBlock 出场人物行）与 formatRelevantGlossary 共用，消除重复实现。
+function fmtCharFullFields(c){
+  const segs = [String(c.name||'')];
+  if(c.identity && c.identity !== '未知') segs.push('身份:'+c.identity);
+  if(c.age && c.age !== '未知') segs.push(String(c.age).replace(/岁$/,'')+'岁');
+  if(c.gender && c.gender !== '未知') segs.push(c.gender);
+  if(c.appearance && c.appearance !== '未知') segs.push('外貌:'+c.appearance);
+  if(c.trait && c.trait !== '未知') segs.push('性格:'+c.trait);
+  if(c.hobby && c.hobby !== '未知') segs.push('爱好:'+c.hobby);
+  if(c.catchphrase && c.catchphrase !== '未知' && c.catchphrase !== '无') segs.push('口头禅:'+c.catchphrase);
+  if(c.relation && c.relation !== '未知') segs.push('关系:'+c.relation);
+  return segs;
+}
 function formatRelevantGlossary(rg){
   const lines = [];
   if(rg.characters && rg.characters.length){
-    lines.push('人物：'+rg.characters.map(c=>{
-      const segs = [String(c.name||'')];
-      if(c.identity && c.identity !== '未知') segs.push('身份:'+c.identity);
-      if(c.age && c.age !== '未知') segs.push(String(c.age).replace(/岁$/,'')+'岁');
-      if(c.gender && c.gender !== '未知') segs.push(c.gender);
-      if(c.appearance && c.appearance !== '未知') segs.push('外貌:'+c.appearance);
-      if(c.trait && c.trait !== '未知') segs.push('性格:'+c.trait);
-      if(c.hobby && c.hobby !== '未知') segs.push('爱好:'+c.hobby);
-      if(c.mannerism && c.mannerism !== '未知' && c.mannerism !== '无') segs.push('小动作/口头禅:'+c.mannerism);
-      if(c.relation && c.relation !== '未知') segs.push('关系:'+c.relation);
-      return '（'+segs.join('，')+'）';
-    }).join(''));
+    lines.push('人物：'+rg.characters.map(c=>'（'+fmtCharFullFields(c).join('，')+'）').join(''));
   }
   if(rg.places && rg.places.length) lines.push('地点：'+rg.places.map(p=>`${p.name}${p.note?'（'+p.note+'）':''}`).join('、'));
   if(rg.propernouns && rg.propernouns.length) lines.push('专名：'+rg.propernouns.map(p=>`${p.name}${p.note?'（'+p.note+'）':''}`).join('、'));
@@ -11781,31 +12740,10 @@ function longestCommonPrefix(a, b){
   return a.slice(0, i);
 }
 
-function avgSentenceLength(text){
-  const sents = text.split(/[。！？；\n]+/).filter(s => s.trim());
-  if(!sents.length) return 0;
-  const total = sents.reduce((sum, s) => sum + (s.match(/[\u4e00-\u9fa5]/g)||[]).length, 0);
-  return total / sents.length;
-}
-
-// v225/P3 重写：对话占比 = 成对引号内的对话汉字数 / 全文汉字数（弃用"每对引号≈30字"的假估计——旧正则字符类只含直引号，不含中文弯引号 U+201C/U+201D，正文用弯引号时统计恒 0）
-function dialogueRatio(text){
-  const t = String(text||'');
-  let dia = 0;
-  // 简体中文主用弯引号；兼容直角引号与半角直引号。『』常嵌套在「」内，先剥外层再算内层，防重复计数
-  [/“([^“”]*)”/g, /「([^「」]*)」/g, /"([^"]*)"/g, /'([^']*)'/g].forEach(re => {
-    let m; while((m = re.exec(t)) !== null) dia += (m[1].match(/[\u4e00-\u9fa5]/g)||[]).length;
-  });
-  const inner = t.replace(/“[^“”]*”/g, '　').replace(/「[^「」]*」/g, '　');
-  let m2; while((m2 = /『([^『』]*)』/g.exec(inner)) !== null) dia += (m2[1].match(/[\u4e00-\u9fa5]/g)||[]).length;
-  const total = (t.match(/[\u4e00-\u9fa5]/g)||[]).length;
-  return total ? Math.min(1, dia / total) : 0;
-}
-
 /* =========================================================
  * 4.5 记忆与摘要层：滚动摘要（每 5 章 400 字，只保留最近 3 个区块）
  * ========================================================= */
-const ROLLING_SUMMARY_SYS = `你是长篇小说滚动摘要助手。请把以下连续若干章的剧情压缩成一份 300-400 字的摘要，保留：主线推进、关键人物状态变化、未收束伏笔、情绪转折。不要细节描写，不要环境铺陈。`;
+const ROLLING_SUMMARY_SYS = `你是长篇小说滚动摘要助手。请把以下连续若干章的剧情压缩成一份 300-400 字的摘要，保留：主线推进、关键人物状态变化、情绪转折。不要细节描写，不要环境铺陈。`;   // v1.0.280：未收束伏笔已随伏笔网移除
 
 function buildRollingSummary(i){
   if(i <= 0) return '';
@@ -11853,35 +12791,12 @@ function invalidateChapterMemory(i){
     Object.keys(o._relGlossCache).forEach(k => { if(+k >= i) o._relGlossCache[k]._stale = true; });
   }
   persist();
-  // v228/P5-⑤：剧情贴合软审计（仅 toast 提示、不阻断、不入修复队列；本函数 4 个调用点均在正文落库成功之后）
-  auditChapterAdherence(i);
-}
-
-// v228/P5-⑤：剧情贴合软审计——节拍 event 的信息二元组在正文中的命中率，<60% 仅 toast 提示「可能跑偏」，
-// 不阻断、不入修复队列（先观察误报率，后续可再收紧）。函数声明提升，供 invalidateChapterMemory 调用。
-function auditChapterAdherence(i){
-  try{
-    const text = String((state.chapters && state.chapters[i] && state.chapters[i].content)||'');
-    const plan = (state.outline && state.outline.chapterPlans && state.outline.chapterPlans[i]) || {};
-    if(!text.trim() || !Array.isArray(plan.beats) || plan.beats.length < beatCnt()) return;
-    const FUNC = /[的了是在和与也被把又就还着有个这那不上为到说得很]/;   // 滤掉含虚词的跨词二元组
-    const kws = new Set();
-    plan.beats.forEach(b=>{
-      const ev = String((b && b.event)||'');
-      (ev.match(/[\u4e00-\u9fa5a-zA-Z0-9]{2,10}/g)||[]).forEach(run=>{
-        for(let p=0; p+1<run.length; p++){ const bg = run.slice(p, p+2); if(!FUNC.test(bg)) kws.add(bg); }
-      });
-    });
-    if(kws.size < 6) return;   // 关键词太少不评估，避免小样本噪声
-    let hit = 0; kws.forEach(w=>{ if(text.includes(w)) hit++; });
-    const ratio = hit / kws.size;
-    if(ratio < 0.6) toast(`⚠️ 第 ${i+1} 章剧情贴合度偏低（约 ${Math.round(ratio*100)}%），建议对照节拍表检查是否跑偏（仅提示，不阻断）`);
-  }catch(e){ /* 软审计绝不影响主流程 */ }
+  // v1.0.24x：剧情贴合软审计（auditChapterAdherence）已按用户决定关闭——约束与注入已足够，机械后验易误伤正文；函数体一并移除。
 }
 
 // v228/P5：逐章细摘要（200-300 字/章）。与 5 章一块的粗摘要互补——粗块在第 5 章前完全缺位（旧版开头几章记忆真空，
 // 正是「第三章开始乱来」的根因），细摘要从第 2 章起即有。失败静默、下次触发再续，绝不阻塞写作主流程。
-const CHAPTER_DIGEST_SYS = `你是长篇小说剧情摘要助手。把这一章压缩成 200-300 字的剧情纪要：本章发生的事件、人物状态变化、新出现的人/物/设定、留下的伏笔。只记事实，不写景不抒情。`;
+const CHAPTER_DIGEST_SYS = `你是长篇小说剧情摘要助手。把这一章压缩成 200-300 字的剧情纪要：本章发生的事件、人物状态变化、新出现的人/物/设定。只记事实，不写景不抒情。`;   // v1.0.280：留下的伏笔已随伏笔网移除
 async function ensureChapterDigests(onlyIdx){
   const o = state.outline; if(!o) return;
   if(!Array.isArray(o._chapterDigests)) o._chapterDigests = [];
@@ -11912,12 +12827,9 @@ async function generateRollingSummaries(){
     const key = `${start}-${end}`;
     if(o._rollingSummaries.some(s => s.key === key)) continue;
     const bodies = state.chapters.slice(start-1, end).map(c => c.content).join('\n\n');
-    // 4.8 旗舰版（P2）：滚动摘要生成器使用 AIBus.L4——把未收束伏笔作为参考注入，确保摘要不丢失关键事件
-    const _l4 = AIBus.get('chapter', { idx: end-1 }).L4_context;
-    const _hooks = (_l4 && Array.isArray(_l4.unresolvedHooks) && _l4.unresolvedHooks.length)
-      ? '【未收束伏笔（摘要须保留相关线索）】\n' + _l4.unresolvedHooks.map(h=>h.text||'').join('、') + '\n\n' : '';
+    // v1.0.280：未收束伏笔参考注入（AIBus.L4 管线）已随伏笔网移除
     try{
-      const res = await callDeepSeek(ROLLING_SUMMARY_SYS, _hooks + bodies, {maxTokens: clampMaxTokens('summary'), temperature: resolveActiveSpec().rollingTemp, topP: 0.5, taskKey:'rolling'});   // 4.8 旗舰版（板块二-2/3）：摘要类窄采样 + 限长
+      const res = await callDeepSeek(ROLLING_SUMMARY_SYS, bodies, {maxTokens: clampMaxTokens('summary'), temperature: resolveActiveSpec().rollingTemp, topP: 0.5, taskKey:'rolling'});   // 4.8 旗舰版（板块二-2/3）：摘要类窄采样 + 限长
       o._rollingSummaries.push({key, text: String(res.text||'').trim().slice(0,500)});
       persist();
     }catch(e){ /* 静默失败 */ }
@@ -12044,8 +12956,8 @@ function openChapterRegenPanel(i){
   // v2.0 本章风格覆盖 + 双风格对比的局部状态（一次性，不持久化）
   const rpOv = { on:false, tags:[] };
   const rpCmpB = { tags:[] };
-  let rpOvApplied = null;     // 覆盖块「应用」确认快照 {on,tags,intensity}；null=未确认（未点应用则重生成不生效）
-  let rpCmpBApplied = null;   // 对比块「应用」确认快照 {tags,intensity}；null=未确认（未点应用则 B 稿不生效）
+  let rpOvApplied = null;     // 覆盖块「应用」确认快照 {on,tags}；null=未确认（未点应用则重生成不生效）
+  let rpCmpBApplied = null;   // 对比块「应用」确认快照 {tags}；null=未确认（未点应用则 B 稿不生效）
   const ov = document.createElement('div');
   ov.id = 'regenPanel'; ov.className = 'gs-overlay';
   ov.setAttribute('data-cs', wsColorSchemeId());   // v10.19 让重生成弹窗内 chips 跟随所选配色
@@ -12163,7 +13075,7 @@ function openChapterRegenPanel(i){
     refreshRpCmpApply();
     toast('B 稿对比风格已应用，生成 A/B 两稿时生效');
   };
-  // v2.0 本章覆盖：radio 切换 + chips + 浓度（任一改动后清空确认态，须重新点「应用」）
+  // v2.0 本章覆盖：radio 切换 + chips（任一改动后清空确认态，须重新点「应用」）
   ov.querySelectorAll('[data-rpov-val]').forEach(el=> el.onclick = ()=>{
   ov.querySelectorAll('[data-rpov-val]').forEach(x=> x.classList.remove('active'));
   el.classList.add('active');
@@ -12248,7 +13160,7 @@ function buildAiRefineCtx(i){
     if(c.gender) parts.push('性别:'+c.gender);
     if(c.appearance) parts.push('外貌:'+c.appearance);
     if(c.hobby) parts.push('爱好:'+c.hobby);
-    if(c.mannerism && c.mannerism !== '无') parts.push('小动作/口头禅:'+c.mannerism);
+    if(c.catchphrase && c.catchphrase !== '无') parts.push('口头禅:'+c.catchphrase);
     if(c.relation) parts.push('关系:'+c.relation);
     if(c.trait) parts.push('性格:'+c.trait);
     return (c.name||'')+(parts.length?'（'+parts.join('；')+'）':'');
@@ -12397,7 +13309,7 @@ function closeComparePanel(){ const p=$('#cmpPanel'); if(p) p.remove(); }
 
 // 单章生成（🔄 重生成，决策5：只重写目标章，注入上章结尾+下章概要+全局词典）
 // opt.advice：可选的人工干预要求（建议3·此轮），随 buildChapterUser 注入模型
-// opt.styleOverride：可选的本章风格覆盖 {tags,intensity}（v2.0：仅本章生效，一次性消费）
+// opt.styleOverride：可选的本章风格覆盖 {tags}（v2.0：仅本章生效，一次性消费）
 async function genOneChapter(i, btn, opt={}){
   chState[i] = 'generating'; state.generating = true; patchChapter(i);
   if(btn) busy(btn,true,'生成中…');
@@ -12418,12 +13330,9 @@ async function genOneChapter(i, btn, opt={}){
   const st = $('#chStatus');
   const setPhase = msg => { if(st){ st.className='status'; st.textContent = `第 ${i+1}/${state.chapters.length} 章：${msg||''}`; } };
   setPhase('准备中…');
-  // v247/923-Q7A（拍板）：极速连点幂等保护——上一章的词典提取若在飞则等它完成（45s 超时兜底不卡死），
-  // 并补算上一章细摘要（幂等，已有秒回）。正常操作节奏零等待，仅连点时短暂等待，保证本章 L2/L3 完整。
+  // v274：词典提取已随回填移除，不再等待上一章入典；仅补算上一章细摘要（幂等），保证本章 L2/L3 完整。
   if(i > 0){
     try{
-      const _p = (state._extractInFlight || {})[i-1];
-      if(_p){ setPhase('等待上一章词典同步…'); await Promise.race([_p, new Promise(r => setTimeout(r, 45000))]); }
       setPhase('核对上一章摘要…');
       await ensureChapterDigests(i - 1);
     }catch(e){ /* 同步失败不阻断生成，既有兜底通道（尾段原文/批尾补算）接管 */ }
@@ -12464,7 +13373,7 @@ async function genOneChapter(i, btn, opt={}){
     if(e.name==='AbortError'){ if(st) st.textContent = '第'+(i+1)+'章已停止生成'; }
     else { chState[i] = 'error'; patchChapter(i); if(st){ st.className='status err'; st.textContent = '第'+(i+1)+'章生成失败：'+e.message; } toast('第'+(i+1)+'章生成失败：'+e.message); }
   }
-  finally{ hideStopBtn(); state.generating = false; if(btn) busy(btn,false); patchChapter(i); extractGlossaryFromChapter(i); autoExtractGlossary(); autoUpdateSubplots(); autoUpdateTimeAnchors(); }   // v225/P2/P5：逐章提取入典 + 全量兜底；正文回填标题已取消
+  finally{ hideStopBtn(); state.generating = false; if(btn) busy(btn,false); patchChapter(i); autoUpdateSubplots(); autoUpdateTimeAnchors(); }   // v274：词典不再从正文回填（改由第5格「词典充实」提前喂饱）；副线 / 时间锚保留
 }
 
 // 一次写 2 章（v10）：由「一次请求连写两章再切分」改为逐章顺序生成——每章独立一个请求，
@@ -12490,7 +13399,6 @@ async function genTwoChapters(pairStart){
     // 4.8 旗舰版（板块一-1）：重写成功后失效旧记忆层
     invalidateChapterMemory(idx);
   }
-  extractGlossaryFromChapter(pairStart); extractGlossaryFromChapter(pairStart+1);   // v225/P2：两章正文落库即提取入典（fire-and-forget）
   generateRollingSummaries().catch(()=>{});   // v228/P5：两章路径同样触发记忆层补齐（与其他生成路径口径一致）
 }
 
@@ -12555,8 +13463,7 @@ async function genNChapters(start, n){
         invalidateChapterMemory(idx);
         chState[idx] = 'done';
         patchChapter(idx);
-        // v246/920-⑥（方案三拍板）：批内章间同步——本章新实体入典 + 上一章细摘要就位后，下一章的 L2/L3 才是完整形态
-        try{ await extractGlossaryFromChapter(idx); }catch(e){ /* 提取失败不阻塞批次，后续兜底通道可补 */ }
+        // v274：批内不再摘录本章新实体入典（词典改由第5格「词典充实」提前喂饱）；仅保留细摘要同步，下一章 L2/L3 内容更稳定
         if(idx > 0){ try{ await ensureChapterDigests(idx - 1); }catch(e){ /* 摘要失败不阻塞，批尾 generateRollingSummaries 再补 */ } }
         break;
       }catch(e){
@@ -12623,7 +13530,7 @@ async function continueAndFinalizeChapter(i, sourceNote){
     chState[i] = 'done';
     persist(); patchChapter(i); renderNarrativeEngineMenu();
     toast(`第 ${i+1} 章续写完成（${countWords(content).total.toLocaleString()} 字）`);
-    autoExtractGlossary(); autoUpdateSubplots(); autoUpdateTimeAnchors();
+    autoUpdateSubplots(); autoUpdateTimeAnchors();
     generateRollingSummaries().catch(()=>{});
   }catch(e){
     if(!(e && e.name === 'AbortError')) toast('续写失败：' + ((e&&e.message)||'未知错误'));
@@ -12695,7 +13602,7 @@ function bindRangeGen(){
       const _o = state.outline || {};
       const miss = [];
       (_o.chapters||[]).forEach((c,i)=>{ const p=(_o.chapterPlans||[])[i];
-        if(!p || !Array.isArray(p.beats) || p.beats.length<4) miss.push(i+1); });
+        if(!p || !String(p.beatsText||'').trim()) miss.push(i+1); });
       if(miss.length && !confirm(`第 ${miss.join('、')} 章缺节拍表，这些章将按大纲直接裸写。继续？`)) return;
     }
     btn.disabled = true; btn.textContent = '生成中…';
@@ -12708,7 +13615,7 @@ function bindRangeGen(){
       if(st) st.textContent = `❌ 生成失败`;
     }finally{
       btn.disabled = false; btn.textContent = '⚡ 区间生成';
-      autoExtractGlossary(); autoUpdateSubplots(); autoUpdateTimeAnchors();
+      autoUpdateSubplots(); autoUpdateTimeAnchors();
     }
   };
   validateClamp();
@@ -12724,7 +13631,7 @@ async function genManyChapters(count, fromStart){
     const _o = state.outline || {};
     const miss = [];
     (_o.chapters||[]).forEach((c,i)=>{ const p=(_o.chapterPlans||[])[i];
-      if(!p || !Array.isArray(p.beats) || p.beats.length<4) miss.push(i+1); });
+      if(!p || !String(p.beatsText||'').trim()) miss.push(i+1); });
     if(miss.length && !confirm(`第 ${miss.join('、')} 章缺节拍表，这些章将按大纲直接裸写。继续？`)) return;
   }
   const btn = $('#btnGenMany'); if(btn) busy(btn,true,'逐章生成中…');
@@ -12764,7 +13671,6 @@ async function genManyChapters(count, fromStart){
   }finally{
     state.generating = false; hideStopBtn();
     if(btn) busy(btn,false);
-    autoExtractGlossary();   // v8c 词典自动补全：本批成功后提取新实体入库（失败静默）
     autoUpdateSubplots();    // v1.0.113 副线追踪：本批成功后逐章吸收副线进度（失败静默）
     autoUpdateTimeAnchors(); // v1.0.175 时间锚：本批成功后逐章提取真实收尾时点（失败静默）
     if(isLong()) syncGenBatchControls();
@@ -12869,7 +13775,7 @@ async function genCharacters(){
   try{
     // P1-3 覆盖前快照
     if(state.characters && state.characters.length) pushAssetHist('characters', state.characters);
-    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.characterSys, '【完整故事】\n'+fullStoryText(), {taskKey:'assets'}));
+    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.characterSys, '【完整故事】\n'+fullStoryText(), {temperature: resolveActiveSpec().assetsTemp, taskKey:'assets'}));
     state.raw.characters = txt;
     const j = parseJson(txt);
     state.characters = j.characters || [];
@@ -12885,7 +13791,7 @@ async function genScenes(){
   try{
     // P1-3 覆盖前快照
     if(state.scenes && state.scenes.length) pushAssetHist('scenes', state.scenes);
-    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.sceneSys, '【完整故事】\n'+fullStoryText(), {taskKey:'assets'}));
+    const txt = unwrapAIResult(await callDeepSeek(PROMPTS.sceneSys, '【完整故事】\n'+fullStoryText(), {temperature: resolveActiveSpec().assetsTemp, taskKey:'assets'}));
     state.raw.scenes = txt;
     const j = parseJson(txt);
     state.scenes = (j.scenes || []).map(s=>{
@@ -12912,11 +13818,11 @@ async function genCover(){
   if(!o){ toast('先生成故事大纲'); busy(btn,false); return; }
   // 依据「是否含汉字书名」选择对应提示词体系
   const sys = state.coverWithTitle ? PROMPTS.coverSysTitle : PROMPTS.coverSysClean;
-  const user = `小说标题：${o.title}\n${outlineAnchorBlock()?outlineAnchorBlock()+'\n':''}小说简介：${o.logline}\n章节：${(o.chapters||[]).map(c=>c.title).join(' / ')}\n\n请为这部小说设计封面图的出图提示词。\n模式：${state.coverWithTitle?'包含书名汉字作为封面主体文字':'纯画面、无任何文字、预留书名留白'}`;
+  const user = `小说标题：${o.title}\n小说简介：${o.logline}\n章节：${(o.chapters||[]).map(c=>c.title).join(' / ')}\n\n请为这部小说设计封面图的出图提示词。\n模式：${state.coverWithTitle?'包含书名汉字作为封面主体文字':'纯画面、无任何文字、预留书名留白'}`;
   try{
     // P1-3 覆盖前快照
     if(state.coverPrompt) pushAssetHist('cover', state.coverPrompt);
-    const txt = unwrapAIResult(await callDeepSeek(sys, user, {taskKey:'assets'}));
+    const txt = unwrapAIResult(await callDeepSeek(sys, user, {temperature: resolveActiveSpec().assetsTemp, taskKey:'assets'}));
     state.coverPrompt = txt.trim();
     persist(); render();
     toast(state.coverWithTitle?'已生成含书名封面提示词':'已生成纯画面封面提示词');
@@ -12943,7 +13849,7 @@ async function genStoryboard(){
       const content = ch.content||'';
       const user = `【本章】第${i+1}章 ${ch.title||oc.title||''}\n本章正文：\n${content.slice(0,50000)}${content.length>50000?'…':''}\n\n${base}`;
       try{
-        const txt = unwrapAIResult(await callDeepSeek(PROMPTS.storyboardSys, user, {taskKey:'assets'}));
+        const txt = unwrapAIResult(await callDeepSeek(PROMPTS.storyboardSys, user, {temperature: resolveActiveSpec().assetsTemp, taskKey:'assets'}));
         const j = parseJson(txt);
         (j.shots||[]).forEach(s=>{
           s.章节 = i+1;
@@ -13208,14 +14114,14 @@ function importProjectFile(file){
   r.readAsText(file);
 }
 
-/* ===== 配色弹层（顶栏 🎨 颜色）：选择 / 删除 / 撤销 / 恢复全部 / 新建三色 v10.20 ===== */
+/* ===== 配色弹层（顶栏 🎨 颜色）：选择 / 删除 / 撤销 / 恢复全部 / 新建配色 v10.20 ===== */
 function wsColorToolbarHtml(){
   const undoN = wsUndoLog().length, rmB = wsRemovedBuiltin().length;
   return `<div class="ws-cs-toolbar">
     <button type="button" class="cs-tool" data-cs-undo ${undoN?'':'disabled'} title="撤销上一步删除">↩ 撤销</button>
     <button type="button" class="cs-tool" data-cs-restore ${rmB?'':'disabled'} title="仅恢复项目自带的 11 套内置配色（不影响你自建的配色）">↺ 恢复全部</button>
     <span class="ws-cs-spacer"></span>
-    <button type="button" class="cs-tool cs-tool-new" data-cs-new title="新建一套三色配色">＋ 新建配色</button>
+    <button type="button" class="cs-tool cs-tool-new" data-cs-new title="新建一套配色">＋ 新建配色</button>
   </div>`;
 }
 function wsColorGridHtml(){
@@ -13237,9 +14143,7 @@ function wsColorGridHtml(){
 function wsColorNewFormHtml(){
   return `<div id="wsCsForm" class="ws-cs-form hidden">
     <div class="ws-cs-form-row"><label>名称</label><input id="csName" class="cs-inp" type="text" maxlength="12" placeholder="例如：晚霞粉蓝"></div>
-    <div class="ws-cs-form-row"><label>上 · 标题</label><input id="csC0" class="cs-color" type="color" value="#e25a6a"></div>
-    <div class="ws-cs-form-row"><label>中 · 梗概</label><input id="csC1" class="cs-color" type="color" value="#5b8def"></div>
-    <div class="ws-cs-form-row"><label>下 · 章节</label><input id="csC2" class="cs-color" type="color" value="#3fc6a0"></div>
+    <div class="ws-cs-form-row"><label>章节 · 风格色</label><input id="csC0" class="cs-color" type="color" value="#3fc6a0"></div>
     <div class="ws-cs-form-ops">
       <button type="button" class="btn" data-cs-cancel>取消</button>
       <button type="button" class="btn primary" data-cs-confirm>确认新建</button>
@@ -13292,10 +14196,10 @@ function wsColorRestoreAll(){
 }
 function wsColorCreate(){
   const name=((($('#csName')||{}).value)||'').trim();
-  const c0=(($('#csC0')||{}).value)||'', c1=(($('#csC1')||{}).value)||'', c2=(($('#csC2')||{}).value)||'';
+  const c0=(($('#csC0')||{}).value)||'#3fc6a0';
   if(!name){ toast('请先填写配色名称'); return; }
   const c=getCfg(); const cs=wsColorCfgOf(c);
-  cs.custom=cs.custom.concat([{id:'cu_'+(Date.now()), name:name, c:[c0,c1,c2]}]);
+  cs.custom=cs.custom.concat([{id:'cu_'+(Date.now()), name:name, c:[c0]}]);
   saveCfg(c); rebuildCustomColorCss();
   const f=$('#wsCsForm'); if(f) f.classList.add('hidden');
   wsColorRepaint(); toast('已新建配色：'+name);
@@ -13321,9 +14225,7 @@ function openThemePanel(){
   // 同步高亮当前主题
   const cur = (document.documentElement.getAttribute('data-theme')) || 'dark';
   $$('.theme-btns .theme').forEach(b=> b.classList.toggle('active', b.dataset.theme===cur));
-  // v10.16 温度已移入主题面板：打开时回显当前配置
-  editCfg = JSON.parse(JSON.stringify(getCfg()));
-  echoTemps();
+  // v1.0.205 温度已并入「设置 → 各任务温度」，主题面板不再回显温度
   p.classList.remove('hidden');
 }
 function closeThemePanel(){ const p=$('#themePanel'); if(p) p.classList.add('hidden'); }
@@ -13351,14 +14253,14 @@ function closeNeModal(){ const m=$('#neModal'); if(m) m.classList.add('hidden');
 
 function renderNarrativeEngineMenu(){
   const box=$('#nePanelBody'); if(!box) return;
-  const o = state.outline;
-  const fs = (o && o._foreshadowLedger) || {planted:[], resolved:[], overdue:[]};
-  const overdueN = fs.overdue ? fs.overdue.length : 0;
+  // v1.0.280：伏笔看板已随伏笔网移除（_foreshadowLedger/foreshadowCount 一并清除）
   const partialN = Object.keys(state._chapterPartial||{}).length;
   box.innerHTML = `
     <div class="ne-menu-hint">AI 叙事中间件总入口，点击打开对应面板</div>
     <button class="ne-menu-item" data-ne-panel="resume"><span class="ne-ico">▶️</span><span class="ne-lbl">流式续写状态</span>${partialN?`<span class="ne-badge">${partialN}</span>`:''}</button>
-    <button class="ne-menu-item" data-ne-panel="foreshadow"><span class="ne-ico">🪝</span><span class="ne-lbl">伏笔看板</span>${overdueN?`<span class="ne-badge">${overdueN}</span>`:`${fs.planted.length?`<span class="ne-badge info">${fs.planted.length}</span>`:''}`}</button>
+    <button class="ne-menu-item" data-ne-panel="facts"><span class="ne-ico">📎</span><span class="ne-lbl">事实与一致性看板</span></button>
+    <button class="ne-menu-item" data-ne-panel="resumesum"><span class="ne-ico">📜</span><span class="ne-lbl">滚动摘要</span></button>
+    <button class="ne-menu-item" data-ne-panel="check"><span class="ne-ico">🩺</span><span class="ne-lbl">一致性自检</span></button>
     <button class="ne-menu-item" data-ne-panel="iron"><span class="ne-ico">📌</span><span class="ne-lbl">叙事铁律（写作总纲）</span>${state._narrIron!==false?'<span class="ne-badge ok">ON</span>':'<span class="ne-badge">OFF</span>'}</button>
     <button class="ne-menu-item" data-ne-panel="banlist"><span class="ne-ico">🚫</span><span class="ne-lbl">禁则清单</span>${stateBanEnabled()?'<span class="ne-badge ok">ON</span>':'<span class="ne-badge">OFF</span>'}</button>
     <!-- v238/反馈①：消息看板入口移入「叙事」面板菜单（第 9 项），带历史消息条数角标；顶栏不加按钮 -->
@@ -13374,9 +14276,11 @@ function rebindNarrativeEngine(){
     const item=e.target.closest('[data-ne-panel]'); if(!item) return;
     const panel=item.dataset.nePanel;
     if(panel==='resume') renderResumePanel();
-    else if(panel==='foreshadow') renderForeshadowLedger();
     else if(panel==='iron') renderIronPanel();   // v1.0.133 叙事铁律（三大写作要求统一入口 + 语言分层）
     else if(panel==='banlist') renderBanListPanel();
+    else if(panel==='facts') openFactCardModal();   // v1.0.201 叙事抽屉：事实与一致性看板
+    else if(panel==='resumesum') openRollingSummaryModal();   // v1.0.201 叙事抽屉：滚动摘要
+    else if(panel==='check') openConsistencyCheck();   // v1.0.204 阶段4/CD-4：一致性自检（词典去重 + 时间线不悬空）
     else if(panel==='toastboard') openToastBoard();   // v238/反馈①：叙事菜单第 9 项——打开消息看板（抽屉随后统一收起）
     // 交互优化：选择某一项后收起抽屉（子面板经 openNeModal 弹窗接管后续交互，抽屉不再需要）
     closeNarrativeEngine();
@@ -13387,11 +14291,7 @@ function rebindNarrativeEngine(){
     // 流式续写
     const resume=e.target.closest('[data-ne-resume]'); if(resume){ const i=+resume.dataset.neResume; closeNeModal(); continueAndFinalizeChapter(i, '从中断处继续'); return; }
     const discard=e.target.closest('[data-ne-discard]'); if(discard){ const i=+discard.dataset.neDiscard; delete state._chapterPartial[i]; toast('已丢弃第 '+(i+1)+' 章缓存'); renderResumePanel(); renderNarrativeEngineMenu(); return; }
-    // 伏笔看板
-    const fsRes=e.target.closest('[data-ne-fs-resolve]'); if(fsRes){ const idx=+fsRes.dataset.neFsResolve; resolveForeshadow(idx, state.chapters.length-1); renderForeshadowLedger(); renderNarrativeEngineMenu(); return; }
-    const fsDelay=e.target.closest('[data-ne-fs-delay]'); if(fsDelay){ const idx=+fsDelay.dataset.neFsDelay; delayForeshadow(idx); renderForeshadowLedger(); renderNarrativeEngineMenu(); return; }
-    const fsDel=e.target.closest('[data-ne-fs-del]'); if(fsDel){ const idx=+fsDel.dataset.neFsDel; deleteForeshadow(idx); renderForeshadowLedger(); renderNarrativeEngineMenu(); return; }
-    const fsResOd=e.target.closest('[data-ne-fs-resolve-od]'); if(fsResOd){ const idx=+fsResOd.dataset.neFsResolveOd; resolveOverdueForeshadow(idx); renderForeshadowLedger(); renderNarrativeEngineMenu(); return; }
+    // v1.0.280：伏笔看板交互（resolve/delay/delete/overdue）已随伏笔网移除
     // v1.0.132 禁则清单面板交互
     if(handleBanListAction(e)) return;
   };
@@ -13416,29 +14316,7 @@ function renderResumePanel(){
   openNeModal('流式续写状态', `<div class="ne-body">${rows}<p class="hint">「从中断处继续」会把已缓存文本作为锚点，让 AI 无缝续写，避免从零重跑。</p></div>`);
 }
 
-function renderForeshadowLedger(){
-  const o=state.outline; const fs=(o && o._foreshadowLedger)||{planted:[],resolved:[],overdue:[]};
-  // v1.0.140：回收章与植入章同章时（多见于短书末章）标注"本章内回收"，避免误解
-  const planted=(fs.planted||[]).map((it,idx)=>{
-    const sameCh = (it.expectedCh||0) <= (it.chPlanted||0);
-    const payTxt = sameCh ? '本章内回收' : `预计第 ${(it.expectedCh||0)+1} 章回收`;
-    return `<div class="ne-fs-item"><b>🪝 ${esc(it.text)}</b><div class="muted">埋于第 ${(it.chPlanted||0)+1} 章 · ${payTxt}</div><div class="ne-fs-ops"><button class="btn small ghost" data-ne-fs-resolve="${idx}">标记为本章回收</button><button class="btn small ghost" data-ne-fs-delay="${idx}">延后回收</button><button class="btn small ghost" data-ne-fs-del="${idx}">删除</button></div></div>`;
-  }).join('') || '<div class="empty">暂无埋下伏笔</div>';
-  const resolved=(fs.resolved||[]).map(it=>`<div class="ne-fs-item"><b>✓ ${esc(it.text)}</b><div class="muted">回收于第 ${(it.chResolved||0)+1} 章</div></div>`).join('') || '<div class="empty">暂无已回收伏笔</div>';
-  const overdue=(fs.overdue||[]).map((it,idx)=>{
-    const sameCh = (it.expectedCh||0) <= (it.chPlanted||0);
-    const payTxt = sameCh ? '应在本章内回收' : `预计第 ${(it.expectedCh||0)+1} 章回收`;
-    return `<div class="ne-fs-item"><b>⚠️ ${esc(it.text)}</b><div class="muted">${payTxt} · 已逾期</div><div class="ne-fs-ops"><button class="btn small ghost" data-ne-fs-resolve-od="${idx}">立即回收</button></div></div>`;
-  }).join('') || '<div class="empty">暂无逾期伏笔</div>';
-  openNeModal('伏笔看板', `
-    <div class="ne-fs-board">
-      <div class="ne-fs-col"><h5>已埋下 (${fs.planted?fs.planted.length:0})</h5>${planted}</div>
-      <div class="ne-fs-col"><h5>已回收 (${fs.resolved?fs.resolved.length:0})</h5>${resolved}</div>
-      <div class="ne-fs-col overdue"><h5>逾期报警 (${fs.overdue?fs.overdue.length:0})</h5>${overdue}</div>
-    </div>
-    <p class="hint">逾期伏笔会在后续章节生成的「衔接事实」中强制呈现并标注“本章必须兑现或明显推进”，提醒 AI 兑现已埋线索。</p>
-  `);
-}
+// v1.0.280：伏笔看板（renderFsPlainHtml / renderForeshadowLedger / _foreshadowText / _foreshadowLedger 展示与交互）已随伏笔网整体移除
 
 // v1.0.132 禁则清单面板：编辑禁用字/姓名/短语/规则与生效范围；保存写回持久化，恢复默认回退内置清单。
 function handleBanListAction(e){
@@ -13582,24 +14460,6 @@ function renderTitleCandidates(candidates, onSelect){
   },0);
 }
 
-function renderPlanCandidates(candidates, onSelect){
-  if(!Array.isArray(candidates) || candidates.length<2){ onSelect && onSelect(0); return; }
-  const cards=candidates.map((cand,i)=>`
-    <div class="ne-candidate">
-      <div class="ne-cand-head">规划方案 ${String.fromCharCode(65+i)}</div>
-      <div class="ne-cand-meta">字数契约：${cand.valid?'✓':'✗'} · 实体覆盖：${(cand.entityRate||0).toFixed(2)}</div>
-      <div class="ne-cand-list">${esc((cand.plans||[]).map((p,pi)=>`第${pi+1}章：`+(((p&&p.beats)||[]).map(b=>b&&b.event).filter(Boolean).join('；')||'（无节拍）')).join('\n\n'))}</div>
-      <div class="ne-cand-actions"><button class="btn primary" data-ne-plan-select="${i}">应用方案 ${String.fromCharCode(65+i)}</button></div>
-    </div>
-  `).join('');
-  openNeModal('节拍表候选方案', `<div class="ne-candidates">${cards}</div><p class="hint">选择一套方案后，当前批次节拍表将更新。</p>`);
-  setTimeout(()=>{
-    $('#neModal').querySelectorAll('[data-ne-plan-select]').forEach(b=>{
-      b.onclick=()=>{ closeNeModal(); onSelect && onSelect(+b.dataset.nePlanSelect); };
-    });
-  },0);
-}
-
 /* =========================================================
  * 设置弹窗（多 AI 模型：服务列表 → 组详情 → 三级联动选择）
  * 红色护栏：生成来源永远只有一个 editCfg.active 指向的账号/模型，绝不并发多模型请求。
@@ -13621,36 +14481,18 @@ function closeSettings(){ $('#settingsModal').classList.add('hidden'); }
 function echoTemps(){
   const c = editCfg || getCfg();
   $('#cfgTemp').value = (c.temperature==null ? '' : c.temperature);
-  $('#cfgTempOutline').value = (c.outlineTemp==null ? '' : c.outlineTemp);
-  $('#cfgTempIdea').value = (c.ideaTemp==null ? '' : c.ideaTemp);
-  $('#cfgTempTitle').value = (c.titleTemp==null ? '' : c.titleTemp);
-  $('#cfgTempPlan').value = (c.planTemp==null ? '' : c.planTemp);
-  $('#cfgTempStrip').value = (c.stripTemp==null ? '' : c.stripTemp);
-  $('#cfgTempChapter').value = (c.chapterTemp==null ? '' : c.chapterTemp);
-  $('#cfgTempQC').value = (c.qcTemp==null ? '' : c.qcTemp);
-  $('#cfgAiRecipeTemp').value = (c.aiRecipeTemp==null ? '' : c.aiRecipeTemp);   // v1.0.122 AI配方助手温度（默认0.9）
-  $('#cfgTempSubplot').value = (c.subplotTemp==null ? '' : c.subplotTemp);   // 支线进度
-  $('#cfgTempAudit').value = (c.auditTemp==null ? '' : c.auditTemp);         // 审校/锚点提取
-  $('#cfgTempRolling').value = (c.rollingTemp==null ? '' : c.rollingTemp);   // 滚动摘要
-  $('#cfgTempContent').value = (c.contentAdviseTemp==null ? '' : c.contentAdviseTemp);   // 内容建议
+  // v1.0.208 各任务温度已并入「分任务模型」面板（每行标题右侧的温度框），此处仅回显全局温度
 }
 
 // v10.16 温度保存（从 saveSettings 拆出，主题面板「保存温度」与设置弹窗「保存」共用）
 function saveTemps(){
   const rd = (id, def)=>{ const v=parseFloat($(id) && $(id).value); return isNaN(v)?def:v; };
   editCfg.temperature = rd('#cfgTemp', 0.7);
-  editCfg.outlineTemp = rd('#cfgTempOutline', 0.7);
-  editCfg.ideaTemp    = rd('#cfgTempIdea', 0.5);
-  editCfg.titleTemp   = rd('#cfgTempTitle', 0.5);
-  editCfg.planTemp    = rd('#cfgTempPlan', 0.4);
-  editCfg.stripTemp   = rd('#cfgTempStrip', 1.0);
-  editCfg.chapterTemp = rd('#cfgTempChapter', 0.5);
-  editCfg.qcTemp      = rd('#cfgTempQC', 0.2);
-  editCfg.aiRecipeTemp = rd('#cfgAiRecipeTemp', 0.9);   // v1.0.122 AI配方助手温度（默认0.9）
-  editCfg.subplotTemp = rd('#cfgTempSubplot', 0.25);
-  editCfg.auditTemp   = rd('#cfgTempAudit', 0.2);
-  editCfg.rollingTemp = rd('#cfgTempRolling', 0.3);
-  editCfg.contentAdviseTemp = rd('#cfgTempContent', 0.6);
+  // v1.0.208 各任务温度现由「分任务模型」面板以 getCfg 直接维护；此处把 editCfg 与 live cfg 同步，
+  // 避免「保存设置」用陈旧快照覆盖掉分任务面板已改的温度。
+  const live = getCfg();
+  const TM_FIELDS = ['ideaTemp','dictmasterTemp','assetsTemp','titleTemp','planTemp','planBeatsTemp','planTimelineTemp','plannerTitlesTemp','plannerAuxTemp','stripTemp','chapterTemp','qcTemp','aiRecipeTemp','subplotTemp','rollingTemp','contentAdviseTemp'];
+  TM_FIELDS.forEach(f=>{ if(live && typeof live[f]==='number') editCfg[f]=live[f]; });
 }
 
 function _curSpec(){
@@ -13676,34 +14518,44 @@ function updateCfgBadge(){
 }
 
 /* --- v227「使用不同AI」分任务模型二级面板（设计见《使用不同ai.md》§3） --- */
-// 档位分组：顺序=创作流水线；同档默认推荐同模型（§3.2 排列逻辑：按写书流程排、三档分组、全局置顶）
-// v234/T2：任务名后追加单字推荐（强=质量主力模型 / 中=中档 / 弱=flash 省钱），依据任务重量/费用占比/JSON 严谨度
+// 档位分组：顺序=创作流水线（从项目开始到结束的先后：构想→大纲后定位→规划师四步→词典/正文→每章轻维护→补充/资产）。
 const TM_GROUPS = [
-  { title:'✍️ 重创作（要质量，费用大头，建议主力模型）', keys:[
-    ['chapter','正文生成（强）','全书正文质量与费用大头；所选模型须支持流式（stream）'],
-    ['outline','故事大纲（强）','决定全书骨架，建议质量优先'],
-    ['planBeats','规划师 · 节拍表（强）','JSON，逐章情节节拍'],
-    ['plannerTitles','规划师 · 标题定稿（中）','JSON，全书章节标题；短文本创意，中档够且省费'],
-    ['plannerAux','规划师 · 词典播种/伏笔（中）','JSON 任务；体量小但需严谨']
+  { title:'🧠 前置 · 构想（项目起点，一次即可）', keys:[
+    ['idea','优化构想','对既有构想发散/收敛；创作第一步']
   ]},
-  { title:'💡 建议类（要点子，建议中档模型）', keys:[
-    ['idea','优化构想（中）','对既有构想发散/收敛'],
-    ['titleAdvice','标题 AI 建议（中）','JSON 任务；短创意'],
-    ['contentAdvice','章节内容 AI 建议（中）','JSON 任务']
+  { title:'📐 规划师四步 · 章节规划（要质量，建议主力模型）', keys:[
+    ['plannerTitles','规划师 · 标题定稿','JSON，全书章节标题；短文本创意，中档够且省费'],
+    ['planBeats','规划师 · 节拍表','JSON，逐章情节节拍'],
+    ['planTimeline','规划师 · 时间线','JSON，全局章节时间线分段'],
+    ['plannerAux','词典充实 · 辅助','词典充实：为正文补充人物/地名/专名与路人龙套；JSON 严谨']
   ]},
-  { title:'🔧 轻维护（高频小请求，建议 flash 省钱）', keys:[
-    ['glossary','词典提取（中）','JSON 严谨任务；换弱模型解析失败率会升高（有校验兜底，不阻断）'],
-    ['subplot','副线追踪（弱）','小 JSON 追踪任务'],
-    ['strip','本章梗概（速读）（弱）','每章生成后都会调用'],
-    ['rolling','滚动摘要（弱）','长篇记忆层，每批正文后调用'],
-    ['audit','一致性巡检（张力/人设/指纹/锚点）（弱）','纯 JSON 后台巡检，用户无感']
+  { title:'✍️ 重创作（正文费用大头，建议主力模型）', keys:[
+    ['dictmaster','词典达人','AI 生成万物词典（人物十维+人物关系表+地名关联表+专名关联表+世界观规则），供正文一致消费'],
+    ['chapter','正文生成','全书正文质量与费用大头；所选模型须支持流式（stream）']
   ]},
-  { title:'📦 其他资产', keys:[
-    ['assets','封面/人物/场景/分镜（中）','提示词类产出'],
-    ['recipe','配方产物（中）','AI 配方助手；候选配方需判断力']
+  { title:'🔧 每章/每批 · 轻维护（高频小请求，建议 flash 省钱）', keys:[
+    ['strip','本章梗概（速读）','每章生成后都会调用'],
+    ['subplot','副线追踪','小 JSON 追踪任务'],
+    ['glossary','词典提取','JSON 严谨任务；换弱模型解析失败率会升高（有校验兜底，不阻断）'],
+    ['rolling','滚动摘要','长篇记忆层，每批正文后调用']
+  ]},
+  { title:'💡 写作补充与资产', keys:[
+    ['contentAdvice','章节内容 AI 建议','JSON 任务'],
+    ['assets','封面/人物/场景/分镜','提示词类产出'],
+    ['recipe','AI 配方助手','候选配方需判断力；写风配方卡']
   ]}
 ];
+
+// v1.0.208 分任务模型内嵌温度：taskKey → [温度字段, 建议缺省]。多个任务可共享同一温度字段（规划师系列共用 planTemp）。
+const TM_TEMP = {
+  idea:['ideaTemp',0.5],
+  plannerTitles:['plannerTitlesTemp',0.4], planBeats:['planBeatsTemp',0.4], planTimeline:['planTimelineTemp',0.4], plannerAux:['plannerAuxTemp',0.4],
+  dictmaster:['dictmasterTemp',0.5], chapter:['chapterTemp',0.5],
+  strip:['stripTemp',1.0], subplot:['subplotTemp',0.25], glossary:['qcTemp',0.2], rolling:['rollingTemp',0.3],
+  contentAdvice:['contentAdviseTemp',0.6], assets:['assetsTemp',0.7], recipe:['aiRecipeTemp',0.9]
+};
 let editTM = null;          // 面板暂存：保存前绝不落盘（对齐设置弹窗 editCfg 模式）
+let editTemps = {};         // v1.0.208 面板内每个温度字段暂存（按字段存值）；保存前不落盘
 let _tmEscHandler = null;   // ESC 关闭挂钩（现有 modal 无全局 ESC，本面板自持）
 function tmCustomCount(tm){ return TM_KEYS.filter(k=> tm && tm[k]).length; }
 function updateTmBadge(){
@@ -13722,6 +14574,9 @@ function tmResolvePreview(triple){
 }
 function openTaskModelPanel(){
   editTM = JSON.parse(JSON.stringify(getCfg().taskModels || {}));
+  editTemps = {};   // v1.0.208 载入各任务温度暂存（按温度字段；规划师系列共享 planTemp）
+  const g0 = getCfg();
+  Object.keys(TM_TEMP).forEach(k=>{ const f=TM_TEMP[k][0]; if(f && !(f in editTemps)) editTemps[f]=(g0[f]==null?TM_TEMP[k][1]:g0[f]); });
   $('#taskModelModal').classList.remove('hidden');
   const st=$('#tmStatus'); if(st){ st.className='status'; st.textContent=''; }
   renderTaskModelPanel();
@@ -13731,7 +14586,7 @@ function openTaskModelPanel(){
 function closeTaskModelPanel(){
   $('#taskModelModal').classList.add('hidden');
   if(_tmEscHandler){ document.removeEventListener('keydown', _tmEscHandler); _tmEscHandler=null; }
-  editTM = null;
+  editTM = null; editTemps = {};
 }
 // 关闭保护：有未保存差异时确认放弃（现有设置弹窗无此保护，本面板新增）
 function requestCloseTaskModelPanel(){
@@ -13762,8 +14617,12 @@ function renderTaskModelPanel(){
     const grp = cfg.groups.find(g=>g.id===gid);
     const kid = tm ? tm.keyId : '';
     const mid = tm ? tm.model : '';
+    const tf = TM_TEMP[key];
+    const tval = tf ? (editTemps[tf[0]]==null ? tf[1] : editTemps[tf[0]]) : '';
     return `<div class="tm-row${tm?' tm-custom':''}" data-tm-row="${key}">
-      <div class="tm-head"><span class="tm-name">${esc(name)}</span><span class="tm-note">${esc(note||'')}</span></div>
+      <div class="tm-head"><span class="tm-name">${esc(name)}</span><span class="tm-note">${esc(note||'')}</span>
+        ${tf?`<input type="number" inputmode="decimal" step="0.05" min="0" max="2" class="tm-temp" data-tm-temp="${key}" value="${tval}" placeholder="温度 ${tf[1]}" title="${esc(name)} 的 AI 温度（留空并保存＝恢复建议值）">`:'<span class="tm-temp-void"></span>'}
+      </div>
       <div class="tm-sels">
         <select data-tm-sel="group" data-tm-key="${key}">
           <option value="">跟随全局</option>
@@ -13776,7 +14635,7 @@ function renderTaskModelPanel(){
     </div>`;
   };
   body.innerHTML = `
-    <div class="cv-div">全书费用大头 = <b>正文生成</b>；把轻维护任务换成 flash 通常能省一半以上。所有任务仍是单出口串行请求，不会并发多个 AI。deepseek-v4-flash-vision-exp 为带视觉模型，本应用全站纯文本请求，选它无额外收益。</div>
+    <div class="cv-div">全书费用大头 = <b>正文生成</b>；把轻维护任务换成 flash 通常能省一半以上。所有任务仍是单出口串行请求，不会并发多个 AI。deepseek-v4-flash-vision-exp 为带视觉模型，本应用全站纯文本请求，选它无额外收益。<br>v1.0.208：每一行标题最右侧的<b>温度框</b>即为该任务 AI 温度（留空并保存＝恢复建议值），随本面板「保存」一并生效；规划师系列（节拍表/时间线/标题）共用同一温度。</div>
     <div class="set-block">
       <div class="set-block-head"><span>◆ 全局默认（未单独设置的任务都用它）</span></div>
       <div class="tm-preview">${esc((curGroup.label||'AI') + ' · ' + (curKey?(curKey.label||'账号'):'⚠️ 无账号') + ' · ' + (curModel?curModel.name:'⚠️ 无模型'))}（只读；去上方「AI 模型配置」修改）</div>
@@ -13802,6 +14661,16 @@ function renderTaskModelPanel(){
       refreshTmResetBtn();
     };
   });
+  // v1.0.208 温度输入：失焦写入 editTemps（按温度字段），随即重渲染以同步共享同一字段的多任务与提示
+  $$('#tmBody [data-tm-temp]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const tf = TM_TEMP[inp.dataset.tmTemp]; if(!tf) return;
+      const v = parseFloat(inp.value);
+      editTemps[tf[0]] = (inp.value==='' || isNaN(v)) ? tf[1] : v;
+      renderTaskModelPanel();
+      refreshTmResetBtn();
+    });
+  });
   refreshTmResetBtn();
 }
 function saveTaskModels(){
@@ -13813,11 +14682,15 @@ function saveTaskModels(){
     const ok = v && typeof v==='object' && v.groupId && v.keyId && v.model && cfg.groups.some(g=>g.id===v.groupId);
     clean[k] = ok ? { groupId:v.groupId, keyId:v.keyId, model:v.model } : '';
   });
-  const c = getCfg(); c.taskModels = clean; saveCfg(c);
+  const c = getCfg(); c.taskModels = clean;
+  // v1.0.208 一并保存各任务温度（分任务模型面板右侧温度框；按温度字段写入）
+  Object.keys(TM_TEMP).forEach(k=>{ const f=TM_TEMP[k][0]; if(f && editTemps && (f in editTemps)) c[f]=editTemps[f]; });
+  saveCfg(c);
   const n = tmCustomCount(clean);
+  const nT = Object.keys(TM_TEMP).filter(k=>{ const f=TM_TEMP[k][0]; return f && editTemps && editTemps[f]!=null; }).length;
   closeTaskModelPanel();
   updateCfgBadge();
-  toast(n ? ('分任务模型已保存：'+n+' 项自定义，其余跟随全局') : '分任务模型已保存：全部跟随全局');
+  toast(n ? ('分任务模型已保存：'+n+' 项自定义，其余跟随全局') : '分任务模型已保存：全部跟随全局')+(nT?('；已同步 '+nT+' 项任务温度'):'');
 }
 
 /* --- 第一段：服务列表 --- */
@@ -14006,6 +14879,8 @@ async function init(){
   // 主题按钮：展开/收起主题弹层
   const btnTheme = $('#btnTheme');
   if(btnTheme) btnTheme.onclick = (e)=>{ e.stopPropagation(); const p=$('#themePanel'); if(p.classList.contains('hidden')) openThemePanel(); else closeThemePanel(); };
+  // v1.0.304：填充「主题面板」里单个完成 / 全部完成的完成声音下拉
+  initThemeSoundPanel();
   // 叙事引擎按钮与抽屉
   rebindNarrativeEngine();
   // v10.16 主题面板「保存温度」：仅保存 7 个温度字段（独立于设置弹窗，不影响其他配置）
@@ -14062,3 +14937,5 @@ async function init(){
   render();
 }
 document.addEventListener('DOMContentLoaded', init);
+// v1.0.300 顶栏品牌版本号：读取本包 APP_VERSION 常量注入，用户一眼确认当前加载的版本，防旧缓存混淆
+(function brandVersion(){ const b = document.getElementById('verBadge'); if(b) b.textContent = ' v'+APP_VERSION; })();
