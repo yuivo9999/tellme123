@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.317';   // v1.0.317 残页修复五件：步骤完成不跳页＋词典类别默认折叠＋达人改显关系表＋正文框显占位＋一键断点续跑
+const APP_VERSION = '1.0.318';   // v1.0.318 未生成章也渲染「待生成」正文卡（重生成/阅读/梗概可见），不再只剩静态占位
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -9099,15 +9099,21 @@ function renderChapters(){
         persist();
         return renderChapters();
       }
-      // v241/908-3：撤除第一章空框占位（v240 曾保留）——空态只给一行提示
+      // v241/908-3 → v1.0.318：已填章节数但尚未生成时，不再只给一行提示/静态占位，
+      // 而是构造每章「待生成」的空正文卡并走正常渲染——让 🔄重生成/📖阅读/🏮本章梗概 每卡可见（用户不会再误以为没有正文框）
       const wantN = chapterCountVal();
-      wrap.innerHTML = wantN > 0
-        ? `<div class="ch-pager"><span class="muted">已填章节数 ${wantN} 章，尚未生成章节：大纲生成后这里会出现章节卡。</span></div>
-           <div class="ch-bodyframe">
-             <div class="ch-bodyframe-head">✍️ 正文书写区</div>
-             <div class="ch-bodyframe-hint">这里是每章「正文」的显示与编辑框。先生成章节正文后，正文会逐章铺在这里（按老师教案写足全文）。正文卡上另有「📖 阅读 / ⚡ 区间生成 / 🧺 从正文收编」等入口。</div>
-           </div>`
-        : `<div class="ch-pager"><span class="muted">共 0 章：先在第②步生成大纲。</span></div>`;
+      if(wantN > 0){
+        state.chapters = Array.from({length: wantN}, (_,k)=>({
+          num: k+1,
+          title: (state.outline && state.outline.chapters && state.outline.chapters[k] && state.outline.chapters[k].title) || `第${k+1}章`,
+          content: '',
+          confirmed: true,
+          beat: (state.outline && state.outline.chapters && state.outline.chapters[k] && state.outline.chapters[k].beat) || ''
+        }));
+        persist();
+        return renderChapters();
+      }
+      wrap.innerHTML = `<div class="ch-pager"><span class="muted">共 0 章：先在第②步生成大纲。</span></div>`;
       return;
     }
     // v240/906-1：长篇每页 10 章分页渲染；chPage 对齐到有效页（v238 蓝本）
