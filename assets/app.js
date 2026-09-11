@@ -1454,16 +1454,14 @@ const LONG_CHAPTER_SYS_PRO = `【角色】章节正文执行作者
 你将收到以下固定层级数据，优先级从上到下递减：
 L0 【叙事铁律】用户禁则、语言规则、视角铁律（最高优先级，必须遵守）
 L1 【全书信息】书名、简介、写作风格要求
-L2 【本章老师教案】= 全章剧情唯一任务源
+L2 【本章教案】全章剧情唯一任务源
    负责本章除开篇切入外的所有核心情节、出场人物、节奏、转折、收尾，除开篇可弹性适配承接外，必须100%覆盖教案所有环节，不得擅自增删核心事件、改变剧情走向。
-L3 【真实承接锚点（上一章正文末尾600字）】= 开篇承接唯一事实源
-   仅负责本章前50-150字的切入衔接，必须100%尊重上一章实际生成的最后动作、对话、场景、悬念、人物状态：
-   - 禁止编造上一章未发生的动作、禁止违背上章最终人物状态/场景结果
-   - 承接问题上优先级高于本章教案
-L4 【冲突消解规则】
+L3 【衔接信息】上一章结尾状态、开篇承接唯一事实源
+L4 【参考资料】其余L0铁律/L1全书信息/L4词典仅为规则与背景参考，不提供剧情内容
+L5 【冲突消解规则】
    - 小偏差（动作细节/情绪/场景微差）：仅微调开篇切入方式，50-150字内平滑过渡到教案第一个环节，教案核心剧情完全保留
    - 大冲突（教案要求出场的人物已死亡/核心场景已损毁等根本矛盾）：优先围绕教案核心目标合理顺承，确实无法适配时在正文末尾加单行注释 `<!-- AI_NOTE:承接冲突:具体矛盾点 -->`，禁止强行写崩剧情
-L5  其余L0铁律/L1全书信息/L4词典仅为规则与背景参考，不提供剧情内容。
+
 
 ==================== 执行规则 ====================
 1.  情节覆盖铁律
@@ -1475,7 +1473,10 @@ L5  其余L0铁律/L1全书信息/L4词典仅为规则与背景参考，不提�
     2.2  人物言行、年龄、性格、关系必须严格符合万物词典设定，不得OOC、不得修改人设
     2.3  临时路人/氛围角色仅允许单次出场、无台词/一句带过，不命名、不刻画、不入设定
 3.  承接与收尾铁律
-    3.1  自然承接（写，仅开篇50-150字）
+    3.1  仅负责本章前50-150字的切入衔接，必须100%尊重上一章实际生成的最后动作、对话、场景、悬念、人物状态：
+   - 禁止编造上一章未发生的动作、禁止违背上章最终人物状态/场景结果
+   - 承接问题上优先级高于本章教案
+   - 自然承接（写，仅开篇50-150字）
 必须按优先级从以下4种方式选1种顺接，禁止冷开场/硬转场：
 ① 动作续接（优先，60%场景用）：直接续写上一章最后一个未完成动作，不重新介绍场景。例：上章结尾「他抬手要敲门」→本章首句直接写「指节落在木门上，发出三声闷响」
 ② 对话续接（20%场景用）：直接接上一章最后一句未说完/刚抛出的对话，不重新铺垫。例：上章结尾「你到底是谁？」→本章首句直接接黑衣人回应
@@ -1486,7 +1487,7 @@ L5  其余L0铁律/L1全书信息/L4词典仅为规则与背景参考，不提�
 - 开篇前100字禁止出现：上章未提及的新人物/新地点、时间跳跃（三日后/第二天）、「上回说到/书接上文/前情提要/话说」等说书腔、整段复述上一章剧情
 - 承接段控制在50-150字，接完立即进入教案第一个剧情环节，禁止长时间回顾
 - 无特殊情况禁止跳时间/跳场景开场，必须延续上章末尾的空间/时间状态
-    3.2  结尾严格按教案最后一个环节收束，按下一章标题自然留下钩子；
+    3.2  结尾严格按教案最后一个环节收束，按下一章标题自然留下钩子；不得提前剧透下一章具体情节
 4.  文风与视角铁律
     4.1  严格执行L1写作风格要求与L0叙事铁律，句式长短交错，用动作/细节/对话推进，禁止模板化凑数
     4.2  默认主角受限视角：90%内容为主主角所见/所闻/所感，禁止随意切入他人内心、禁止上帝视角剧透
@@ -3525,8 +3526,7 @@ const TEACHER_SYS = `【角色】分组章节规划师
     4.3  每个环节格式：① [环节名]：[1-2句明确任务]，必须写清「在场人物+核心动作+冲突/信息+环节结束状态」
     4.4  环节必须有因果递进，禁止空洞概括、禁止套字数、禁止写具体描写/对白
 5.  情绪曲线：用「起始情绪→推进情绪→收尾情绪」格式标注，可附1个核心动作锚点，不写成段示例
-6.  承接规则：【弹性承接方向】仅写明本章承接上一章的「情绪基调+剧情阶段」（例：承接上章冲突爆发后的紧绷状态/承接谜底揭晓后的错愕阶段），禁止写死精确动作/精确对话（精确承接以实际生成的上一章正文末尾为准）；最后写明本章开篇要过渡到的第一个核心事件即可。
-
+6.  承接规则：明确标注「承接第X章：[具体动作/悬念/状态]」，首章必须对接【上一组收束状态】
 7.  出场名单规则
     7.1  仅从全量词典中选择本章确实有戏份的有名角色，禁止新增词典外核心人物
     7.2  名单即权限：名单外角色正文不得提及、不得出场
@@ -4271,13 +4271,7 @@ const AIBus = {
       navBeacon: o.navBeacon || '',
       L1_outline: { title: o.title, logline: o.logline, tone: o.tone, total: (o.chapters||[]).length, idx: idx+1 },
       L2_chapter: { title: c?.title, beatsText: (plan && String(plan.beatsText||'').trim()) ? plan.beatsText : '', emotionalArc: plan.emotionalArc, requiredEntities: plan.requiredEntities },   // v1.0.285：beats 数组退役，L2 快照改携 beatsText
-      L3_neighbor: {
-  prevTitle: prev?.title,
-  prevTail: String(prev?.content || '').replace(/<!--[\s\S]*?-->/g,'').slice(-600),
-  isRealTail: true, 
-  nextTitle: next?.title,
-  lastScene: o._factCard?.lastScene
-},
+      L3_neighbor: { prevTitle: prev?.title, prevTail: prev?.content?.slice(-300), nextTitle: next?.title, lastScene: o._factCard?.lastScene },
       L4_context: { rollingSummaries: buildRollingSummary(idx), relevantGlossary: relevantGlossaryForChapter(idx) }   // v1.0.280：unresolvedHooks 已随伏笔网移除
     };
   }
@@ -12365,7 +12359,29 @@ async function writeOneChapterContent(i, user, onPhase, onStream, styleOverride,
     }
   }
   const sp = splitChapterOutput(txt);
-
+  // v1.0.165：去除后验字数续写补齐（避免额外多生成一次）——长度改由【篇幅体量】在首写阶段用硬性目标约束，首轮即写足
+  let content = String(sp.content).replace(/<!--\s*LEN:[\s\S]*?-->/g, '').trim();
+  // v1.0.295（M3-1）：正文同源附带【本章出场人物】行剥离为 castOut，落库供「正文收编」做跨章聚合；正文本体保持纯净
+  const _cs = splitChapterCastout(content);
+  content = _cs.body;
+  if(state.chapters && state.chapters[i]){ state.chapters[i].castOut = _cs.castOut; }
+  const _o = state.outline;
+  if(_o && Array.isArray(_o.chapters) && _o.chapters[i]){ _o.chapters[i].castOut = _cs.castOut; }
+  return content;
+}
+// v1.0.295（M3-1）：从正文尾部剥离「【本章出场人物】」行级标记——该行是正文生成器同源附带、供「正文收编」环节跨章聚合的元数据，
+// 只登记本章新出现且值得被词典收编的核心新实体（不列词典已有常驻名、不列一次性氛围路人）；缺失则 castOut 为空串（不兜底老数据）。
+function splitChapterCastout(prose){
+  const lines = String(prose||'').split(/\r?\n/);
+  const re = /^[ \t]*【\s*本章出场人物\s*】\s*[:：]?\s*([\s\S]*)$/;
+  let castOut = '', bodyLines = [];
+  for(const ln of lines){
+    const mk = ln.match(re);
+    if(mk){ const t = String(mk[1]||'').trim(); if(t) castOut = t; }
+    else bodyLines.push(ln);
+  }
+  return { body: bodyLines.join('\n').replace(/\s+$/, '').trim(), castOut };
+}
 // v1.0.165：后验续写补齐 lengthenChapterToTarget 已整体移除——字数由首写阶段的硬性约束保证，不再额外多生成一次
 // 组装单章生成的 user 提示词。恒定前缀块（标题/梗概/全部章节标题/一致性词典）保持在前、全章不变，
 // 以最大化 DeepSeek 上下文缓存命中；可变信息（上一章全文/结构注入）尽量放后。
@@ -12386,18 +12402,6 @@ const USER_PRIO_BILL = '\n\n【优先级契约】当同时存在多条用户要�
 // v1.0.204 阶段4/4.4：词典（L3 设定词典）= 不可裁红线，永不裁剪。
 // 超限时按 L4(L4滚动摘要) → 简介 → 衔接事实 → L1节拍详述(保留骨架) 依次裁剪；
 // 仍超限则保留词典+节拍、置 _dictRedlineOver 让调用方提示「提示提升上限」（不静默降质、绝不砍词典）。
-let userPrompt = '';
-// 第一章无承接
-if(idx > 0){
-  const prevTail = String(state.chapters[idx-1]?.content || '').replace(/<!--[\s\S]*?-->/g,'').slice(-600);
-  userPrompt += `【第一优先·真实承接锚点（上一章实际正文末尾，开篇必须100%顺此接入，禁止违背）】
-${prevTail}
-
-`;
-}
-// 之后再拼接本章教案、风格、词典等其余内容，教案开头加标注
-userPrompt += `【本章教案（全章剧情必须严格按此执行，仅开篇可弹性适配承接）】
-${/* 这里放原教案/节拍表内容 */''}
 let _dictRedlineOver = false;
 function budgetChapterContext(parts, maxChars){
   const total = () => parts.join('\n\n').length;
@@ -13618,21 +13622,6 @@ async function genNChapters(start, n){
         snapshotChapterVersion(idx);
         state.chapters[idx].content = content;
         if(!isLong()) state.chapters[idx].confirmed = false;
-        if(_timeAnchorsAutoOn() && idx < state.chapters.length - 1){
-  const nextIdx = idx + 1;
-  const realTail = String(newContent || '').slice(-300);
-  const gi = chapterOfPlan(nextIdx);
-  if(gi >= 0 && state.school.teachers[gi]){
-    // 提取下一章原教案
-    let planRaw = state.school.teachers[gi].raw;
-    const nextCh = nextIdx + 1;
-    // 替换下一章教案的「连续性」字段为真实正文锚点
-    const reg = new RegExp(`(第\\s*${nextCh}\\s*章[\\s\\S]*?-\\s*连续性[：:])([^\\n]*)`);
-    planRaw = planRaw.replace(reg, `$1【真实承接锚点·自动更新】开篇严格顺以下正文末尾接入：${realTail.replace(/\n/g,' ')}`);
-    state.school.teachers[gi].raw = planRaw;
-    persist();
-  }
-}
         delete state._chapterPartial[idx];   // 正文落库即清流式缓存，避免已完成章残留"可续写"态
         state._chapterRetryFix = '';
         persist();
