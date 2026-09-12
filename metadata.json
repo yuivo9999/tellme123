@@ -1,6 +1,0 @@
-{
-  "name": "小说与提示词",
-  "description": "影视前期提示词与小说生成器 H5 应用",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
