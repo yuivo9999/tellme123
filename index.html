@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#0f1115">
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f6f8">
 <title>小说与提示词</title>
@@ -81,11 +81,14 @@
       <button type="button" class="btn theme" data-theme="aurora">🌌 暗夜极光</button>
       <button type="button" class="btn theme" data-theme="paper">📜 暖阳米纸</button>
     </div>
+    <!-- v1.0.208 各任务温度已并入「分任务模型」面板（每行标题右侧温度框），设置弹窗仅保留全局温度 -->
+    <p class="hint" style="margin:10px 2px 0">💡 每类 AI 任务各自的创作/严谨温度已随「🎯 分任务模型设置」逐行内嵌——在每个任务标题的最右侧温度框里（含词典达人 / 正文 / 规划师 / 标题 / 词库 / 梗概 / 摘要 / 内容建议 / 资产 / 配方），随分任务模型保存一并生效；此处设置弹窗仅保留全局温度。</p>
     <!-- v1.0.305 完成声音六选一（含默认），单个完成 / 全部完成 各独立记忆 -->
     <div class="theme-snd">
-      <div class="spec-head" style="padding:12px 0 6px"><span>🔔 完成声音</span><span class="spec-note">6 种音色可选</span></div>
+      <div class="spec-head" style="padding:12px 0 6px"><span>🔔 完成声音</span><span class="spec-note">单个完成/全部完成 各 6 种 · 互不相同</span></div>
       <div class="theme-snd-row"><span>单个完成</span><select id="cfgSndSingle" class="theme-snd-sel"></select><button type="button" class="btn small ghost" data-snd-prev="single">试听</button></div>
       <div class="theme-snd-row" style="margin-top:6px"><span>全部完成</span><select id="cfgSndAll" class="theme-snd-sel"></select><button type="button" class="btn small ghost" data-snd-prev="all">试听</button></div>
+      <p class="hint" style="margin:8px 2px 0">「单个完成」（某一步完成时）或「全部完成」（学校一键全跑完时）的提示音，点试听即时播放，选择实时生效并自动记忆。</p>
     </div>
   </div>
 
@@ -93,10 +96,10 @@
   <div id="wsColorPanel" class="spec-panel hidden">
     <div class="spec-head">
       <span>🎨 写作风格配色</span>
-      <span class="spec-note">实时切换</span>
+      <span class="spec-note">① 标题 / ② 梗概 / ③ 章节 三组区块着色 · 实时切换</span>
     </div>
     <div id="wsColorBody"></div>
-    <p class="hint">支持预设配色与自定义三色主题，实时切换生效。</p>
+    <p class="hint">「默认」三组无色，仅文字区分。其余 11 套与「我的自定义」按 上·标题 / 中·梗概 / 下·章节 上色；每套右上方 ✕ 可删除、↩ 撤销上一步、↺ 恢复全部（仅内置配色）＋ 新建三色配色。</p>
   </div>
 
   <!-- 叙事引擎抽屉：汇总改良.md 全部中间件入口 -->
@@ -156,7 +159,7 @@
 
       <!-- 第三段：当前生成使用（三级联动，来源唯一） -->
       <div class="set-block">
-        <div class="set-block-head"><span>默认模型服务</span></div>
+        <div class="set-block-head"><span>当前生成使用（仅向这一个 AI 发请求，绝不并发多个）</span></div>
         <label class="field">
           <span>服务组</span>
           <select id="c_selGroup"></select>
@@ -170,30 +173,31 @@
           <select id="c_selModel"></select>
         </label>
       </div>
-      <p class="hint">API Key 仅保存在本机浏览器，不上传任何第三方服务器。</p>
+      <p class="hint">API Key 仅存本机浏览器，不会上传任何第三方；生成时只使用上方所选的账号与模型，避免多个 AI 并发导致费用激增。</p>
 
       <!-- v227 使用不同AI：分任务模型入口（二级面板） -->
       <div class="set-block">
-        <div class="set-block-head"><span>各任务模型分配</span></div>
-        <p class="hint" style="margin:0 0 8px">默认跟随全局，亦可为正文、大纲、词典等任务独立分配不同模型。</p>
+        <div class="set-block-head"><span>各任务使用不同模型</span></div>
+        <p class="hint" style="margin:0 0 8px">默认全部跟随上方「当前生成使用」；可进入二级面板为正文/大纲/词典提取等任务单独指定模型（如轻维护任务用 flash 省钱）。仍是单出口串行请求，绝不并发烧钱。</p>
         <button id="btnTaskModels" class="btn ghost" type="button">🎯 分任务模型设置 · <span id="tmBadge">全部跟随全局</span> →</button>
       </div>
 
       <!-- v1.0.205 分任务温度（由主题面板并入设置弹窗；id 不变，echoTemps/saveTemps 零改动） -->
       <div class="set-block">
-        <div class="set-block-head"><span>🌡️ 全局温度</span></div>
-        <label class="field"><span>全局建议值（0.7）</span>
+        <div class="set-block-head"><span>🌡️ 全局温度（未单独设置的任务用它）</span></div>
+        <label class="field"><span>全局（未细分任务，建议 0.7）</span>
           <input id="cfgTemp" type="number" step="0.1" min="0" max="1" placeholder="0.7"></label>
-        <p class="hint">未单独配置温度的任务将默认使用此全局温度。</p>
+        <p class="hint">各任务专属温度已并入「🎯 分任务模型设置」面板中每行标题右侧的温度框，随分任务模型一并保存（含词典达人 / 正文 / 规划师 / 标题 / 词库 / 梗概 / 摘要 / 内容建议 / 资产 / 配方等）。此处全局温度仅作用于未单独设置温度的任务。</p>
       </div>
 
       <!-- v1.0.299 完成声音提示 -->
       <div class="set-block">
         <div class="set-block-head"><span>🔔 完成声音提示</span></div>
-        <label class="field"><span>任务完成时播放提示音</span>
+        <label class="field"><span>项目 单个完成 / 全部完成 时播放提醒音</span>
           <input id="cfgSoundDone" type="checkbox"></label>
         <label class="field"><span>音量 <span id="cfgSoundVolLabel" class="muted">80%</span></span>
           <input id="cfgSoundVol" type="range" min="0" max="100" step="5" value="80"></label>
+        <p class="hint">Web Audio 本地合成、无需联网；每次「单个完成」响所选音、学校一键「全部完成」响所选音。浏览器自动播放策略要求首次点击任意界面即可解锁音频（点击生成按钮本身即解锁）。</p>
       </div>
 
       <div class="modal-actions">
