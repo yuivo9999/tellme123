@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.322';   // v1.0.322 「剧情时间落点」三硬规改三松规：授放时间跨度、不机械排"清晨→傍晚"
+const APP_VERSION = '1.0.323';   // v1.0.323 创作决策链 2.0：用户风格前置、优化构想降级为建议、侧边导航同步重排
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -1782,17 +1782,10 @@ function applyV45ToOutline(o, d){
 // seedCharacters/seedPlaces 合并进 state.outline.glossary；tone 映射到默认写作风格标签（如"冷峻"→minimal/cutting）。
 function importPolishToState(o){
   const d = (o && o._v45) || {};
-  // tone 映射到默认写作风格标签（4.5：如"冷峻"→minimal/cutting）；写作风格独立于大纲，即时生效
+  // v11.1 风格权威解耦：优化构想的 tone 只能作为「校长评估材料」，不得偷偷改写用户已经选择的写作风格。
+  // 用户选中的 state.chapterStyle.tags 是表达层唯一来源；优化构想若与之冲突，由校长在「风格融合总纲」中裁决，且用户风格优先。
   const tone = String((d.navBeacon&&d.navBeacon.tone)||'');
-  const TONE_TAGS = [['冷峻','minimal'],['克制','minimal'],['冷冽','cutting'],['锋利','cutting'],['热血','flame'],['燃','flame'],['温情','warmth'],['治愈','warmth'],['温柔','warmth'],['悬疑','suspense2'],['黑暗','suspense2']];
-  let toneHit = null;
-  if(tone){
-    for(const [kw,id] of TONE_TAGS){ if(tone.includes(kw)){ toneHit = id; break; } }
-  }
-  if(toneHit){
-    const ws = writeStyleState();
-    if(!ws.tags.includes(toneHit)) ws.tags.push(toneHit);
-  }
+  const toneHit = tone || '';
   // 4.9 修复：没有真实大纲时绝不创建空的 state.outline——否则 viewStory 会误判「已有大纲」而切到故事完整界面，
   // 出现无书名/无简介/无章节的全乱状态。改为把结构化设定暂存到 state.pendingV45，待 genOutline 生成真实大纲后自动应用。
   if(!state.outline){
@@ -1800,13 +1793,13 @@ function importPolishToState(o){
       state.pendingV45 = JSON.parse(JSON.stringify(d));
     }
     persist(); render();
-    toast(`设定已暂存${nCh?(' · 章节数已设为 '+n):''}${toneHit?' · 风格标签已加':''}：导航灯塔/种子人物/种子地点将在生成大纲后自动应用`);
+    toast(`设定已暂存${nCh?(' · 章节数已设为 '+n):''}${toneHit?' · 优化构想语气已交给校长评估（不覆盖用户风格）':''}：导航灯塔/种子人物/种子地点将在生成大纲后自动应用`);
     return;
   }
   // 已有真实大纲：直接写入大纲/词典/风格标签
   const r = applyV45ToOutline(state.outline, d);
   persist(); render();
-  toast(`已导入设定：导航灯塔${d.navBeacon?1:0} · 种子人物 ${r.nC} · 种子地点 ${r.nP}${nCh?(' · 章节数已设为 '+n):''}${toneHit?' · 风格标签已加':''}`);
+  toast(`已导入设定：导航灯塔${d.navBeacon?1:0} · 种子人物 ${r.nC} · 种子地点 ${r.nP}${nCh?(' · 章节数已设为 '+n):''}${toneHit?' · 优化构想语气已交给校长评估（不覆盖用户风格）':''}`);
 }
 
 // v10.16 用缓存方案重新展开优化区（零请求）：竖向卡片
@@ -2910,7 +2903,7 @@ function wsStyleNoteBlock(items, headTitle, intro){
 // 章节风格（element 组）注入：用于章节正文生成（单章/批量/重生成；含角色扮演对比）
 function chapterStyleNote(override){
   const items = wsGroupStyleTags(override);
-  return wsStyleNoteBlock(items, '写作风格', '本指令为本章写作的最高优先要求（第一优先，压过本次人工干预）：当它与节奏、篇幅、原创性等任何其他要求冲突时，以本指令为准；唯一不可逾越的红线：不得破坏人名/地名/专名一致性、不得违反基础剧情逻辑与人物设定。');
+  return wsStyleNoteBlock(items, '写作风格', '本指令是本章的表达层最高优先要求：它只决定‘怎么写’，不改写老师教案规定的‘写什么’。若与剧情推进、章节骨架、篇幅等任务发生冲突，不得删改教案事件；若与优化构想、人工润色建议等表达建议冲突，以用户已选写作风格为准。唯一不可逾越的红线：不得破坏人名/地名/专名一致性、不得违反基础剧情逻辑与人物设定。');
 }
 // v11 规划师轻量风格注入：只给所选章节风格(element)的名称，不给 note/五维（规划师只需风格基调锚点，避免与正文完整版重复）。
 function writeStyleNamesBlock(){
@@ -3574,9 +3567,13 @@ const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治
 【长篇小说】书名；【全书简介】；【优化构想·所选方案】；【全校章节数】；【全书微拍总纲与节奏体系】；【写作风格/配方】；【全量万物词典·共享不切片】；【既有《全书节拍》·阶段优先分组】及《全书节拍》节选。
 
 【任务·逐项产出全校管理成果】
-① 全校写作守则——分两层：
+① 全校写作守则——必须完成「风格冲突解决」，不是简单摘要：
    · 配方锚点：逐条浓缩「写作风格/配方」原文要点，保留原句风格特征（防层层凝练失真）。
+   · 风格融合总纲：先以用户已选【写作风格/配方】为表达层唯一权威，再评估【优化构想】是否兼容；兼容则吸收为辅助表现手段，冲突则舍弃优化构想的冲突部分，绝不得反向修改用户风格。明确「主风格 / 剧情机制 / 情绪落点」三层关系，并写清何时谁主导。
+   · 风格施工规则：必须把融合后的风格落实到「叙事、对白、节奏、场景、情绪、幽默/悬疑/治愈等具体机制」，给出可执行动作，而非只写形容词。
+   · 风格验收标准：列出正文完成后可检查的正向指标与禁用项，供老师与正文 AI 逐章自检。
    · 可执行纪律：全体老师与正文一致遵循的写作纪律，统帅【全书微拍节奏】与【章间过桥律】（跨章尾留钩子首接余波，前章定格状态必须平滑过桥，严禁硬跳切与瞬移；跨组接力严守因果链，后组首章必须紧密承接前组末章真实收束状态；人物言行一致、时间不倒流、术语定稿不改）。
+   · 权限边界：用户风格决定「怎么写」；老师教案决定「本章写什么」；词典决定事实一致性；正文 AI 不负责重新裁决风格组合。
 ② 各组组级框架——每组一份、逐组齐全。每份固定字段：
    · 起止章与剧情段；每章功能分工（仅到「引入/推进/转折/高潮/收束」标签 + 一句目标）；整组节奏与情绪曲线；跨组承接（承上=承接上一组末章收束后本组从何接续、首组「开篇·冷开场」；启下=末章给下一组留的钩）；重点调用词典要素。
 ③ 全书章节标题总表——为全部章节各拟一题，一批拉通给出、前后呼应。
@@ -3586,6 +3583,9 @@ const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治
 - 严格按下述小节与标记组织，段名与章节号逐项齐全、不得省略：
 # 全校写作守则
 ## 配方锚点
+## 风格融合总纲
+## 风格施工规则
+## 风格验收标准
 ## 可执行纪律
 # 各组组级框架
 ## 组1 · 老师1（第1-20章 · 段名）
@@ -3608,12 +3608,17 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
 
 【任务·一次性出齐三大成果】
 ① 全校写作守则：
-   · 配方锚点：逐条浓缩写作配方要点，保留原汁原味
-   · 可执行纪律：微拍节奏指令与章间过桥律（尾留钩子首接余波，平滑对缝，严禁瞬移硬跳；时间不倒流，术语定稿不改）
+   · 配方锚点：逐条浓缩写作配方要点，保留原汁原味。
+   · 风格融合总纲：用户已选写作风格是表达层唯一权威；优化构想只能作为候选辅助，不得覆盖用户风格。必须解决多风格之间的主次、兼容方式与冲突裁决。
+   · 风格施工规则：把融合后的风格转译为叙事、对白、节奏、场景、情绪的可执行规则，避免把选择题留给正文 AI。
+   · 风格验收标准：给出逐章可检查的正向指标与禁用项。
+   · 可执行纪律：微拍节奏指令与章间过桥律（尾留钩子首接余波，平滑对缝，严禁瞬移硬跳；时间不倒流，术语定稿不改）。
+   · 权限边界：用户风格决定「怎么写」；逐章教案决定「写什么」；正文 AI 只执行，不重新选风格。
 ② 全书章节标题总表：
    为全书第1章至最后一章各拟定一题，连贯排布、前后呼应。
 ③ 逐章教案（第1章 ~ 最后一章）：
    直接为每一章备出标准化教案，一章不少！每章严格遵循六栏（冒号紧跟）：
+   - 本章风格施工指令：把已裁决的【风格融合总纲】【风格施工规则】翻译为本章具体执行命令；明确场景/人物/节拍中的风格主次与表达方式，不得重新裁决风格冲突。
    - 功能与位置：本章在全书结构中的定位与必须完成的核心事件。
    - 剧情时间落点：具体时间范围与起止时点（时/日/旬/月/季/年，非机械编号；跨章时间不回退，时长随剧情，不机械排满一天）。
    - 本章推进骨架：按所选【章节微拍】节奏，逐拍写清场景地点、在场人物、具体冲突与事件动作（建议5-8环节，密而留白，不套字数）。
@@ -3626,6 +3631,9 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
 - 格式严格如下（段名顶格）：
 # 全校写作守则
 ## 配方锚点
+## 风格融合总纲
+## 风格施工规则
+## 风格验收标准
 ## 可执行纪律
 # 全书章节标题总表
 第1章 《标题》
@@ -3633,6 +3641,7 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
 …（连排到最后一章）
 # 逐章教案
 第1章 《标题》
+- 本章风格施工指令：……
 - 功能与位置：……
 - 剧情时间落点：……
 - 本章推进骨架：……
@@ -3737,6 +3746,7 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 
 【任务】
 ① 对组内每一章产出一份教案，逐章齐全直到本组最后一章。每份教案固定字段（一个不少）：
+- 本章风格施工指令：严格继承校长已经裁决好的【风格融合总纲】【风格施工规则】；按本章场景/人物/节拍逐项翻译成可执行的表达指令。只负责‘怎么写’，不得改写本章剧情教案，也不得重新裁决风格冲突。
 - 功能与位置：本章在本组 / 全书中的角色
 - 剧情时间落点：给出本章正文发生的时间范围（如"从 第X日·清晨 到 第X日·傍晚"，或口语化"第二日清晨到次日傍晚，即第三日傍晚"）。三条松守则——仅防"多章时间倒退/重叠/换算错位"，绝不限制创作自由：
   (1) 落点让读者与正文不再错位即可：尽量给"第X日·时段"的绝对日序；若你想用"次日/翌日/次晨"等相对词，顺手换算一句（如"次日=第三日"）即可，不必硬性禁用。
@@ -3753,6 +3763,7 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 - 只输出纯文本 Markdown；禁止 JSON、禁止用三个反引号围栏包裹输出、禁止额外说明/开场白/结束语。
 - 严格按章编号逐章输出直到本组最后一章，最后附上交接板块：
 第X章 《标题》
+- 本章风格施工指令：…
 - 功能与位置：…
 - 剧情时间落点：…
 - 本章推进骨架：①… → ②… → ③… → ④… → ⑤… → ⑥… → ⑦… → ⑧…
@@ -3771,6 +3782,7 @@ function buildTeacherUser(g, gi){
   const o = state.outline || {};
   const lines = [];
   lines.push(`【全校写作守则】\n${(pr.raw && extractSection(pr.raw,'全校写作守则','各组组级框架')) || '（校长未产出守则）'}`);
+  lines.push(`【校长已裁决的风格融合总纲】\n${principalStyleExecutionExcerpt()}`);
   lines.push(`【本组组级框架（组${gi+1}·老师${gi+1}，第${g.first}-${g.last}章）】\n${(pr.raw && extractSection(pr.raw,'各组组级框架','全书章节标题总表')) || (pr.raw || '（校长未产出组级框架）')}`);
   lines.push(`【本组章节标题】\n${scGroupTitles(g).join('\n')}`);
   const _bc = currentBeatCfg ? currentBeatCfg() : null;
@@ -6149,7 +6161,7 @@ function writeStyleCard(){
   const draft = wsDraft || st;
   const dirty = !!wsDraft && wsDraftDirty(wsDraft, st);
   const selName = (draft.tags||[]).map(id=>{ const s=writeStyleById(id); return s?s.name:id; }).join(' + ') || '无';
-  const sumTxt = (dirty?'⚠️ 待应用':'✔ 已生效')+' · '+(draft.tags||[]).length+' 项 · '+selName;
+  const sumTxt = (dirty?'⚠️ 待应用':'✔ 已生效')+' · 🔒 表达层'+((draft.tags||[]).length?'已锁定':'待选择')+' · '+(draft.tags||[]).length+' 项 · '+selName;
   return `<div class="card ws-card card-theme-style${st.collapsed?' ws-collapsed':''}" data-cs="${wsColorSchemeId()}">
     <div class="ws-head card-head-bar" data-ws-fold role="button" tabindex="0" title="展开/收起">
       <div class="ch-left">
@@ -6668,15 +6680,16 @@ function closeStyleLibReader(){ const p=$('#wsLibReader'); if(p) p.remove(); }
 // ==================== v1.0.228 侧边导航（顺序重排） ====================
 // v1.0.228：把原「设/构/典/规/文」5 步侧边条重排为用户指定的 7 个快捷入口，顺序：构→简→典→规→方→万→正。
 // 每项 = [标签, 目标选择器]；仅当页面真实存在该目标时才渲染该按钮（短片等缺失项自动隐藏），点击平滑滚动到对应功能位置。
-// v1.0.306 学校模式：侧边导航按线上顺序（构→节→配→典→充→校→正）
+// v1.0.322 创作决策链 2.0：侧边导航按「先定表达→再优化故事→再锁定执行」顺序（风→构→配→节→典→充→校→正）
 const FLOW_NAV = [
-  ['构','[data-flow="1"]'],     // 大纲/文案
-  ['节','[data-flow="2"]'],     // 全书节拍
-  ['配','[data-flow="3"]'],     // 写作配方（AI配方助手 + 写作风格）
-  ['典','[data-flow="4"]'],     // 词典达人
-  ['充','[data-flow="5"]'],     // 词典充实
-  ['校','[data-flow="6"]'],     // 校长/学校统筹
-  ['正','[data-flow="7"]']      // 正文作家 · 章节创作
+  ['风','[data-flow="1"]'],     // 用户写作风格：表达层最高权威
+  ['构','[data-flow="2"]'],     // 原始构想 + 优化构想：AI建议层
+  ['配','[data-flow="3"]'],     // 写作配方：把已锁定风格转成可执行规则
+  ['节','[data-flow="4"]'],     // 全书节拍
+  ['典','[data-flow="5"]'],     // 词典达人
+  ['充','[data-flow="6"]'],     // 词典充实
+  ['校','[data-flow="7"]'],     // 校长/学校统筹
+  ['正','[data-flow="8"]']      // 正文作家 · 章节创作
 ];
 function flowNavItems(){
   return FLOW_NAV.filter(([,sel])=>{ try{ return !!(document && document.querySelector(sel)); }catch(e){ return false; } });
@@ -6791,8 +6804,15 @@ function viewStory(){
       : '用几句话描述你的点子（世界观、主角、核心冲突都行）。AI 会扩写成完整故事大纲与章节。';
     return CYBER_HOME_GRID + `
     <div class="flow-wrap">
-      <section class="flow-sec" data-flow="1">
-        <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">大纲 / 构想</span><span class="fs-note">构想比选 · 书名拟定 · 故事大纲</span></div>
+            <section class="flow-sec" data-flow="1">
+        <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">写作风格</span><span class="fs-note">用户先定表达方式 · 全书共享 · 表达层最高权威</span></div>
+        <div class="flow-style-lock-note" style="margin:0 0 10px;padding:9px 12px;border:1px solid var(--line,#ddd);border-radius:10px;background:var(--card,#fff);font-size:12px;line-height:1.7">
+          🔒 <b>表达层最高权威</b>：这里确定「怎么写」。后续优化构想只能提供创意建议，不得偷偷改写你已经选定的写作风格。
+        </div>
+        ${ safeCard(()=>writeStyleCard()) }
+      </section>
+<section class="flow-sec" data-flow="2">
+        <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">故事构想与优化</span><span class="fs-note">先保留原始灵感，再由 AI 提供可选优化方案</span></div>
         <div class="card card-theme-idea">
           <div class="card-head-bar">
             <div class="ch-left">
@@ -6857,30 +6877,30 @@ function viewStory(){
           <p id="outlineStatus" class="status"></p>
         </div>
       </section>
-      <section class="flow-sec" data-flow="2">
-        <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书主线节奏划分剧情阶段（本地映射）</span></div>
+<section class="flow-sec" data-flow="3">
+        <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">写作配方</span><span class="fs-note">把已锁定风格翻译成可执行规则 · 全书共享</span></div>
+        ${ safeCard(()=>aiRecipeCard()) }
+        
+      </section>
+<section class="flow-sec" data-flow="4">
+        <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书主线节奏划分剧情阶段（本地映射）</span></div>
         ${ safeCard(()=> isLong() ? beatStructureCardHtml() : '') }
       </section>
-      <section class="flow-sec" data-flow="3">
-        <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">写作配方</span><span class="fs-note">AI 配方助手 · 写作风格基调 · 全书共享</span></div>
-        ${ safeCard(()=>aiRecipeCard()) }
-        ${ safeCard(()=>writeStyleCard()) }
-      </section>
-      <section class="flow-sec" data-flow="4">
-        <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">词典达人</span><span class="fs-note">全局设定架构师 · 人物/法宝/地理/规则硬设定</span></div>
+<section class="flow-sec" data-flow="5">
+        <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典达人</span><span class="fs-note">全局设定架构师 · 人物/法宝/地理/规则硬设定</span></div>
         ${ safeCard(()=>dictMasterBlockHtml()) }
       </section>
-      <section class="flow-sec" data-flow="5">
-        <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典充实</span><span class="fs-note">设定细化工坊 · 感官特征 · 场景禁忌 · 氛围龙套</span></div>
+<section class="flow-sec" data-flow="6">
+        <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">词典充实</span><span class="fs-note">设定细化工坊 · 感官特征 · 场景禁忌 · 氛围龙套</span></div>
         ${ safeCard(()=>dictEnrichBlockHtml()) }
       </section>
-      <section class="flow-sec" data-flow="6">
-        <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">学校统筹</span><span class="fs-note">章节微拍 → 校长全局总控 → 老师分段备课</span></div>
+<section class="flow-sec" data-flow="7">
+        <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">学校统筹</span><span class="fs-note">章节微拍 → 校长全局总控 → 老师分段备课</span></div>
         ${ safeCard(()=>microBeatBlock()) }
         ${ safeCard(()=>schoolZoneBlock()) }
       </section>
-      <section class="flow-sec" data-flow="7">
-        <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
+<section class="flow-sec" data-flow="8">
+        <div class="flow-sec-head"><span class="fs-no">8</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
         ${ safeCard(()=>glossaryCardHtml()) }
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
           <label class="long-jump"><span>跳到章节：</span>
@@ -6925,11 +6945,18 @@ function viewStory(){
   }
   // 大纲已生成
   const o = state.outline;
-  // v1.0.306 学校模式界面：生成大纲后按 demo「配方→大纲/文案→全书节拍→词典达人→词典充实→校长→学生·正文」顺序排列（规划师撤换）
+  // v1.0.323 创作决策链 2.0：生成大纲后仍保持「风格→构想→配方→节拍→词典→学校→正文」顺序，避免 UI 与 AI 权限链脱节
   let html = `
   <div class="flow-wrap">
-    <section class="flow-sec" data-flow="1">
-      <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">大纲 / 构想</span><span class="fs-note">构想比选 · 书名拟定 · 故事大纲</span></div>
+        <section class="flow-sec" data-flow="1">
+      <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">写作风格</span><span class="fs-note">用户先定表达方式 · 全书共享 · 表达层最高权威</span></div>
+      <div class="flow-style-lock-note" style="margin:0 0 10px;padding:9px 12px;border:1px solid var(--line,#ddd);border-radius:10px;background:var(--card,#fff);font-size:12px;line-height:1.7">
+        🔒 <b>表达层最高权威</b>：这里确定「怎么写」。后续优化构想只能提供创意建议，不得偷偷改写你已经选定的写作风格。
+      </div>
+      ${ safeCard(()=>writeStyleCard()) }
+    </section>
+<section class="flow-sec" data-flow="2">
+      <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">故事构想与优化</span><span class="fs-note">先保留原始灵感，再由 AI 提供可选优化方案</span></div>
       <div class="card card-theme-idea">
         <div class="card-head-bar">
           <div class="ch-left">
@@ -6965,30 +6992,30 @@ function viewStory(){
       <div class="so-logline" ${state.soCollapsed?'hidden':''}>${renderLoglineHtml(o.logline||'')||'（暂无简介，点✎编辑或重新生成大纲）'}</div>
     </div>
     </section>
-    <section class="flow-sec" data-flow="2">
-      <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书主线节奏划分剧情阶段（本地映射）</span></div>
+<section class="flow-sec" data-flow="3">
+      <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">写作配方</span><span class="fs-note">把已锁定风格翻译成可执行规则 · 全书共享</span></div>
+      ${ aiRecipeCard() }
+      
+    </section>
+<section class="flow-sec" data-flow="4">
+      <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书主线节奏划分剧情阶段（本地映射）</span></div>
       ${ isLong() ? beatStructureCardHtml() : '' }
     </section>
-    <section class="flow-sec" data-flow="3">
-      <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">写作配方</span><span class="fs-note">AI 配方助手 · 写作风格基调 · 全书共享</span></div>
-      ${ aiRecipeCard() }
-      ${ writeStyleCard() }
-    </section>
-    <section class="flow-sec" data-flow="4">
-      <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">词典达人</span><span class="fs-note">全局设定架构师 · 人物/法宝/地理/规则硬设定</span></div>
+<section class="flow-sec" data-flow="5">
+      <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典达人</span><span class="fs-note">全局设定架构师 · 人物/法宝/地理/规则硬设定</span></div>
       ${ dictMasterBlockHtml() }
     </section>
-    <section class="flow-sec" data-flow="5">
-      <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典充实</span><span class="fs-note">设定细化工坊 · 感官特征 · 场景禁忌 · 氛围龙套</span></div>
+<section class="flow-sec" data-flow="6">
+      <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">词典充实</span><span class="fs-note">设定细化工坊 · 感官特征 · 场景禁忌 · 氛围龙套</span></div>
       ${ dictEnrichBlockHtml() }
     </section>
-    <section class="flow-sec" data-flow="6">
-      <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">学校统筹</span><span class="fs-note">章节微拍 → 校长全局总控 → 老师分段备课</span></div>
+<section class="flow-sec" data-flow="7">
+      <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">学校统筹</span><span class="fs-note">章节微拍 → 校长全局总控 → 老师分段备课</span></div>
       ${ microBeatBlock() }
       ${ schoolZoneBlock() }
     </section>
-    <section class="flow-sec" data-flow="7">
-      <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
+<section class="flow-sec" data-flow="8">
+      <div class="flow-sec-head"><span class="fs-no">8</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
         ${ glossaryCardHtml() }
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
           <label class="long-jump"><span>跳到章节：</span>
@@ -12891,7 +12918,7 @@ function splitChapterCastout(prose){
 // v2.4 章节 User 组装：按用户指定优先级（人工干预 > 写作风格 > 词典）——
 // ① 写作风格（第一优先）② 上一章真实正文（必须接着写）③ 本章任务+节拍表 ④ 本章/下一章边界（禁越界，末章收束）⑤ 大纲/结构/词典 ⑥ 人工干预（重生成，最高优先）
 // 不注入"全部章节标题"（v2.3 零夹带）；词典全字段经 chapterGlossaryBlock 注入。
-const USER_PRIO_BILL = '\n\n【优先级契约】当同时存在多条用户要求时，按此裁决（高→低）：写作风格（第一优先，压过所有） > 人工干预要求 > 设定词典。前者与后者冲突时以前者为准；设定词典中有台词/有戏份/反复出现的重要人地专名一致性为不可逾越红线，任何要求不得破坏；仅作氛围的临时路人/小地名/小专名（见正文【临时闲人】段）不属红线，可现场点缀、不入词典；上一章全文（如有）为承接类事实的最高权威，任何要求不得使其另起炉灶。';
+const USER_PRIO_BILL = '\n\n【优先级契约（按维度裁决，禁止把不同维度混成一个选择题）】\n1. 表达层最高权威：用户已选写作风格。它决定怎么写（叙事、对白、语言质感、节奏表现、情绪表达、幽默/悬疑/治愈等表现机制），不得被优化构想或正文模型重新改写。\n2. 剧情层最高权威：本章老师教案。它决定写什么（事件、顺序、转折、出场、时间、承接与收束）；写作风格不得删改教案事件。\n3. 全书一致性权威：万物词典 + 上一章已落地事实 + 校长/老师已裁决的连续性规则。\n4. 人工干预只能在不破坏以上三层的前提下补充；若人工干预与用户风格冲突，保留用户风格；若与老师教案冲突，不得擅改教案核心事件。\n5. 优化构想只是创意建议：仅当校长已判断其与用户风格兼容时才执行；不得在正文阶段自行把优化构想升级成新的风格权威。\n设定词典中有台词/有戏份/反复出现的重要人地专名一致性为不可逾越红线；仅作氛围的临时路人/小地名/小专名（见正文【临时闲人】段）不属红线，可现场点缀、不入词典；上一章全文（如有）为承接类事实的最高权威，任何要求不得使其另起炉灶。';
 // 4.5 buildChapterUser 升级：L1 节拍表 / L2 上一章节拍表(优先)或上一章全文 / L3 相关词典（替代全量词典）/ L4 滚动摘要；
 // 原边界逻辑（本章任务/本章边界/下一章边界/末章收束/开篇与上章兜底说明）按 4.5 方案要求保留。
 // 4.8 旗舰版（板块一-2）：上下文长度预算器。按优先级从低到高（L4→L3→简介→L1 详细说明）逐级裁剪，
@@ -12963,6 +12990,21 @@ function chapterTailExcerpt(i, maxChars=420){
   }
   return s;
 }
+// v11.1：提取校长已经完成冲突裁决后的「风格施工层」。老师只翻译，不再重新选风格。
+function principalStyleExecutionExcerpt(){
+  const pr = (state.school && state.school.principal) || {};
+  if(pr.raw){
+    const raw = String(pr.raw);
+    const a = raw.indexOf('## 风格融合总纲');
+    const b = raw.indexOf('## 可执行纪律', a >= 0 ? a : 0);
+    if(a >= 0){
+      const end = b > a ? b : Math.min(raw.length, a + 9000);
+      const sec = raw.slice(a, end).trim();
+      if(sec) return sec;
+    }
+  }
+  return '（校长尚未产出新版风格施工层；请严格继承用户当前已选写作风格，不自行引入优化构想风格。）';
+}
 // 提取校长写作守则与文风人设金句
 function principalRulesExcerpt(){
   const pr = (state.school && state.school.principal) || {};
@@ -13022,6 +13064,12 @@ function buildChapterUser(i, opt={}){
 ${pRules}
 【守则红线】严格遵守全书统一文风、人物说话口吻与人设底线，严禁行文中人设漂移或出现现代违和口语。`);
     }
+    const pStyle = principalStyleExecutionExcerpt();
+    if(pStyle){
+      parts.push(`【第一层附录 · 已裁决风格施工层（只决定怎么写，不决定写什么）】
+${pStyle}
+执行原则：这是校长已经完成的风格冲突裁决结果。你不得在正文阶段重新选择‘轻松/悬疑/治愈/冷峻’等风格组合；只需按本章教案把既定风格落到具体场景、对白、叙事、节奏与情绪。`);
+    }
 
     // 3. 第二层：中观层（静态指导 · 单源真理超级教案）
     parts.push(`【第二层 · 中观层（静态指导 · 单源真理超级教案）】
@@ -13029,6 +13077,7 @@ ${pRules}
 ——— 本章超级教案开始 ———
 ${_lesson}
 ——— 本章超级教案结束 ———`);
+    parts.push(`【正文执行锁】风格冲突已在校长层解决、场景化施工已在老师层解决；正文阶段禁止再次进行风格方案选择。你只需把‘本章风格施工指令’稳定落实到教案规定的事件中：同一事件可以换不同文学写法，但不得改变事件本身、不得新增一套风格体系。`);
 
     // 4. 第三层：微观层（动态滚入 · 物理事实与动态战报包）
     const microParts = [];

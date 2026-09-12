@@ -2048,3 +2048,25 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 #app .sc-plan-btn.sc-plan-apply-t:hover { background: color-mix(in srgb, var(--accent) 25%, var(--panel)); transform: translateY(-1px); }
 #app .sc-plan-btn.sc-plan-apply-t.applied { border-color: color-mix(in srgb, #22c55e 50%, var(--line)); color: #16a34a; background: color-mix(in srgb, #22c55e 12%, transparent); }
 
+
+
+/* v1.0.324 创作决策链 2.0 UI：明确表达层、建议层与执行层 */
+.flow-sec[data-flow="1"]{border-color:color-mix(in srgb,var(--accent) 48%,var(--line));background:color-mix(in srgb,var(--accent) 4%,transparent)}
+.flow-sec[data-flow="1"] > .flow-sec-head{border-bottom-color:color-mix(in srgb,var(--accent) 28%,var(--line))}
+.flow-sec[data-flow="1"] > .flow-sec-head .fs-no{background:var(--accent)}
+.flow-style-lock-note{margin:4px 0 10px;padding:9px 11px;border:1px solid color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent) 7%,var(--panel2));color:var(--sub);font-size:11.5px;line-height:1.65}
+.flow-style-lock-note b{color:var(--txt)}
+.flow-sec[data-flow="2"]{border-style:dashed}
+.flow-sec[data-flow="2"] > .flow-sec-head .fs-no{background:var(--accent2)}
+.flow-sec[data-flow="2"] .pol-box{border-style:dashed}
+.flow-sec[data-flow="2"] .pol-cand{border-left-style:dashed}
+.flow-sec[data-flow="3"]{background:color-mix(in srgb,var(--panel2) 42%,transparent)}
+.flow-sec[data-flow="3"] > .flow-sec-head .fs-no{background:var(--accent2)}
+.flow-sec[data-flow="7"] > .flow-sec-head .fs-no,
+.flow-sec[data-flow="8"] > .flow-sec-head .fs-no{background:var(--accent)}
+.flow-sec[data-flow="8"]{border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+
+@media(max-width:560px){
+  .flow-style-lock-note{font-size:11px;padding:8px 9px}
+  .flow-sec > .flow-sec-head{gap:7px}
+}
