@@ -2002,7 +2002,9 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 #app .sc-tc-b .sc-teacher{flex:1}
 /* 一键开学 主按钮放大 */
 #app .sc-step.sc-runall{font-size:13px;padding:8px 18px;border-radius:11px}
-#app .school-steps{gap:8px;align-items:center}
+#app .school-steps{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+#app .school-steps-main{display:flex;align-items:center;gap:8px}
+#app .school-steps-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
 /* v1.0.316：学校操作行——「一键开学」居左、「读校长产出」顶到最右，弹性占位撑开 */
 #app .school-spacer{flex:1 1 auto}
 /* v1.0.316：读校长产出 放大 2 倍（原 10.5px/小内边距 → 13px、更大内边距、更醒目） */
@@ -2011,13 +2013,13 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 /* v1.0.307：未填章节数时老师区的可见占位（避免用户误以为没有老师卡） */
 #app .sc-teachers-ph{grid-column:1 / -1;display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px dashed color-mix(in srgb, var(--accent) 38%, var(--line));border-radius:10px;background:color-mix(in srgb, var(--accent) 6%, transparent);color:var(--muted);font-size:12.5px;line-height:1.6}
 
-/* E1 彩虹标签分色（WCAG AA）与教案交互 */
-.sc-tag-blue { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
-.sc-tag-green { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-.sc-tag-amber { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
-.sc-tag-purple { background: #f3e8ff; color: #6b21a8; border: 1px solid #d8b4fe; }
-.sc-tag-pink { background: #fce7f3; color: #be185d; border: 1px solid #f472b6; }
-.sc-tag-teal { background: #ccfbf1; color: #0f766e; border: 1px solid #5eead4; }
+/* E1 彩虹标签分色（WCAG AA 全主题自适应）与教案交互 */
+.sc-tag-blue { background: color-mix(in srgb, #0284c7 14%, var(--panel2)); color: color-mix(in srgb, #0284c7 85%, var(--txt)); border: 1px solid color-mix(in srgb, #0284c7 35%, var(--line)); }
+.sc-tag-green { background: color-mix(in srgb, #16a34a 14%, var(--panel2)); color: color-mix(in srgb, #16a34a 85%, var(--txt)); border: 1px solid color-mix(in srgb, #16a34a 35%, var(--line)); }
+.sc-tag-amber { background: color-mix(in srgb, #d97706 14%, var(--panel2)); color: color-mix(in srgb, #d97706 85%, var(--txt)); border: 1px solid color-mix(in srgb, #d97706 35%, var(--line)); }
+.sc-tag-purple { background: color-mix(in srgb, #9333ea 14%, var(--panel2)); color: color-mix(in srgb, #9333ea 85%, var(--txt)); border: 1px solid color-mix(in srgb, #9333ea 35%, var(--line)); }
+.sc-tag-pink { background: color-mix(in srgb, #db2777 14%, var(--panel2)); color: color-mix(in srgb, #db2777 85%, var(--txt)); border: 1px solid color-mix(in srgb, #db2777 35%, var(--line)); }
+.sc-tag-teal { background: color-mix(in srgb, #0d9488 14%, var(--panel2)); color: color-mix(in srgb, #0d9488 85%, var(--txt)); border: 1px solid color-mix(in srgb, #0d9488 35%, var(--line)); }
 
 .sc-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 750; line-height: 1.3; }
 .sc-kf-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }

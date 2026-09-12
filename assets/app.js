@@ -294,7 +294,10 @@ function _sndSingleType(){ try{ const v = localStorage.getItem(SND_TSINGLE_KEY);
 function _sndAllType(){   try{ const v = localStorage.getItem(SND_TALL_KEY);   return SND_ALL_PRESETS.some(x=>x.id===v) ? v : 'al_up2';   }catch(e){ return 'al_up2';   } }
 function setSoundSingleType(id){ try{ if(SND_SINGLE_PRESETS.some(x=>x.id===id)) localStorage.setItem(SND_TSINGLE_KEY, id); }catch(e){} }
 function setSoundAllType(id){   try{ if(SND_ALL_PRESETS.some(x=>x.id===id))   localStorage.setItem(SND_TALL_KEY,   id); }catch(e){} }
-function playDoneSound(kind){ // kind:'single' 单个完成 | 'all' 全部完成 —— 各用各的音色库
+let _lastSoundTs = 0;
+let _lastSoundKind = '';
+let _soundTimer = null;
+function _doPlaySound(kind){
   if(!_snd.enabled) return;
   unlockAudio();
   if(!_snd.ctx || _snd.ctx.state !== 'running') return;
@@ -302,6 +305,28 @@ function playDoneSound(kind){ // kind:'single' 单个完成 | 'all' 全部完成
   const id  = (kind==='all') ? _sndAllType()   : _sndSingleType();
   const p = lib.find(x=>x.id===id) || lib[0];
   (p.seq||[]).forEach(s=> _sndBeep(s[0], s[1], s[2]));
+}
+function playDoneSound(kind){ // kind:'single' 单个完成 | 'all' 全部完成 —— 各用各的音色库，智能去重防冲突
+  if(!_snd.enabled) return;
+  const now = Date.now();
+  if(kind === 'all'){
+    if(_soundTimer){ clearTimeout(_soundTimer); _soundTimer = null; }
+    _lastSoundTs = now;
+    _lastSoundKind = 'all';
+    _doPlaySound('all');
+    return;
+  }
+  if(kind === 'single'){
+    // 如果刚刚播过全部完成音，350ms 内忽略冗余的单步音
+    if(now - _lastSoundTs < 450 && _lastSoundKind === 'all') return;
+    if(_soundTimer) clearTimeout(_soundTimer);
+    _soundTimer = setTimeout(()=>{
+      _soundTimer = null;
+      _lastSoundTs = Date.now();
+      _lastSoundKind = 'single';
+      _doPlaySound('single');
+    }, 120);
+  }
 }
 // v1.0.305：填充「主题面板」里单个完成 / 全部完成各自的 6 种音色下拉并绑定试听（幂等）
 function initThemeSoundPanel(){
@@ -3250,16 +3275,35 @@ function teacherChapterPlan(ci){
  * 每步最多显式重试 SCHOOL_RETRY_MAX=16 次，失败在按钮名右上角亮红角标 ↻N（成功清零）。
  * ========================================================= */
 const SCHOOL_RETRY_MAX = 16;
+function scHealState(){
+  const sc = state.school;
+  if(!sc || typeof sc !== 'object') return;
+  sc.finished = sc.finished || {};
+  if(sc.principal && sc.principal.raw && String(sc.principal.raw).trim()){
+    sc.finished.principal = true;
+    if(isSchoolFolded() || sc.principal.folded){
+      sc.finished.t0 = true;
+    }
+  }
+  if(Array.isArray(sc.teachers)){
+    sc.teachers.forEach((t, i)=>{
+      if(t && t.raw && String(t.raw).trim()){
+        sc.finished['t'+i] = true;
+      }
+    });
+  }
+}
 function scState(){
   if(!state.school || typeof state.school !== 'object') state.school = {};
   state.school.finished = state.school.finished || {};
   state.school.retries  = state.school.retries  || {};
   state.school.teachers = Array.isArray(state.school.teachers) ? state.school.teachers : [];
+  scHealState();
   return state.school;
 }
 function scRetry(key){ return scState().retries[key] || 0; }
 function setScRetry(key, n){ scState().retries[key] = Math.max(0, Math.min(SCHOOL_RETRY_MAX, n||0)); persist(); }
-function scDone(key){ const sc = state.school; return !!(sc && sc.finished && sc.finished[key]); }
+function scDone(key){ const sc = scState(); return !!(sc && sc.finished && sc.finished[key]); }
 function scMark(key, done){ const sc = scState(); sc.finished[key] = !!done; if(done) setScRetry(key, 0); persist(); }
 function scBadge(key){
   const n = scRetry(key);
@@ -3402,6 +3446,28 @@ function applyPrincipalTitles(){
   if(!titles.length){ toast('未检测到校长拟定的标题'); return false; }
   if(!state.outline) state.outline = { chapters: [] };
   if(!Array.isArray(state.outline.chapters)) state.outline.chapters = [];
+
+  // 检查是否与当前已有非空标题存在差异
+  const diffs = [];
+  titles.forEach(t => {
+    const idx = t.num - 1;
+    const cur = state.outline.chapters[idx];
+    const curTitle = cur && String(cur.title || '').trim();
+    if(curTitle && curTitle !== t.title){
+      diffs.push({ num: t.num, oldTitle: curTitle, newTitle: t.title });
+    }
+  });
+
+  if(diffs.length > 0){
+    showTitleDiffModal(titles, diffs);
+    return true;
+  }
+  return doApplyTitles(titles);
+}
+
+function doApplyTitles(titles){
+  if(!state.outline) state.outline = { chapters: [] };
+  if(!Array.isArray(state.outline.chapters)) state.outline.chapters = [];
   const maxNum = Math.max(...titles.map(t=>t.num), state.outline.chapters.length);
   while(state.outline.chapters.length < maxNum){
     state.outline.chapters.push({ title: '' });
@@ -3424,6 +3490,46 @@ function applyPrincipalTitles(){
   render();
   toast(`已成功将校长拟定的 ${titles.length} 章标题应用到全书大纲与章节！`);
   return true;
+}
+
+function showTitleDiffModal(titles, diffs){
+  const ov = document.createElement('div');
+  ov.className = 'gs-overlay';
+  ov.innerHTML = `<div class="gs-modal sc-diff-modal" style="max-width:540px;">
+    <div class="gs-modal-head">
+      <b>✨ 选用校长拟定标题</b>
+      <span class="sc-plan-meta muted">检测到 ${diffs.length} 处既有标题变更</span>
+      <button class="gs-x" data-diff-close>✕</button>
+    </div>
+    <div class="sc-diff-body" style="padding:14px 16px;max-height:60vh;overflow-y:auto">
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px;line-height:1.5">
+        校长拟定共 <b>${titles.length}</b> 章标题。其中 <b>${diffs.length}</b> 处与当前已存在标题不同。请确认是否统一替换为校长拟定标题：
+      </div>
+      <div class="sc-diff-list" style="display:flex;flex-direction:column;gap:6px">
+        ${diffs.map(d => `
+          <div class="sc-diff-item" style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);font-size:12px">
+            <span style="font-weight:750;color:var(--accent);min-width:48px">第${d.num}章</span>
+            <span style="color:var(--muted);text-decoration:line-through;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.oldTitle)}</span>
+            <span style="color:var(--accent)">➔</span>
+            <span style="color:var(--txt);font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.newTitle)}</span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+    <div class="sc-diff-foot" style="display:flex;justify-content:flex-end;gap:10px;padding:12px 16px;border-top:1px solid var(--line)">
+      <button type="button" class="btn ghost" data-diff-cancel>取消</button>
+      <button type="button" class="btn primary" data-diff-confirm>确认替换 (${titles.length}章)</button>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close = ()=> ov.remove();
+  ov.querySelector('[data-diff-close]').onclick = close;
+  ov.querySelector('[data-diff-cancel]').onclick = close;
+  ov.addEventListener('click', e=>{ if(e.target===ov) close(); });
+  ov.querySelector('[data-diff-confirm]').onclick = ()=>{
+    close();
+    doApplyTitles(titles);
+  };
 }
 function scGroupTitles(g){
   const out = [];
@@ -3765,6 +3871,7 @@ function bindSchoolSteps(){
   $$('[data-scp-plan]').forEach(b=>{ b.onclick = ()=> openSchoolPlanReader(+b.dataset.scpPlan); });
   const pv = $('[data-scp-plan-pr]');
   if(pv) pv.onclick = ()=> openSchoolPrincipalReader();
+  bindPlannerSoundTool();
 }
 
 // —— 彩色标签分级函数 ——
@@ -3830,9 +3937,10 @@ function splitTeacherPlanChapters(raw){
 }
 let _planCUR_GI = 0, _planCUR_VIEW = 'card';
 function openSchoolPlanReader(gi, jumpCh){
-  const sc = state.school, t = sc && sc.teachers && sc.teachers[gi];
+  const sc = scState();
+  const t = sc && sc.teachers && sc.teachers[gi];
   const g = schoolStageGroups()[gi];
-  if(!t || !g){ toast(t ? '未找到该分组' : '该组教案尚未生成，请先让老师备课'); return; }
+  if(!g){ toast('未找到该章节分组'); return; }
   _planCUR_GI = gi; _planCUR_VIEW = 'card';
   const n = g.last - g.first + 1;
   const ov = document.createElement('div'); ov.className='gs-overlay';
@@ -3858,8 +3966,41 @@ function openSchoolPlanReader(gi, jumpCh){
   if(jumpCh){ setTimeout(()=>{ const el = ov.querySelector('#planCh-'+jumpCh); if(el){ el.style.transition='box-shadow .5s,background .5s'; el.style.boxShadow='0 0 0 2px var(--accent)'; el.style.background='color-mix(in srgb, var(--accent) 12%, transparent)'; setTimeout(()=>{ el.style.boxShadow=''; el.style.background=''; },1600); el.scrollIntoView({block:'center',behavior:'smooth'}); } },80); }
 }
 function renderSchoolPlanBody(ov, gi, jumpCh){
-  const g = schoolStageGroups()[gi]; const t = state.school.teachers[gi];
+  const g = schoolStageGroups()[gi];
+  const sc = scState();
+  const t = sc.teachers && sc.teachers[gi];
+  const isFolded = isSchoolFolded();
   const body = ov.querySelector('#scPlanBody'); if(!body || !g) return;
+
+  // 空态：尚未备课时提供指引与直接备课按钮，不再死拦截
+  if(!t || !t.raw || !String(t.raw).trim()){
+    body.innerHTML = `
+      <div class="sc-plan-empty" style="text-align:center;padding:42px 20px;display:flex;flex-direction:column;align-items:center;gap:12px;">
+        <span style="font-size:38px;opacity:0.85">📖</span>
+        <h4 style="margin:0;font-size:16px;font-weight:750;color:var(--txt)">本组逐章教案尚未生成</h4>
+        <p style="margin:0;font-size:13px;color:var(--muted);max-width:380px;line-height:1.6">
+          ${isFolded ? `全书共 ${g.last} 章（≤20章折叠模式）。校长兼任课教师可一次性统筹出齐守则、章节标题与逐章教案。` : `本组负责第 ${g.first} 至 ${g.last} 章（共 ${g.last - g.first + 1} 章${g.stage ? ' · ' + g.stage : ''}）。点击下方按钮开始备课。`}
+        </p>
+        <button type="button" class="btn primary" id="scEmptyPlanStart" style="padding:9px 24px;border-radius:10px;font-size:13.5px;font-weight:750;margin-top:8px">
+          ${isFolded ? '👑兼🎓 立即直接备课' : `🎓 立即让老师${gi+1}备课`}
+        </button>
+      </div>
+    `;
+    const btn = body.querySelector('#scEmptyPlanStart');
+    if(btn){
+      btn.onclick = async ()=>{
+        ov.remove();
+        if(isFolded){
+          await nailRetry('principal', '校长兼老师备课', ()=> genPrincipal(null), null);
+        } else {
+          await nailRetry('t'+gi, `老师${gi+1}备课`, ()=> genTeacher(null, gi), null);
+        }
+        openSchoolPlanReader(gi, jumpCh);
+      };
+    }
+    return;
+  }
+
   if(_planCUR_VIEW === 'raw'){ const d=document.createElement('pre'); d.className='sc-plan-raw'; d.textContent = t.raw; body.innerHTML=''; body.appendChild(d); return; }
   const blocks = splitTeacherPlanChapters(t.raw);
   const byCh = new Map(blocks.map(b=>[b.ch,b]));
@@ -3911,9 +4052,9 @@ function renderSchoolPlanBody(ov, gi, jumpCh){
       const oldVal = valCol.querySelector('.sc-kf-v').getAttribute('data-val-raw') || '';
       valCol.innerHTML = `
         <div class="sc-kf-edit-box" style="display:flex;flex-direction:column;gap:6px;width:100%;margin-top:4px;">
-          <textarea class="sc-kf-edit-input" style="width:100%;min-height:80px;font-size:13px;padding:6px;border-radius:4px;border:1px solid var(--accent);background:var(--bg-card);color:inherit;">${esc(oldVal)}</textarea>
+          <textarea class="sc-kf-edit-area" style="width:100%;min-height:85px;font-size:12.5px;padding:8px 10px;border-radius:8px;border:1px solid var(--accent);background:var(--panel);color:var(--txt);line-height:1.6;">${esc(oldVal)}</textarea>
           <div style="display:flex;gap:8px">
-            <button type="button" class="btn small primary" data-save>保存</button>
+            <button type="button" class="btn small primary" data-save>保存修改</button>
             <button type="button" class="btn small ghost" data-cancel>取消</button>
           </div>
         </div>
@@ -8126,10 +8267,13 @@ function schoolZoneBlock(){
         </div>
         ${schoolPipelineProgress()}
         <div class="school-steps">
-          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成；中断后可点上方各步单独续跑">⚡ 一键开学</button>
-          <span class="school-spacer"></span>
-          ${pTitles.length ? `<button type="button" class="sc-plan-btn sc-plan-apply-t ${titlesApplied?'applied':''}" data-scp-apply-titles title="校长已拟定 ${pTitles.length} 章标题，点击应用到全书大纲与正文列表">${titlesApplied ? '✓ 标题已选用' : `✨ 选用校长拟定标题 (${pTitles.length}章)`}</button>` : ''}
-          <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看校长统筹全局成果：全校写作守则 + 组级框架 + 全书章节标题总表">📋 读校长成果</button>
+          <div class="school-steps-main">
+            <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成；中断后可点上方各步单独续跑">⚡ 一键开学</button>
+          </div>
+          <div class="school-steps-tools">
+            ${pTitles.length ? `<button type="button" class="sc-plan-btn sc-plan-apply-t ${titlesApplied?'applied':''}" data-scp-apply-titles title="校长已拟定 ${pTitles.length} 章标题，点击应用到全书大纲与正文列表">${titlesApplied ? '✓ 标题已选用' : `✨ 选用校长拟定标题 (${pTitles.length}章)`}</button>` : ''}
+            <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看校长统筹全局成果：全校写作守则 + 组级框架 + 全书章节标题总表">📋 读校长成果</button>
+          </div>
         </div>
         <div class="school-teachers">
           ${tBody}
@@ -10301,19 +10445,42 @@ function bindView(){
       if(Number.isInteger(v) && v>=1 && v<=200){
         const _o = state.outline;
         const _hasTitle = _o && Array.isArray(_o.chapters) && _o.chapters.some(c=>c && String(c.title||'').trim());
-        // v1.0.118 已生成章节标题后锁定：拒绝静默修改章节数（v225/P5-B：占位态（标题全空）不锁，保持可改）
-        if(_hasTitle){
-          toast('已生成章节标题，全书章节数已锁定；如需修改请通过「历史版本」恢复不同章节数的大纲');
-          render(); return;
+        // 支持平滑增减章节，保留既有已生成标题与正文
+        if(_hasTitle && _o.chapters.length !== v){
+          const oldLen = _o.chapters.length;
+          const msg = oldLen > v
+            ? `全书章节数将由 ${oldLen} 章减少为 ${v} 章：前 ${v} 章已有标题与正文将完整保留，末尾 ${oldLen - v} 章将被裁减。确定继续？`
+            : `全书章节数将由 ${oldLen} 章增加为 ${v} 章：原有 ${oldLen} 章标题与正文将完整保留，后续 ${v - oldLen} 章将新增为空白待命。确定继续？`;
+          if(!confirm(msg)){
+            el.value = state.chapterCount || oldLen;
+            return;
+          }
+          if(v < oldLen){
+            _o.chapters = _o.chapters.slice(0, v);
+            if(Array.isArray(state.chapters)) state.chapters = state.chapters.slice(0, v);
+            if(Array.isArray(_o.chapterPlans)) _o.chapterPlans = _o.chapterPlans.slice(0, v);
+          } else {
+            while(_o.chapters.length < v){
+              _o.chapters.push({ title: '', summary: '' });
+            }
+            if(!Array.isArray(state.chapters)) state.chapters = [];
+            while(state.chapters.length < v){
+              state.chapters.push({ title: '', content: '' });
+            }
+          }
+          state.chapterCount = v;
+          toast(`全书章节数已平滑调整为 ${v} 章，既有内容已保留`);
         }
-        // v225/P5-B：占位态章节数变更——规划师已写过节拍表时显式确认并归档，再按新数量重建占位
-        if(_o && Array.isArray(_o.chapters) && _o.chapters.length>0 && _o.chapters.length !== v){
+        // 占位态章节数变更——规划师已写过节拍表时显式确认并归档，再按新数量重建占位
+        else if(_o && Array.isArray(_o.chapters) && _o.chapters.length>0 && _o.chapters.length !== v){
           const _hasPlans = Array.isArray(_o.chapterPlans) && _o.chapterPlans.some(Boolean);
           if(_hasPlans && !confirm(`规划师已生成过本章锚点/节拍表。章节数改为 ${v} 将按新数量重建章节占位（旧正文将清空重建）。继续？`)){ render(); return; }
           if(_hasPlans){ _o.chapterPlans = new Array(v).fill(null); }
           _o.chapters = Array.from({length:v}, ()=>({title:'', summary:''}));
+          state.chapterCount = v;
+        } else {
+          state.chapterCount = v;
         }
-        state.chapterCount = v;
       }
       else { state.chapterCount = null; toast('章节数需为 1-200 的整数'); }
       persist(); render();
