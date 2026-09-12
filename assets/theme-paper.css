@@ -6,8 +6,8 @@
 
 [data-theme="paper"] {
   --bg:#f7f2e9; --panel:#fffdf7; --panel2:#f1ead9; --line:#e2d8c2;
-  --txt:#33291d; --sub:#6e5f4a; --muted:#a2937a;
-  --accent:#c2703d; --accent2:#3d6e9e; --ok:#4e9a51; --warn:#c98a2b; --on-accent:#fff;
+  --txt:#33291d; --sub:#453725; --muted:#736048;
+  --accent:#b45309; --accent2:#1e588f; --ok:#2e7d32; --warn:#b45309; --on-accent:#fff;
   --radius:16px;
   --shadow:0 1px 3px rgba(80,60,30,0.08), 0 1px 2px rgba(80,60,30,0.05);
 }
@@ -123,3 +123,33 @@
 [data-theme="paper"] .cp-body .sub{ color:var(--sub); }
 [data-theme="paper"] .cp-body .muted{ color:var(--muted); }
 [data-theme="paper"] .cp-stream-preview{ background:var(--panel2); color:var(--txt); border-color:var(--line); }
+
+/* v10.56 章节标题卡片标题行：纸面柔和浅底 + 焙茶橙标 */
+[data-theme="paper"] .ct-head {
+  background: #fdfaf3;
+  color: var(--txt);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(80,60,30,0.06);
+}
+[data-theme="paper"] .ct-head b {
+  font-size: 14px;
+  color: var(--txt);
+  font-weight: 700;
+  text-shadow: none;
+}
+[data-theme="paper"] .ct-fold-ico { color: var(--accent); }
+[data-theme="paper"] .ct-head .ct-tools .btn {
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--txt);
+  text-shadow: none;
+}
+[data-theme="paper"] .ct-head .ct-tools .btn:hover {
+  background: var(--panel2);
+  border-color: var(--accent);
+  color: var(--accent);
+}

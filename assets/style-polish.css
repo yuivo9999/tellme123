@@ -512,3 +512,504 @@ input[type="checkbox"], input[type="radio"]{ accent-color: var(--accent); width:
 .gs-actions .btn[data-rp-plain]:active:not(:disabled){ transform:scale(.98); }
 .gs-actions .btn[data-rp-plain]:disabled,
 .gs-actions .btn[data-rp-plain].is-busy{ background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%); border:1px solid transparent; color:#fff; opacity:1; box-shadow:0 1px 6px rgba(245,158,11,.4); }
+
+/* ---------- 15. 模块卡片标题条与状态徽章标准化（阶段一重构） ---------- */
+.flow-sec-head{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px 10px;
+  font-weight: 700;
+  letter-spacing: .2px;
+}
+.flow-sec-head .fs-no{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--grad-primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  flex-shrink: 0;
+}
+.flow-sec-head .fs-name{
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--txt);
+  white-space: nowrap;
+}
+.flow-sec-head .fs-note{
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: 2px;
+}
+
+.dm-head, .cp-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: -14px -14px 12px -14px;
+  background: color-mix(in srgb, var(--panel2) 75%, transparent);
+  border-bottom: 1px solid var(--elev-border);
+  border-radius: var(--r-md) var(--r-md) 0 0;
+  font-weight: 700;
+  font-size: 14px;
+}
+.dm-head-single{
+  justify-content: flex-start;
+}
+.school-zone-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--panel2) 60%, transparent);
+  border: 1px solid var(--elev-border);
+  font-weight: 600;
+  font-size: 13px;
+}
+.school-zone-tip{
+  font-style: normal;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sc-pipe-steps{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sc-step{
+  white-space: nowrap;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+}
+
+/* 统一双层视觉轴标题条规范 (Dual-Axis Card Header Standard) */
+#app .card-head-bar{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  margin: -14px -14px 12px -14px;
+  background: var(--panel2, #1f232c);
+  border-bottom: 1px solid var(--elev-border, rgba(125, 125, 125, 0.15));
+  border-radius: var(--r-md, 12px) var(--r-md, 12px) 0 0;
+  min-height: 44px;
+  box-sizing: border-box;
+}
+
+#app .card-head-bar .ch-left{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+#app .card-head-bar .ch-right{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+#app .card-head-bar .ch-badge{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-sm, 8px);
+  font-size: 15px;
+  line-height: 1;
+  background: rgba(125, 125, 125, 0.12);
+  border: 1px solid rgba(125, 125, 125, 0.25);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  flex-shrink: 0;
+}
+
+#app .card-head-bar .ch-title{
+  margin: 0 !important;
+  padding-left: 0 !important;
+  font-size: clamp(14px, 4vw, 15.5px) !important;
+  font-weight: 750 !important;
+  color: var(--txt, #e7e9ee) !important;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+#app .card-head-bar .ch-title::before{
+  display: none !important;
+}
+
+#app .card-head-bar .ch-subtag{
+  display: inline-block;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  color: var(--muted, #9aa3b2);
+  background: rgba(125, 125, 125, 0.12);
+  border: 1px solid rgba(125, 125, 125, 0.2);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+/* 角色与功能专属徽章强调（超高特异度 + 纯正实色与鲜明透明度双层保障） */
+#app .ch-badge-idea{ background: rgba(59, 130, 246, 0.2) !important; border-color: rgba(59, 130, 246, 0.5) !important; }
+#app .ch-subtag-idea{ color: #3b82f6 !important; background: rgba(59, 130, 246, 0.14) !important; border-color: rgba(59, 130, 246, 0.35) !important; }
+
+#app .ch-badge-beat{ background: rgba(139, 92, 246, 0.2) !important; border-color: rgba(139, 92, 246, 0.5) !important; }
+#app .ch-subtag-beat{ color: #8b5cf6 !important; background: rgba(139, 92, 246, 0.14) !important; border-color: rgba(139, 92, 246, 0.35) !important; }
+
+#app .ch-badge-recipe{ background: rgba(236, 72, 153, 0.2) !important; border-color: rgba(236, 72, 153, 0.5) !important; }
+#app .ch-subtag-recipe{ color: #ec4899 !important; background: rgba(236, 72, 153, 0.14) !important; border-color: rgba(236, 72, 153, 0.35) !important; }
+
+#app .ch-badge-style{ background: rgba(245, 158, 11, 0.22) !important; border-color: rgba(245, 158, 11, 0.55) !important; }
+#app .ch-subtag-style{ color: #f59e0b !important; background: rgba(245, 158, 11, 0.14) !important; border-color: rgba(245, 158, 11, 0.4) !important; }
+#app .ch-subtag-style.dirty{ color: #ef4444 !important; background: rgba(239, 68, 68, 0.16) !important; border-color: rgba(239, 68, 68, 0.45) !important; }
+
+#app .ch-badge-dict{ background: rgba(16, 185, 129, 0.2) !important; border-color: rgba(16, 185, 129, 0.5) !important; }
+#app .ch-subtag-dict{ color: #10b981 !important; background: rgba(16, 185, 129, 0.14) !important; border-color: rgba(16, 185, 129, 0.35) !important; }
+
+#app .ch-badge-enrich{ background: rgba(99, 102, 241, 0.2) !important; border-color: rgba(99, 102, 241, 0.5) !important; }
+#app .ch-subtag-enrich{ color: #6366f1 !important; background: rgba(99, 102, 241, 0.14) !important; border-color: rgba(99, 102, 241, 0.35) !important; }
+
+#app .ch-badge-microbeat{ background: rgba(6, 182, 212, 0.2) !important; border-color: rgba(6, 182, 212, 0.5) !important; }
+#app .ch-subtag-microbeat{ color: #06b6d4 !important; background: rgba(6, 182, 212, 0.14) !important; border-color: rgba(6, 182, 212, 0.35) !important; }
+
+#app .ch-badge-school{ background: rgba(249, 115, 22, 0.2) !important; border-color: rgba(249, 115, 22, 0.5) !important; }
+#app .ch-subtag-school{ color: #f97316 !important; background: rgba(249, 115, 22, 0.14) !important; border-color: rgba(249, 115, 22, 0.35) !important; }
+
+#app .ch-badge-glossary{ background: rgba(20, 184, 166, 0.2) !important; border-color: rgba(20, 184, 166, 0.5) !important; }
+#app .ch-subtag-glossary{ color: #14b8a6 !important; background: rgba(20, 184, 166, 0.14) !important; border-color: rgba(20, 184, 166, 0.35) !important; }
+
+/* 浅色主题（Light / Paper / Guofeng）高清晰对比度强化 */
+[data-theme="light"] #app .card-head-bar,
+[data-theme="paper"] #app .card-head-bar,
+[data-theme="guofeng"] #app .card-head-bar{
+  background: rgba(0, 0, 0, 0.035) !important;
+  border-bottom-color: rgba(0, 0, 0, 0.08) !important;
+}
+[data-theme="light"] #app .ch-subtag-idea, [data-theme="paper"] #app .ch-subtag-idea, [data-theme="guofeng"] #app .ch-subtag-idea{ color: #1d4ed8 !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-beat, [data-theme="paper"] #app .ch-subtag-beat, [data-theme="guofeng"] #app .ch-subtag-beat{ color: #6d28d9 !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-recipe, [data-theme="paper"] #app .ch-subtag-recipe, [data-theme="guofeng"] #app .ch-subtag-recipe{ color: #be185d !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-style, [data-theme="paper"] #app .ch-subtag-style, [data-theme="guofeng"] #app .ch-subtag-style{ color: #b45309 !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-dict, [data-theme="paper"] #app .ch-subtag-dict, [data-theme="guofeng"] #app .ch-subtag-dict{ color: #047857 !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-enrich, [data-theme="paper"] #app .ch-subtag-enrich, [data-theme="guofeng"] #app .ch-subtag-enrich{ color: #4338ca !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-microbeat, [data-theme="paper"] #app .ch-subtag-microbeat, [data-theme="guofeng"] #app .ch-subtag-microbeat{ color: #0e7490 !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-school, [data-theme="paper"] #app .ch-subtag-school, [data-theme="guofeng"] #app .ch-subtag-school{ color: #c2410c !important; font-weight: 700 !important; }
+[data-theme="light"] #app .ch-subtag-glossary, [data-theme="paper"] #app .ch-subtag-glossary, [data-theme="guofeng"] #app .ch-subtag-glossary{ color: #0f766e !important; font-weight: 700 !important; }
+
+/* 深色模式 / 赛博机械 / 极光主题下的高对比发光文字保障 */
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-idea{ color: #93c5fd !important; background: rgba(59, 130, 246, 0.22) !important; border-color: rgba(59, 130, 246, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-beat{ color: #c4b5fd !important; background: rgba(139, 92, 246, 0.22) !important; border-color: rgba(139, 92, 246, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-recipe{ color: #f472b6 !important; background: rgba(236, 72, 153, 0.22) !important; border-color: rgba(236, 72, 153, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-style{ color: #fcd34d !important; background: rgba(245, 158, 11, 0.22) !important; border-color: rgba(245, 158, 11, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-style.dirty{ color: #fca5a5 !important; background: rgba(239, 68, 68, 0.25) !important; border-color: rgba(239, 68, 68, 0.6) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-dict{ color: #6ee7b7 !important; background: rgba(16, 185, 129, 0.22) !important; border-color: rgba(16, 185, 129, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-enrich{ color: #a5b4fc !important; background: rgba(99, 102, 241, 0.22) !important; border-color: rgba(99, 102, 241, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-microbeat{ color: #67e8f9 !important; background: rgba(6, 182, 212, 0.22) !important; border-color: rgba(6, 182, 212, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-school{ color: #fdba74 !important; background: rgba(249, 115, 22, 0.22) !important; border-color: rgba(249, 115, 22, 0.5) !important; }
+:where([data-theme="dark"],[data-theme="mecha"],[data-theme="aurora"],[data-theme="cyber"],[data-theme="blackboard"]) #app .ch-subtag-glossary{ color: #5eead4 !important; background: rgba(20, 184, 166, 0.22) !important; border-color: rgba(20, 184, 166, 0.5) !important; }
+
+/* ==========================================================================
+   手机竖屏全适配响应策略体系 (Mobile Vertical Screen Responsive Strategy)
+   - 流体字号缩放 (Fluid Typography)
+   - 弹性双层轴与自适应降级换行 (Elastic Stacking)
+   - 44px 触控工效区 (Touch Ergonomics)
+   - 系统级安全区与大字号避让 (Safe Area Insets)
+   ========================================================================== */
+
+/* 1. 移动端根基流体字号与安全区适配 */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  font-size: clamp(14px, 3.8vw, 15.5px);
+  padding-top: env(safe-area-inset-top, 0);
+  padding-bottom: max(20px, env(safe-area-inset-bottom, 0));
+  padding-left: env(safe-area-inset-left, 0);
+  padding-right: env(safe-area-inset-right, 0);
+  overflow-x: hidden;
+}
+
+#app {
+  width: 100%;
+  max-width: 580px;
+  min-height: 100dvh;
+  box-sizing: border-box;
+}
+
+/* 2. 44px 最小触控热区与工效点击 */
+.icon-btn,
+.btn,
+.sc-step,
+.ch-item,
+.so-fold-head,
+.dm-fold summary,
+.pol-card,
+.ws-chip,
+.dmt-tab {
+  min-height: 38px;
+  touch-action: manipulation;
+}
+
+.icon-btn {
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 3. 手机竖屏断点细分适配 (< 520px 标准手机竖屏) */
+@media screen and (max-width: 520px) {
+  .view {
+    padding: 10px 10px 80px 10px;
+  }
+  
+  .card {
+    padding: 12px;
+    margin-bottom: 10px;
+    border-radius: 12px;
+  }
+  
+  #app .card-head-bar {
+    padding: 8px 12px;
+    margin: -12px -12px 10px -12px;
+    gap: 6px 10px;
+  }
+  
+  #app .card-head-bar .ch-left {
+    gap: 6px;
+    flex: 1 1 auto;
+  }
+  
+  #app .card-head-bar .ch-right {
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+  
+  #app .card-head-bar .ch-title {
+    font-size: 14.5px !important;
+  }
+  
+  #app .card-head-bar .ch-subtag {
+    font-size: 11px;
+    padding: 1px 6px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  
+  /* 按钮行弹性换行防爆框 */
+  .btn-row {
+    gap: 6px;
+  }
+  
+  .btn {
+    padding: 8px 12px;
+    font-size: 13.5px;
+  }
+  
+  /* 构想与方案比选卡片弹性流动 */
+  .pol-grid,
+  .poly-grid {
+    grid-template-columns: 1fr !important;
+    gap: 8px;
+  }
+  
+  /* 学校流程步骤折行排列 */
+  .sc-pipe-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  
+  .sc-step {
+    flex: 1 1 calc(50% - 6px);
+    font-size: 12px;
+    padding: 8px 6px;
+    text-align: center;
+    justify-content: center;
+  }
+  
+  .sc-step.sc-runall {
+    flex: 1 1 100%;
+    margin-top: 4px;
+    font-size: 13px;
+    padding: 10px;
+  }
+  
+  /* 写作风格卡片手机端字号与间距 */
+  .ws-group {
+    padding: 6px;
+  }
+  
+  .ws-chips {
+    gap: 5px;
+  }
+  
+  .ws-chip {
+    font-size: 12px;
+    padding: 4px 9px;
+  }
+}
+
+/* ---------- 16. 全主题全组件无障碍高对比度终极保障体系 (Universal Contrast & Accessibility) ---------- */
+/* 16.1 原生下拉菜单项：杜绝各系统/浏览器中白底白字或黑底黑字 */
+select option {
+  background: var(--panel, #181b22);
+  color: var(--txt, #e7e9ee);
+}
+
+/* 16.2 输入框 Placeholder 高对比度强化 (>= 4.5:1) */
+textarea::placeholder,
+input::placeholder {
+  color: var(--muted) !important;
+  opacity: 0.95;
+}
+[data-theme="light"] textarea::placeholder,
+[data-theme="light"] input::placeholder {
+  color: #64748b !important;
+}
+[data-theme="paper"] textarea::placeholder,
+[data-theme="paper"] input::placeholder {
+  color: #736048 !important;
+}
+[data-theme="guofeng"] textarea::placeholder,
+[data-theme="guofeng"] input::placeholder {
+  color: #7d6850 !important;
+}
+
+/* 16.3 写作风格选择器 (Writing Style Picker) 全主题对比度固化 */
+.ws-subcat-t {
+  color: var(--txt) !important;
+  font-weight: 700;
+}
+.ws-group-t {
+  color: var(--sub) !important;
+  font-weight: 700;
+}
+.ws-opt-name {
+  color: var(--txt) !important;
+  font-weight: 700;
+}
+.ws-opt-note {
+  color: var(--sub) !important;
+}
+.ws-opt.on .ws-opt-name {
+  color: var(--accent2) !important;
+  font-weight: 700;
+}
+.ws-opt.on .ws-opt-note {
+  color: var(--txt) !important;
+}
+[data-theme="light"] .ws-opt.on .ws-opt-name,
+[data-theme="paper"] .ws-opt.on .ws-opt-name {
+  color: var(--accent2) !important;
+}
+[data-theme="guofeng"] .ws-opt.on .ws-opt-name {
+  color: #fff !important;
+}
+[data-theme="guofeng"] .ws-opt.on .ws-opt-note {
+  color: rgba(255,255,255,0.92) !important;
+}
+
+/* 16.4 全书规划师与主线简述 (Planning Cards) */
+.cp-body .sub {
+  color: var(--sub) !important;
+}
+.cp-body .muted,
+.cp-wc {
+  color: var(--muted) !important;
+}
+[data-theme="light"] .cp-wc,
+[data-theme="paper"] .cp-wc,
+[data-theme="guofeng"] .cp-wc {
+  color: var(--sub) !important;
+}
+.cp-summary-readonly,
+.cp-stream-preview {
+  color: var(--txt) !important;
+  background: var(--panel2) !important;
+  border-color: var(--line) !important;
+}
+
+/* 16.5 编剧学院与各步骤状态对比度 (School Workflow Steps) */
+.sc-step.done {
+  color: #15803d !important;
+  background: rgba(34, 197, 94, 0.12) !important;
+  border-color: rgba(34, 197, 94, 0.45) !important;
+  font-weight: 700 !important;
+}
+[data-theme="aurora"] .sc-step.done,
+[data-theme="cyber"] .sc-step.done,
+[data-theme="mecha"] .sc-step.done,
+[data-theme="blackboard"] .sc-step.done {
+  color: #4ade80 !important;
+  background: rgba(34, 197, 94, 0.2) !important;
+  border-color: rgba(34, 197, 94, 0.6) !important;
+}
+.sc-step.sc-failed {
+  color: #b91c1c !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(239, 68, 68, 0.45) !important;
+  font-weight: 700 !important;
+}
+[data-theme="aurora"] .sc-step.sc-failed,
+[data-theme="cyber"] .sc-step.sc-failed,
+[data-theme="mecha"] .sc-step.sc-failed,
+[data-theme="blackboard"] .sc-step.sc-failed {
+  color: #f87171 !important;
+  background: rgba(239, 68, 68, 0.22) !important;
+  border-color: rgba(239, 68, 68, 0.6) !important;
+}
+
+/* 16.6 幽灵按钮与操作按钮对比度 */
+.btn.ghost {
+  color: var(--txt) !important;
+  border-color: var(--line) !important;
+}
+.btn.ghost:hover {
+  color: var(--accent) !important;
+  border-color: var(--accent) !important;
+}
+.btn:disabled, button:disabled {
+  opacity: 0.55 !important;
+}
+
+/* 16.7 弹窗与历史记录文字对比度 */
+.hist-item .hist-main {
+  color: var(--txt) !important;
+}
+.hist-item .hist-desc,
+.hist-item .hist-meta {
+  color: var(--sub) !important;
+}
+.cv-div, .cv-time, .cv-wc {
+  color: var(--sub) !important;
+}
+
+
+
