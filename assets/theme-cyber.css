@@ -13,12 +13,24 @@
   --cy-pink: #f472b6;
   --cy-orange: #fb923c;
   --cy-text: #e6e6ff;
-  --cy-dim: #9ca3af;
+  --cy-dim: #a5b4fc;
   --cy-line: rgba(168, 85, 247, 0.35);
   --cy-glow-purple: 0 0 12px rgba(168, 85, 247, 0.55), 0 0 24px rgba(168, 85, 247, 0.25);
   --cy-glow-cyan: 0 0 12px rgba(34, 211, 238, 0.55), 0 0 24px rgba(34, 211, 238, 0.25);
   --cy-glow-pink: 0 0 12px rgba(244, 114, 182, 0.55), 0 0 24px rgba(244, 114, 182, 0.25);
   --cy-glow-orange: 0 0 12px rgba(251, 146, 60, 0.55), 0 0 24px rgba(251, 146, 60, 0.25);
+
+  /* 标准变量契约 */
+  --bg: var(--cy-bg);
+  --panel: var(--cy-panel);
+  --panel2: rgba(22, 19, 46, 0.88);
+  --line: var(--cy-line);
+  --txt: var(--cy-text);
+  --sub: var(--cy-dim);
+  --muted: #818cf8;
+  --accent: var(--cy-purple);
+  --accent2: var(--cy-cyan);
+  --on-accent: #080614;
 }
 
 /* 背景：可选纹理或代码兜底 */
