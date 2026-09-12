@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.323';   // v1.0.323 创作决策链 2.0：用户风格前置、优化构想降级为建议、侧边导航同步重排
+const APP_VERSION = '1.0.325';   // v1.0.325 界面整理：把用户操作与资料展示分层；全书四/七/十二/十五拍前置到优化构想之前
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -107,6 +107,7 @@ const state = {
   timeAnchor: true,       // v1.0.175 时间锚开关（默认开）：规划师为每拍给定「支线·时点」，正文据此承接章节/支线时间
   timeAnchorsAuto: true,  // v1.0.175 承接真相源（默认开）：正文落库后轻量模型回写本章末尾支线/时点，作下一章承接硬真相
   teamShape: 'solo',       // v1.0.186 叙事主体·团队：solo=主角线 / trio=铁三角(+2) / quad=四方(+3) / quint=五人团(+4)
+  bookBeat: 7,             // v1.0.325 全书宏观拍子：4/7/12/15；必须先于优化构想确定
   dictmasterHistory: [],   // 阶段3/3.3：词典达人历史（6 次，FIFO，独立体系）
   dictmasterLatest: null,  // 阶段3/3.3：词典达人最近一次产物（含人物/关系表/地名专名关联表/世界观规则）
   dictmasterRan: false,    // 阶段3/3.0：词典达人已触发并产出（②换方案锁定依据）
@@ -645,6 +646,7 @@ function projectSnapshot(){
     chapterRange: state.chapterRange || null,
     totalWords: state.totalWords || null,
     chapterCount: (state.chapterCount && +state.chapterCount>0) ? +state.chapterCount : null,
+    bookBeat: currentBookBeatId(),   // v1.0.325 全书拍子为优化构想前置决策，随项目持久化
     idea: state.idea,
     coverPrompt: state.coverPrompt,
     coverWithTitle: state.coverWithTitle,
@@ -703,6 +705,7 @@ function applyProject(p){
   state.chapterRange = (p.chapterRange && p.chapterRange.min && p.chapterRange.max) ? {min:+p.chapterRange.min, max:+p.chapterRange.max} : null;
   state.totalWords = (p.totalWords && +p.totalWords>0) ? +p.totalWords : null;
   state.chapterCount = (p.chapterCount && +p.chapterCount>0) ? +p.chapterCount : null;
+  state.bookBeat = [4,7,12,15].includes(Number(p.bookBeat)) ? Number(p.bookBeat) : (state.bookBeat || BOOK_BEAT_DEFAULT_ID);
   state.idea = p.idea || '';
   state.coverPrompt = p.coverPrompt || '';
   state.coverWithTitle = !!p.coverWithTitle;
@@ -1496,6 +1499,7 @@ L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词�
 7. 结尾须指向下一章标题，埋下线索或悬念，但不得提前揭示下一章具体情节（若上下文未给出下一章标题，则按本章剧情自然收束即可，不强求指向标题）。
 8. 正文长度严格以【篇幅体量】块为准，必须在第一次生成时即写足该块硬下限（v1.0.165：取消"不设上限"宽松口径，禁止写成未达下限的梗概式短场景）。
 9. 场景与节拍的自然衔接铁律：全章必须是一条连续流动的叙事线——每个节拍事件的结尾自然引出下一个节拍的开头；时间/地点/视点的切换必须给出过渡（时间词、空间移动、镜头焦点转移或因果钩子），禁止节拍间硬跳切、禁止把每个节拍写成孤立片段。节拍之外的衔接与过渡文字（非情节推进的铺垫/转场内容）同样是正文的组成部分，不是多余的填充。
+9b. 事件可达性/因果闭环锁（硬规则）：教案写了某个结果，不代表结果天然获得发生资格。任何重大事件在正文落地前，都必须能回答：①为什么现在发生；②为什么在这里发生；③为什么由这个人物经历/触发；④人物凭什么知道或注意到；⑤人物凭什么做到（能力、资源、工具、体力、权限等）；⑥前面哪一件已发生的事把它推到了这里。若六问中存在明显断点，不得直接跳到结果；优先沿教案允许的空间补出必要的线索、观察、行动与中间步骤，或调整事件达成方式。不得凭空新增关键人物、关键情报、关键道具、关键能力、关键地点或关键关系来填因果缺口。偶然事件可以使用，但必须有场景触发、概率依据或事后可理解的因果解释，不能把“巧合”当作万能补丁。
 10. 时间锚铁律（若 L1 节拍表标注了时间）：每段节拍标注的【时间】（如 现实·第2天·清晨）是本章时间承接的硬基准——正文各段落在哪个时点、就写那一时段的场景（光线/天色/动静/人物状态，如熹微/烈日/夕照/星夜/烛火/虫鸣/人物衣物与倦意等细节自然交代），上一章末尾落到哪个时点，本章开头就从那个时点或其自然延续接入，禁止时间跳跃开场、禁止把本章剧情安排到上一章主线的更早时点（同主线时点禁止倒退）。但时间一律靠场景细节自然体现，严禁出现在段首报时（"现在是/此刻是/此时是/当下是"）、严禁把时间锚或"第X天"字样原样照抄进正文；仅当时间确实跳跃时才用"翌日""三日后的黄昏"等自然过渡语融入叙述、不作注释式开场。跨支线（回忆/梦境/穿越）须按节拍表的支线标签处理，并在文中显式体现进入与回归，不扰乱主线时间顺序。（v1.0.24x：删除"严禁时间词开篇/首句禁时间状语"绝对禁令——与章首铁律④「时间开句可用（仅限频次）」及承接任务书菜单⑥冲突；开场方式以章首铁律 6 式为准。）
 11. 视角与上帝视角铁律（v1.0.180）：默认采用"受限视角"叙述——把"摄影机"约 90% 的时间锁在主角身上，只以主角能看到/听到/摸到/感知到的信息推进叙述；想表现他人内心，一律改从主角的观察与推断出发，禁止直接钻进路人/配角/反派的内心"读心"。仅在下列"合法时机"才允许切到"上帝/他人视角"：(a) 章/节/空行分隔之后（有明确视角分界可用）；(b) 与主角核心目标同场产生重大利益冲突的关键时刻（全章最多一两处，用完立即回到主角）；(c) 只"展示而不解释"的客观信息（写他人"做了什么/什么神态/什么动作"，而不是"心里想什么"）；(d) 背景/世界观/前史等设定信息必须"寄生"在角色的即时感官里（经耳朵听到、鼻子闻到、手触及）传达，禁止作者跳出来大段广播；(e) 悬念揭晓的时刻（对前期已埋设的不确定性的兑现）。禁止项：同一场景内多个角色的内心随意跳切（禁止"跳切"）；禁止用上帝视角提前揭示主角与读者尚不该知道的答案（禁止剥夺"侦探权"）；禁止借上帝视角长篇灌输背景设定（禁止"死神"式信息倾泻）；禁止让配角甚至路人获得与主角同等的心理戏、使情感焦点涣散（禁止稀释"主角感"）。【例外】仅当本章写作风格\/配方中明确采用了「多视角群像」等视角切换类叙事技法时，才允许受控视角切换；此时仍须每个视角边界清晰、各视角有辨识度、切换有明确分界（章节\/空行）、整体仍以主角视角为主轴。未明确选用该类技法时，上述限定视角保持硬性，禁止以"多视角\/群像"为借口放松（v1.0.258 收紧例外）。
 
@@ -1512,6 +1516,7 @@ L4 · 滚动摘要与相关设定：最近 3 个滚动摘要区块、相关词�
 - 人物性格/外貌/年龄与词典一致
 - 词典既有专名使用无误、无相悖；本章新引入的核心实体均为剧情所需且已交代设定要点，临时闲人/小地名/小专名为氛围点缀、写一句便止
 - 上一章结尾未完成的动作/对话已承接
+- 重大事件因果闭环成立：每个关键结果均可追溯到前置状态/目标、信息或线索来源、人物行动、能力/资源条件与触发路径；无“突然发现/突然知道/突然拥有/突然遇见/突然出现”的关键剧情捷径
 - 伏笔 foreshadowing 已按节拍表埋设
 - 叙事铁律未偏离（无禁用词直述内心情绪、无模板词）
 - 视角未在同场景内随意跳切、未替配角/反派/路人直接读心；背景信息已寄生于角色感官而非作者广播；主角情感焦点未被配角稀释（v1.0.180 上帝视角治理）
@@ -1525,7 +1530,7 @@ const PROMPTS = {
   outlineSys: `你是一位专业编剧与故事架构师，擅长短剧/短视频叙事。根据用户的一句或几句话构想，设计一部适合改编为短视频的故事。
 请严格只输出如下 JSON（不要任何解释、不要 markdown 代码块）：
 {"title":"故事标题","logline":"小说简介（含核心冲突）","chapters":[{"title":"第1章标题","summary":"该章核心事件与转折，1-2句"}]}
-要求：chapters 数量按故事体量在 6-12 章之间；summay 体现人物动机与情节推进。`,
+要求：chapters 数量按故事体量在 6-12 章之间；summay 体现人物动机与情节推进。重大事件不得凭空发生：必须能由前文已建立的目标、信息、地点、资源、人物行动或可观察线索自然推导；对“发现/获得/遇见/得知/抵达/突破”等结果，优先在概要中留下可解释的前置条件或触发依据，不得只写结果。`, 
 
   chapterSys: `你是一位擅长网文与短剧的编剧。请根据「故事大纲」与「本章概要」写出本章完整正文。
 要求：有强画面感、对话自然、节奏明快、推进剧情；篇幅 800-1500 字；只输出正文，不要标题、不要解释。`,
@@ -3573,6 +3578,8 @@ const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治
    · 风格施工规则：必须把融合后的风格落实到「叙事、对白、节奏、场景、情绪、幽默/悬疑/治愈等具体机制」，给出可执行动作，而非只写形容词。
    · 风格验收标准：列出正文完成后可检查的正向指标与禁用项，供老师与正文 AI 逐章自检。
    · 可执行纪律：全体老师与正文一致遵循的写作纪律，统帅【全书微拍节奏】与【章间过桥律】（跨章尾留钩子首接余波，前章定格状态必须平滑过桥，严禁硬跳切与瞬移；跨组接力严守因果链，后组首章必须紧密承接前组末章真实收束状态；人物言行一致、时间不倒流、术语定稿不改）。
+   · 因果闭环总纲：对全书重大事件做“发生资格审查”。任何发现、获得、遇见、得知、抵达、突破、转折、救援、反转等关键结果，都必须能追溯到此前已经成立的前置状态、人物目标/动机、信息或线索来源、行动路径、能力/资源条件与可观察触发；若条件不足，不得让老师或正文直接把结果写出来，应在更早章节补铺垫、调整事件达成方式或降低事件确定性。尤其禁止“走着走着发现关键地点”“突然知道秘密”“恰好带着关键道具”“陌生关键人物无来源出现”等凭空推进。偶然事件可以发生，但必须符合世界规则与场景概率，并给出最低限度的可解释触发。
+   · 因果审计输出：请在全书规划中识别高风险重大事件，明确其前置条件/来源/触发路径/结果，并指出尚缺的铺垫；不得为了完成节拍而牺牲因果成立。
    · 权限边界：用户风格决定「怎么写」；老师教案决定「本章写什么」；词典决定事实一致性；正文 AI 不负责重新裁决风格组合。
 ② 各组组级框架——每组一份、逐组齐全。每份固定字段：
    · 起止章与剧情段；每章功能分工（仅到「引入/推进/转折/高潮/收束」标签 + 一句目标）；整组节奏与情绪曲线；跨组承接（承上=承接上一组末章收束后本组从何接续、首组「开篇·冷开场」；启下=末章给下一组留的钩）；重点调用词典要素。
@@ -3586,6 +3593,7 @@ const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治
 ## 风格融合总纲
 ## 风格施工规则
 ## 风格验收标准
+## 因果闭环总纲
 ## 可执行纪律
 # 各组组级框架
 ## 组1 · 老师1（第1-20章 · 段名）
@@ -3613,6 +3621,7 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
    · 风格施工规则：把融合后的风格转译为叙事、对白、节奏、场景、情绪的可执行规则，避免把选择题留给正文 AI。
    · 风格验收标准：给出逐章可检查的正向指标与禁用项。
    · 可执行纪律：微拍节奏指令与章间过桥律（尾留钩子首接余波，平滑对缝，严禁瞬移硬跳；时间不倒流，术语定稿不改）。
+   · 因果闭环总纲：逐章审查重大事件的发生资格；任何关键结果都必须有前置状态、人物目标/动机、信息或线索来源、行动路径、能力/资源条件与触发依据。条件不足时必须补铺垫或调整达成方式，严禁为了完成节拍让事件凭空出现。偶然事件可以保留，但必须符合世界规则并具备最低限度的可解释触发。
    · 权限边界：用户风格决定「怎么写」；逐章教案决定「写什么」；正文 AI 只执行，不重新选风格。
 ② 全书章节标题总表：
    为全书第1章至最后一章各拟定一题，连贯排布、前后呼应。
@@ -3634,6 +3643,7 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
 ## 风格融合总纲
 ## 风格施工规则
 ## 风格验收标准
+## 因果闭环总纲
 ## 可执行纪律
 # 全书章节标题总表
 第1章 《标题》
@@ -3753,6 +3763,7 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
   (2) 跨章时间不回退：本章时间范围的起点不早于上一章教案「剧情时间落点」的终点（可同时刻紧接、不可往回倒）；保证整个故事的时间线整体向前即可。
   (3) 别为"覆盖完整"牺牲节奏：一章可以只写一小时的关键场景，可以写满一整天，也可以跨数天跳跃。时间跨度长短由剧情决定。
 - 本章推进骨架（从哪写到哪）：把本章从开篇承接点到收尾的整条推进路线，拆成一连串更细的环节（建议 5-8 个推进环节，深度融合微拍节奏，覆盖 承接点→铺垫→第一次小冲突/变化→推进→转折/升温→高潮→余波→收束/钩子），按顺序逐个写出每个环节"这一环节要发生/要写到什么"（一两句话说明该环节的落点即可，点到即止）。环节之间要有先后与因果。
+- 事件因果施工：对本章每一个重大事件，在骨架中同时交代“发生前提→触发/线索→人物为什么采取行动→行动如何导致结果”。尤其是发现、获得、遇见、得知、抵达、突破、救援、反转等结果，不得只写结果。若某结果依赖前章信息或资源，必须在【连续性】或骨架中明确承接来源；若当前材料无法支撑，应先补铺垫或改写达成路径，不得让正文 AI 自行凭空补一个关键理由。
   - 【随微拍调密·骨架环节数不等同微拍拍数】骨架始终拆满 5-8 个环节。双拍结构按"铺垫多环节 + 揭示少环节"排布。微三拍可压缩至 4-5 环节，微七拍可展开至 8 环节。
 - 情绪走向与突出点：推向什么情绪、突出什么（示例锚点一句话即可，禁止代写成段正文）
 - 连续性：上一章收尾到哪、本章从何承接。写明两项：①【承接物理态】（写明承接自第几章哪个具体人物处境、定格动作或未决悬念）；②【转场过桥建议】（若本章时间或场景有跨度，给出 1-2 句如何自然平滑过渡到本章骨架第①环节的笔法建议，防生硬跳切）。
@@ -4438,6 +4449,18 @@ function bookBeatHtml(){
         </label>
       `).join('')}
     </div>
+  </div>`;
+}
+
+// v1.0.325：优化构想前的紧凑决策摘要——让用户与 AI 都明确当前全书宏观拍子。
+function bookBeatBriefHtml(){
+  const bb = currentBookBeatCfg();
+  const stages = (bb.ai && bb.ai.stages) || [];
+  return `<div class="decision-brief book-beat-brief">
+    <span class="db-lock">🔒</span><b>全书拍子已先定</b>
+    <span class="db-main">${bb.emoji} ${esc(bb.label)}</span>
+    <span class="db-sub">${esc(bb.subtitle)}</span>
+    <span class="db-stages">${stages.map(esc).join(' → ')}</span>
   </div>`;
 }
 
@@ -6680,16 +6703,17 @@ function closeStyleLibReader(){ const p=$('#wsLibReader'); if(p) p.remove(); }
 // ==================== v1.0.228 侧边导航（顺序重排） ====================
 // v1.0.228：把原「设/构/典/规/文」5 步侧边条重排为用户指定的 7 个快捷入口，顺序：构→简→典→规→方→万→正。
 // 每项 = [标签, 目标选择器]；仅当页面真实存在该目标时才渲染该按钮（短片等缺失项自动隐藏），点击平滑滚动到对应功能位置。
-// v1.0.322 创作决策链 2.0：侧边导航按「先定表达→再优化故事→再锁定执行」顺序（风→构→配→节→典→充→校→正）
+// v1.0.325 界面整理：侧边导航区分「前置决策→AI建议→执行」并将资料仓排除在编号主流程之外
 const FLOW_NAV = [
   ['风','[data-flow="1"]'],     // 用户写作风格：表达层最高权威
-  ['构','[data-flow="2"]'],     // 原始构想 + 优化构想：AI建议层
-  ['配','[data-flow="3"]'],     // 写作配方：把已锁定风格转成可执行规则
-  ['节','[data-flow="4"]'],     // 全书节拍
-  ['典','[data-flow="5"]'],     // 词典达人
-  ['充','[data-flow="6"]'],     // 词典充实
-  ['校','[data-flow="7"]'],     // 校长/学校统筹
-  ['正','[data-flow="8"]']      // 正文作家 · 章节创作
+  ['基','[data-flow="2"]'],     // 章节数/全书四七十二十五拍/叙事主体：优化前置决策
+  ['构','[data-flow="3"]'],     // 原始构想 + 优化构想：AI建议层
+  ['配','[data-flow="4"]'],     // 写作配方：把已锁定风格转成可执行规则
+  ['节','[data-flow="5"]'],     // 全书节拍成果
+  ['典','[data-flow="6"]'],     // 词典达人：建设者
+  ['充','[data-flow="7"]'],     // 词典充实：深化者
+  ['校','[data-flow="8"]'],     // 校长/学校统筹
+  ['正','[data-flow="9"]']      // 正文作家 · 章节创作
 ];
 function flowNavItems(){
   return FLOW_NAV.filter(([,sel])=>{ try{ return !!(document && document.querySelector(sel)); }catch(e){ return false; } });
@@ -6811,97 +6835,75 @@ function viewStory(){
         </div>
         ${ safeCard(()=>writeStyleCard()) }
       </section>
-<section class="flow-sec" data-flow="2">
-        <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">故事构想与优化</span><span class="fs-note">先保留原始灵感，再由 AI 提供可选优化方案</span></div>
-        <div class="card card-theme-idea">
-          <div class="card-head-bar">
-            <div class="ch-left">
-              <span class="ch-badge ch-badge-idea">📖</span>
-              <h3 class="ch-title">灵感与宏观规划</h3>
-              <span class="ch-subtag ch-subtag-idea">${chapterCountVal() ? `${chapterCountVal()} 章 · 约 ${(chapterCountVal()*3000/10000).toFixed(1)} 万字` : '篇幅与体裁'}</span>
-            </div>
-            <div class="ch-right">
-              <span class="muted" style="font-size:12px">全书基准</span>
-            </div>
-          </div>
-          ${ isLong() ? `
-          <div class="tw-panel" style="margin-bottom:10px">
-            <div class="poly-head"><span class="poly-ic">📐</span><b>全书章节数</b><span class="poly-rule">必填 · 1-200 整数</span></div>
-            <div class="tw-row">
-              <input type="number" id="chapterCountIn" class="tw-in cc-in" min="1" max="200" step="1" inputmode="numeric" placeholder="如 30" value="${chapterCountVal()||''}" />
-              <span class="tw-unit">章</span>
-              ${chapterCountVal()?`<span class="pill tag-ok">${chapterCountHint()}</span>`:''}
-            </div>
-          </div>
-          ${ bookBeatHtml() }
-          ` : '' }
-          <h4 style="margin:18px 0 6px">叙事视角</h4>
-          <div class="team-pick" id="teamPick">
-            ${TEAM_OPTIONS.map(o=>`
-            <label class="team-item ${o.id===currentTeamShape().id?'sel':''}" data-team="${o.id}" title="${esc(o.desc)}">
-              <span class="team-ic">${o.id==='solo'?'👤':o.id==='dual'?'👫':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span>
-              <span class="team-txt"><b>${esc(o.label)}</b><i>${esc(o.desc)}</i></span>
-              <input type="radio" name="teamShape" value="${o.id}" style="display:none" ${o.id===currentTeamShape().id?'checked':''}>
-            </label>`).join('')}
-          </div>
-        </div>
-        <div class="card card-theme-idea">
-          <div class="card-head-bar">
-            <div class="ch-left">
-              <span class="ch-badge ch-badge-idea">💡</span>
-              <h3 class="ch-title">用户构想与五向优化</h3>
-              <span class="ch-subtag ch-subtag-idea">${(state.polishOptions&&state.polishOptions.length)?'✨ 构想已优化':'待优化'}</span>
-            </div>
-            <div class="ch-right">
-              <label class="pol-multi" title="生成多方向构想供比选"><input type="checkbox" id="chkPolishMulti" checked> 多方案</label>
-            </div>
-          </div>
-          <div class="idea-row">
-            <textarea id="ideaInput" placeholder="描述你的故事点子（世界观、主角、核心冲突等）…">${esc(state.idea)}</textarea>
-          </div>
-          <div class="btn-row">
-            <button id="btnPolishIdea" class="btn ghost ${polishIdle()?'first':''}">✨ 优化构想</button>
-          </div>
-          <div id="polishBox" class="pol-box" style="display:none">
-            <div class="pol-head"><b>✨ 方案比选</b>
-              <span class="pol-tools">
-                <button id="btnPolishDiscard" class="btn small ghost">✕ 收起</button>
-              </span>
-            </div>
-            <div id="polishCards" class="pol-cards"></div>
-          </div>
-          ${ polishKeepBar() }
-          <div class="btn-row">
-            <button id="btnGenOutline" class="btn primary block" ${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'disabled title="请先优化构想再生成大纲"':''}>${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'📋 待优化构想后生成':(isLong()?'📚 生成大纲':'✨ 生成故事大纲')}</button>
-          </div>
-          <p id="outlineStatus" class="status"></p>
-        </div>
-      </section>
-<section class="flow-sec" data-flow="3">
-        <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">写作配方</span><span class="fs-note">把已锁定风格翻译成可执行规则 · 全书共享</span></div>
+<section class="flow-sec flow-action-sec" data-flow="2">
+  <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">创作基础</span><span class="fs-note">先确定章节数与全书宏观拍子，再交给优化构想</span></div>
+  <div class="card card-theme-idea decision-base-card">
+    <div class="card-head-bar">
+      <div class="ch-left"><span class="ch-badge ch-badge-beat">🧭</span><h3 class="ch-title">故事基础设置</h3><span class="ch-subtag ch-subtag-beat">优化构想读取这里的选择</span></div>
+      <div class="ch-right"><span class="muted" style="font-size:12px">先定骨架</span></div>
+    </div>
+    ${isLong() ? `
+    <div class="tw-panel" style="margin-bottom:10px">
+      <div class="poly-head"><span class="poly-ic">📐</span><b>全书章节数</b><span class="poly-rule">必填 · 1-200 整数</span></div>
+      <div class="tw-row">
+        <input type="number" id="chapterCountIn" class="tw-in cc-in" min="1" max="200" step="1" inputmode="numeric" placeholder="如 30" value="${chapterCountVal()||''}" />
+        <span class="tw-unit">章</span>
+        ${chapterCountVal()?`<span class="pill tag-ok">${chapterCountHint()}</span>`:''}
+      </div>
+    </div>
+    ${bookBeatHtml()}
+    ` : ''}
+    <h4 style="margin:18px 0 6px">叙事视角</h4>
+    <div class="team-pick" id="teamPick">
+      ${TEAM_OPTIONS.map(o=>`
+      <label class="team-item ${o.id===currentTeamShape().id?'sel':''}" data-team="${o.id}" title="${esc(o.desc)}">
+        <span class="team-ic">${o.id==='solo'?'👤':o.id==='dual'?'👫':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span>
+        <span class="team-txt"><b>${esc(o.label)}</b><i>${esc(o.desc)}</i></span>
+        <input type="radio" name="teamShape" value="${o.id}" style="display:none" ${o.id===currentTeamShape().id?'checked':''}>
+      </label>`).join('')}
+    </div>
+  </div>
+</section>
+<section class="flow-sec flow-action-sec" data-flow="3">
+  <div class="flow-sec-head"><span class="fs-no">3</span><span class="fs-name">故事构想与优化</span><span class="fs-note">AI 只在已确定的表达与全书骨架上优化故事</span></div>
+  ${bookBeatBriefHtml()}
+  ${opt_card}
+</section>
+<section class="flow-sec" data-flow="4">
+        <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">写作配方</span><span class="fs-note">把已锁定风格翻译成可执行规则 · 全书共享</span></div>
         ${ safeCard(()=>aiRecipeCard()) }
         
       </section>
-<section class="flow-sec" data-flow="4">
-        <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书主线节奏划分剧情阶段（本地映射）</span></div>
+<section class="flow-sec" data-flow="5">
+        <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书主线节奏划分剧情阶段（本地映射）</span></div>
         ${ safeCard(()=> isLong() ? beatStructureCardHtml() : '') }
       </section>
-<section class="flow-sec" data-flow="5">
-        <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典达人</span><span class="fs-note">全局设定架构师 · 人物/法宝/地理/规则硬设定</span></div>
+<section class="flow-sec flow-info-sec" data-flow="6">
+        <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">词典达人</span><span class="fs-note">全局设定架构师 · 人物/法宝/地理/规则硬设定</span></div>
         ${ safeCard(()=>dictMasterBlockHtml()) }
       </section>
-<section class="flow-sec" data-flow="6">
-        <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">词典充实</span><span class="fs-note">设定细化工坊 · 感官特征 · 场景禁忌 · 氛围龙套</span></div>
+<section class="flow-sec flow-info-sec" data-flow="7">
+        <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">词典充实</span><span class="fs-note">设定细化工坊 · 感官特征 · 场景禁忌 · 氛围龙套</span></div>
         ${ safeCard(()=>dictEnrichBlockHtml()) }
       </section>
-<section class="flow-sec" data-flow="7">
-        <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">学校统筹</span><span class="fs-note">章节微拍 → 校长全局总控 → 老师分段备课</span></div>
+<section class="flow-sec flow-action-sec" data-flow="8">
+        <div class="flow-sec-head"><span class="fs-no">8</span><span class="fs-name">学校统筹</span><span class="fs-note">章节微拍 → 校长全局总控 → 老师分段备课</span></div>
         ${ safeCard(()=>microBeatBlock()) }
         ${ safeCard(()=>schoolZoneBlock()) }
       </section>
-<section class="flow-sec" data-flow="8">
-        <div class="flow-sec-head"><span class="fs-no">8</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
-        ${ safeCard(()=>glossaryCardHtml()) }
+<section class="flow-repo" data-repo="book-assets">
+  <details class="repo-drawer">
+    <summary><span class="repo-ic">🗃️</span><b>本书资料仓</b><span class="repo-note">资料与结果默认收起，不占主流程空间</span><span class="repo-open">展开资料 ▸</span></summary>
+    <div class="repo-body">
+      <div class="repo-item repo-glossary">
+        <div class="repo-item-head"><div><b>📇 万物词典</b><span>全书共享设定库 · 人物 / 地名 / 专名 / 副线</span></div><span class="repo-item-tag">资料库</span></div>
+        ${ glossaryCardHtml() }
+      </div>
+    </div>
+  </details>
+</section>
+<section class="flow-sec" data-flow="9">
+        <div class="flow-sec-head"><span class="fs-no">9</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
           <label class="long-jump"><span>跳到章节：</span>
           <select id="longJump"><option value="">— 选择章节阅读 —</option>${state.chapters.map((c,i)=>`<option value="${i}">第${i+1}章 ${esc(cleanChapterTitle(c.title))}</option>`).join('')}</select></label>
@@ -6945,7 +6947,7 @@ function viewStory(){
   }
   // 大纲已生成
   const o = state.outline;
-  // v1.0.323 创作决策链 2.0：生成大纲后仍保持「风格→构想→配方→节拍→词典→学校→正文」顺序，避免 UI 与 AI 权限链脱节
+  // v1.0.325 界面整理：生成大纲后保留主操作链；万物词典收进独立资料仓，不占正文流程空间
   let html = `
   <div class="flow-wrap">
         <section class="flow-sec" data-flow="1">
@@ -6957,6 +6959,7 @@ function viewStory(){
     </section>
 <section class="flow-sec" data-flow="2">
       <div class="flow-sec-head"><span class="fs-no">2</span><span class="fs-name">故事构想与优化</span><span class="fs-note">先保留原始灵感，再由 AI 提供可选优化方案</span></div>
+      ${bookBeatBriefHtml()}
       <div class="card card-theme-idea">
         <div class="card-head-bar">
           <div class="ch-left">
@@ -6999,24 +7002,24 @@ function viewStory(){
     </section>
 <section class="flow-sec" data-flow="4">
       <div class="flow-sec-head"><span class="fs-no">4</span><span class="fs-name">全书节拍</span><span class="fs-note">按全书主线节奏划分剧情阶段（本地映射）</span></div>
+      ${bookBeatBriefHtml()}
       ${ isLong() ? beatStructureCardHtml() : '' }
     </section>
-<section class="flow-sec" data-flow="5">
+<section class="flow-sec flow-info-sec" data-flow="5">
       <div class="flow-sec-head"><span class="fs-no">5</span><span class="fs-name">词典达人</span><span class="fs-note">全局设定架构师 · 人物/法宝/地理/规则硬设定</span></div>
       ${ dictMasterBlockHtml() }
     </section>
-<section class="flow-sec" data-flow="6">
+<section class="flow-sec flow-info-sec" data-flow="6">
       <div class="flow-sec-head"><span class="fs-no">6</span><span class="fs-name">词典充实</span><span class="fs-note">设定细化工坊 · 感官特征 · 场景禁忌 · 氛围龙套</span></div>
       ${ dictEnrichBlockHtml() }
     </section>
-<section class="flow-sec" data-flow="7">
+<section class="flow-sec flow-action-sec" data-flow="7">
       <div class="flow-sec-head"><span class="fs-no">7</span><span class="fs-name">学校统筹</span><span class="fs-note">章节微拍 → 校长全局总控 → 老师分段备课</span></div>
       ${ microBeatBlock() }
       ${ schoolZoneBlock() }
     </section>
 <section class="flow-sec" data-flow="8">
       <div class="flow-sec-head"><span class="fs-no">8</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
-        ${ glossaryCardHtml() }
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
           <label class="long-jump"><span>跳到章节：</span>
           <select id="longJump"><option value="">— 选择章节阅读 —</option>${state.chapters.map((c,i)=>`<option value="${i}">第${i+1}章 ${esc(cleanChapterTitle(c.title))}</option>`).join('')}</select></label>
@@ -11788,10 +11791,6 @@ function dictEnrichBlockHtml(){
       <!-- v1.0.29x：词典充实入口收归「规划师④词典充实」，本卡不再放点击按钮，仅供展示生成内容 -->
       ${stream}
       ${status}
-      <!-- v1.0.295：正文收编入口（独立于 ⚡一键四步，须正文已写才可用）——从已写正文收编反复出现/有戏份的新实体回词典 -->
-      <div style="margin-top:8px">
-        <button type="button" class="btn ghost de-harvest-btn" id="btnHarvestCast" title="扫描已写正文，把反复出现/有戏份但尚未入典的新实体收编进万物词典（一次性的氛围路人自动忽略）">🧺 从正文收编</button>
-      </div>
       ${t ? `<div class="dm-tables" style="margin-top:10px">
         ${deCat('👤 主要人物', liveMain, 'grid')}
         ${deCat('🤝 次要配角', liveSupport, 'grid')}
@@ -13035,6 +13034,22 @@ function buildDynamicProtagonistLedger(i){
   return lines.join('\n');
 }
 
+function principalCausalityExcerpt(){
+  const pr = (state.school && state.school.principal) || {};
+  if(pr.raw){
+    const raw = String(pr.raw);
+    const heads = ['## 因果闭环总纲','## 可执行纪律'];
+    const a = raw.indexOf(heads[0]);
+    if(a >= 0){
+      const b = raw.indexOf(heads[1], a + heads[0].length);
+      const end = b > a ? b : Math.min(raw.length, a + 9000);
+      const sec = raw.slice(a, end).trim();
+      if(sec) return sec;
+    }
+  }
+  return '（校长尚未产出新版因果闭环层；正文仍必须执行事件可达性硬规则：重大事件不得凭空发生，必须有前置条件、触发依据、人物行动路径与结果来源。）';
+}
+
 function buildChapterUser(i, opt={}){
   const o = state.outline || {};
   const chap = (state.chapters && state.chapters[i]) || {};
@@ -13069,6 +13084,10 @@ ${pRules}
       parts.push(`【第一层附录 · 已裁决风格施工层（只决定怎么写，不决定写什么）】
 ${pStyle}
 执行原则：这是校长已经完成的风格冲突裁决结果。你不得在正文阶段重新选择‘轻松/悬疑/治愈/冷峻’等风格组合；只需按本章教案把既定风格落到具体场景、对白、叙事、节奏与情绪。`);
+    const pCausal = principalCausalityExcerpt();
+    parts.push(`【第一层附录 · 因果闭环锁（决定事件能否这样发生）】
+${pCausal}
+执行原则：本层不改变老师教案规定的核心剧情，但会审查事件发生资格。教案中的结果必须通过已建立的前置状态、线索/信息来源、人物行动、能力/资源与场景触发自然抵达；若教案本身存在因果缺口，正文不得凭空发明关键理由，应优先采用教案允许的铺垫空间补足最小必要中间步骤。`);
     }
 
     // 3. 第二层：中观层（静态指导 · 单源真理超级教案）
@@ -13144,6 +13163,7 @@ ${_tail}
   }
 
   // 优先级与人工干预
+  parts.push(`【事件可达性硬门】写每个重大事件前，内部快速核对：前置状态是否已成立？触发线索是否存在？人物为什么会采取这一步？信息/道具/能力从哪里来？地点与时间是否可达？本事件是否会让前后因果断裂？若任一关键项缺失，不得用“突然/恰好/偶然”直接补过去。`);
   parts.push(USER_PRIO_BILL);
   if(opt.advice) parts.push(`【人工干预要求（用户指定 · 第二优先）】\n${opt.advice}`);
 

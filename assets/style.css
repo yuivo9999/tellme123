@@ -2070,3 +2070,47 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
   .flow-style-lock-note{font-size:11px;padding:8px 9px}
   .flow-sec > .flow-sec-head{gap:7px}
 }
+
+
+/* v1.0.324 因果闭环锁视觉提示：用于区分“事件发生资格”与普通创作建议 */
+.flow-causal-lock-note{margin:6px 0 10px;padding:9px 11px;border:1px solid color-mix(in srgb,var(--accent) 30%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--panel2) 88%,transparent);color:var(--sub);font-size:11.5px;line-height:1.65}
+.flow-causal-lock-note b{color:var(--txt)}
+.causal-risk,.causal-pass{font-weight:700}
+
+
+/* v1.0.325 界面整理：操作区 / 结果区 / 资料仓三层视觉分工。
+ * 不改写作风格卡与正文卡内部，只改变它们周围的信息架构。 */
+.flow-action-sec{border-color:color-mix(in srgb,var(--accent) 30%,var(--line));}
+.flow-action-sec > .flow-sec-head .fs-no{background:var(--accent);}
+.flow-info-sec{background:color-mix(in srgb,var(--panel2) 34%,transparent);}
+.flow-info-sec > .flow-sec-head .fs-no{background:var(--accent2);}
+.flow-info-sec .dm-card,.flow-info-sec .de-card{box-shadow:none;}
+.decision-base-card{border-color:color-mix(in srgb,var(--accent) 24%,var(--line));}
+.decision-brief{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 10px;padding:9px 11px;border:1px solid color-mix(in srgb,var(--accent2) 32%,var(--line));border-radius:11px;background:color-mix(in srgb,var(--panel2) 70%,transparent);font-size:12px;line-height:1.55;}
+.decision-brief .db-lock{font-size:13px;}
+.decision-brief .db-main{font-weight:800;color:var(--txt);}
+.decision-brief .db-sub{color:var(--muted);}
+.decision-brief .db-stages{width:100%;padding-left:21px;color:var(--sub);font-size:11px;overflow-wrap:anywhere;}
+.book-beat-brief{margin-top:2px;}
+.flow-repo{margin:8px 0 10px;}
+.repo-drawer{border:1px solid var(--line);border-radius:var(--radius);background:color-mix(in srgb,var(--panel2) 38%,transparent);overflow:hidden;}
+.repo-drawer > summary{list-style:none;display:flex;align-items:center;gap:9px;padding:11px 13px;cursor:pointer;font-size:13px;font-weight:700;}
+.repo-drawer > summary::-webkit-details-marker{display:none;}
+.repo-ic{font-size:16px;}
+.repo-note{font-size:11px;font-weight:500;color:var(--muted);margin-left:auto;}
+.repo-open{font-size:11px;color:var(--accent);font-weight:700;}
+.repo-drawer[open] .repo-open{font-size:0;}
+.repo-drawer[open] .repo-open:after{content:'收起资料 ▾';font-size:11px;}
+.repo-body{padding:0 10px 10px;border-top:1px solid var(--line);}
+.repo-item-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 2px 7px;}
+.repo-item-head > div{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
+.repo-item-head b{font-size:13px;}
+.repo-item-head span{font-size:11px;color:var(--muted);}
+.repo-item-tag{font-size:10px!important;padding:2px 7px;border:1px solid var(--line);border-radius:999px;color:var(--accent2)!important;white-space:nowrap;}
+.repo-glossary .gs-card{margin-bottom:0;}
+@media(max-width:560px){
+  .repo-note{display:none;}
+  .repo-drawer > summary{padding:10px 11px;}
+  .decision-brief{gap:6px;}
+  .decision-brief .db-stages{padding-left:0;}
+}
