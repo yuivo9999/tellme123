@@ -3265,9 +3265,27 @@ function chapterOfPlan(ci){
 function teacherChapterPlan(ci){
   const gi = chapterOfPlan(ci); if(gi < 0) return '';
   const t = state.school.teachers && state.school.teachers[gi]; if(!t || !t.raw) return '';
-  const re = new RegExp(`^第\\s*${ci+1}\\s*章\\b[\\s\\S]*?(?=^第\\s*\\d+\\s*章\\b|$)`, 'm');
-  const m = String(t.raw).match(re);
-  return m ? String(m[0]).trim() : '';
+
+  // v1.0.XXX：修复「老师教案 → 正文」断链。旧版使用 `\b` 截取中文章节标题，
+  // 例如「第1章《xxx》」在部分 JS 正则语义下无法稳定命中，导致教案被误判为空，
+  // 正文随即错误进入「兜底模式」。这里改为按行识别章节标题，再按章节边界切块。
+  // 兼容：第1章 / 第 1 章 / # 第1章 / ## 第 1 章《标题》 / 第1章：标题。
+  const lines = String(t.raw).replace(/\r\n?/g, '\n').split('\n');
+  const target = ci + 1;
+  const starts = [];
+  const headRe = /^\s*(?:#{1,6}\s*)?第\s*(\d+)\s*章(?:\s+.*|\s*(?:《[^》]*》|\([^)]*\)|（[^）]*）|[:：、.．\-–—].*))?\s*$/;
+
+  for(let i=0; i<lines.length; i++){
+    const m = lines[i].match(headRe);
+    if(m) starts.push({ line:i, ch:parseInt(m[1],10) });
+  }
+
+  const pos = starts.findIndex(x => x.ch === target);
+  if(pos < 0) return '';
+  const begin = starts[pos].line;
+  const end = pos + 1 < starts.length ? starts[pos + 1].line : lines.length;
+  const block = lines.slice(begin, end).join('\n').trim();
+  return block;
 }
 
 /* =========================================================
