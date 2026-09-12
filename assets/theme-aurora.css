@@ -6,7 +6,7 @@
 
 [data-theme="aurora"] {
   --bg:#0d1020; --panel:#161a30; --panel2:#1d2240; --line:#2a3054;
-  --txt:#e9ecff; --sub:#a8b4e8; --muted:#8a96cc;
+  --txt:#e9ecff; --sub:#9aa3d0; --muted:#6b72a0;
   --accent:#7c6cff; --accent2:#41e6d0; --ok:#3ddc97; --warn:#f5b942; --on-accent:#fff;
   --radius:16px;
   --shadow:0 1px 3px rgba(5,8,24,0.5);

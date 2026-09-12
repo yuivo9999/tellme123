@@ -6,8 +6,8 @@
 
 [data-theme="light"] {
   --bg:#f5f6f8; --panel:#ffffff; --panel2:#f3f4f6; --line:#e5e7eb;
-  --txt:#111827; --sub:#374151; --muted:#64748b;
-  --accent:#ea580c; --accent2:#1d4ed8; --ok:#15803d; --warn:#b45309; --on-accent:#fff;
+  --txt:#111827; --sub:#4b5563; --muted:#9ca3af;
+  --accent:#ff6a3d; --accent2:#2f7fe0; --ok:#189a5c; --warn:#d97706; --on-accent:#fff;
   --radius:14px;
   --shadow:0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.05);
 }
@@ -107,8 +107,49 @@
   color: var(--accent2);
 }
 [data-theme="light"] .ws-opt.on .ws-opt-note {
-  color: var(--txt);
+  color: var(--sub);
 }
+/* 古风浅底：写作风格卡片适配宣纸底色，文字改为深墨色 */
+[data-theme="guofeng"] .ws-card {
+  background: #faf6ed;
+  border-color: #d9cbb0;
+}
+[data-theme="guofeng"] .ws-head h3 {
+  color: var(--gf-red);
+}
+[data-theme="guofeng"] .ws-sum {
+  color: var(--gf-dim);
+}
+[data-theme="guofeng"] .ws-group-t {
+  color: var(--gf-ink);
+}
+[data-theme="guofeng"] .ws-manage-btn {
+  color: var(--gf-ink);
+  border-color: rgba(212,168,75,0.4);
+  background: rgba(212,168,75,0.12);
+}
+[data-theme="guofeng"] .ws-manage-btn:hover {
+  background: rgba(212,168,75,0.25);
+  color: var(--gf-ink);
+}
+[data-theme="guofeng"] .ws-chip {
+  color: var(--gf-ink);
+  border-color: #c9b896;
+  background: rgba(244,236,216,0.6);
+}
+[data-theme="guofeng"] .ws-chip:hover {
+  border-color: var(--gf-gold);
+  background: rgba(212,168,75,0.15);
+}
+[data-theme="guofeng"] .ws-chip.on {
+  background: var(--gf-red);
+  border-color: var(--gf-red);
+  color: #fff;
+}
+[data-theme="guofeng"] .ws-subcat-t {
+  color: var(--gf-dim);
+}
+
 
 /* 白天主题：主线简述卡片适配白底 */
 [data-theme="light"] .cp-card {
@@ -116,21 +157,21 @@
   box-shadow: 0 2px 12px rgba(0,0,0,0.06);
 }
 [data-theme="light"] .cp-head {
-  background: linear-gradient(135deg, #c2410c 0%, #9a3412 100%);
+  background: linear-gradient(135deg, #d94a4a 0%, #b33030 100%);
 }
 [data-theme="light"] .cp-head h3 {
   color: #fff;
 }
 [data-theme="light"] .cp-head-sub {
-  color: rgba(255,255,255,0.92);
+  color: rgba(255,255,255,0.65);
 }
 [data-theme="light"] .cp-head-row.action-row .btn {
-  background: rgba(255,255,255,0.2);
-  border: 1px solid rgba(255,255,255,0.45);
-  color: #fff;
+  background: rgba(255,255,255,0.15);
+  border-color: rgba(255,255,255,0.2);
+  color: rgba(255,255,255,0.9);
 }
 [data-theme="light"] .cp-head-row.action-row .btn:hover {
-  background: rgba(255,255,255,0.32);
+  background: rgba(255,255,255,0.25);
   color: #fff;
 }
 [data-theme="light"] .cp-body {
@@ -155,41 +196,25 @@
 }
 [data-theme="light"] .cp-input:focus {
   border-color: var(--accent2);
-  box-shadow: 0 0 0 2px rgba(29,78,216,0.18);
+  box-shadow: 0 0 0 2px rgba(47,127,224,0.12);
 }
 [data-theme="light"] .cp-wc {
-  color: var(--sub);
+  color: var(--muted);
 }
 [data-theme="light"] .cp-body .muted {
-  color: var(--sub);
+  color: var(--muted);
 }
 
-/* v10.56 章节标题卡片标题行：浅色清晰边框 + 主题色标签 */
+/* v10.56 章节标题卡片标题行：浅色橙强调 + 底边 */
 [data-theme="light"] .ct-head {
-  background: #f8fafc;
   color: var(--txt);
-  border: 1px solid #e2e8f0;
-  border-left: 4px solid var(--accent);
-  border-radius: 10px;
-  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
   margin-bottom: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
 }
 [data-theme="light"] .ct-head b {
   font-size: 14px;
-  color: #0f172a;
-  font-weight: 700;
-  text-shadow: none;
-}
-[data-theme="light"] .ct-fold-ico { color: var(--accent); }
-[data-theme="light"] .ct-head .ct-tools .btn {
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
-  color: #0f172a;
-  text-shadow: none;
-}
-[data-theme="light"] .ct-head .ct-tools .btn:hover {
-  background: #f1f5f9;
-  border-color: var(--accent);
   color: var(--accent);
+  font-weight: 700;
 }
+[data-theme="light"] .ct-fold-ico { color: var(--accent2); }

@@ -6,7 +6,7 @@
  * ========================================================= */
 [data-theme="blackboard"]{
   --bg:#0f2a20; --panel:rgba(19,53,42,.92); --panel2:rgba(12,36,27,.92);
-  --line:rgba(255,255,255,.35); --txt:#eafaf2; --sub:#9be8c8; --muted:#98ceb3;
+  --line:rgba(255,255,255,.35); --txt:#eafaf2; --sub:#9be8c8; --muted:#6f9c86;
   --accent:#ffd27f; --accent2:#ffd27f; --ok:#7fe3b0; --warn:#ffd27f; --on-accent:#0f2a20;
   --chalk:#f3fbf6;
 }
@@ -80,7 +80,7 @@
 [data-theme="blackboard"] .shot{ background:linear-gradient(180deg,#16392c,#0f2a20); border:6px solid #6e4a2b; border-radius:6px; box-shadow:0 8px 20px rgba(0,0,0,.5); }
 [data-theme="blackboard"] .shot .no{ color:#ffd27f; }
 [data-theme="blackboard"] .theme-box{ border-top:1px dashed rgba(255,255,255,.4); }
-[data-theme="blackboard"] .hint{ color:var(--muted); }
+[data-theme="blackboard"] .hint{ color:#6f9c86; }
 [data-theme="blackboard"] .toast{ font-family:"KaiTi","STKaiti",serif; }
 
 /* 步骤切换级联动画：切到新步骤时，视图从上方“拉下”一块新黑板，旧视图下移露出底部一截 */

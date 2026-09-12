@@ -22,20 +22,8 @@
   --m-green-dim: #00b248;
   --m-green-glow: rgba(0, 230, 118, 0.28);
   --m-text: #e8eaed;
-  --m-text-dim: #a6adb5;
+  --m-text-dim: #9aa0a6;
   --m-radius: 12px;
-
-  /* 标准变量契约 */
-  --bg: var(--m-bg);
-  --panel: var(--m-panel);
-  --panel2: var(--m-panel-2);
-  --line: var(--m-border);
-  --txt: var(--m-text);
-  --sub: var(--m-text-dim);
-  --muted: #838c96;
-  --accent: var(--m-gold);
-  --accent2: var(--m-green);
-  --on-accent: #111418;
 }
 
 /* ---------- 全局背景（v10.7 钢灰还原：移除背景图与近黑压暗层，直接用原本钢灰令牌做渐变） ---------- */
@@ -219,7 +207,7 @@
 }
 [data-theme="mecha"] textarea::placeholder,
 [data-theme="mecha"] input::placeholder {
-  color: #9aa89a;
+  color: #5a6a5a;
 }
 [data-theme="mecha"] textarea:focus,
 [data-theme="mecha"] input:focus,
