@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.330';   // v1.0.325 界面整理：把用户操作与资料展示分层；全书四/七/十二/十五拍前置到优化构想之前
+const APP_VERSION = '1.0.331';   // v1.0.325 界面整理：把用户操作与资料展示分层；全书四/七/十二/十五拍前置到优化构想之前
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -6974,6 +6974,39 @@ function viewStory(){
     const homeSub = isLong()
       ? `用几句话描述你的长篇构想（世界观、主角、核心冲突都行）。AI 会按你设定的章节数与全书拍子扩写成大纲，之后按「生成章节」逐步写完。`
       : '用几句话描述你的点子（世界观、主角、核心冲突都行）。AI 会扩写成完整故事大纲与章节。';
+    // v1.0.331 修复：无大纲初始页不能引用未定义的 opt_card；此前该 ReferenceError 会让 render() 整体中断，表现为“网页框架加载了，但内核内容全空”。
+    const opt_card = `
+        <div class="card card-theme-idea">
+          <div class="card-head-bar">
+            <div class="ch-left">
+              <span class="ch-badge ch-badge-idea">💡</span>
+              <h3 class="ch-title">用户构想与五向优化</h3>
+              <span class="ch-subtag ch-subtag-idea">${(state.polishOptions&&state.polishOptions.length)?'✨ 构想已优化':'待优化'}</span>
+            </div>
+            <div class="ch-right">
+              <label class="pol-multi" title="生成多方向构想供比选"><input type="checkbox" id="chkPolishMulti" checked> 多方案</label>
+            </div>
+          </div>
+          <div class="idea-row">
+            <textarea id="ideaInput" placeholder="描述你的故事点子（世界观、主角、核心冲突等）…">${esc(state.idea)}</textarea>
+          </div>
+          <div class="btn-row">
+            <button id="btnPolishIdea" class="btn ghost ${polishIdle()?'first':''}">✨ 优化构想</button>
+          </div>
+          <div id="polishBox" class="pol-box" style="display:none">
+            <div class="pol-head"><b>✨ 方案比选</b>
+              <span class="pol-tools">
+                <button id="btnPolishDiscard" class="btn small ghost">✕ 收起</button>
+              </span>
+            </div>
+            <div id="polishCards" class="pol-cards"></div>
+          </div>
+          ${ polishKeepBar() }
+          <div class="btn-row">
+            <button id="btnGenOutline" class="btn primary block" ${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'disabled title="请先优化构想再生成大纲"':''}>${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'📋 待优化构想后生成':(isLong()?'📚 生成大纲':'✨ 生成故事大纲')}</button>
+          </div>
+          <p id="outlineStatus" class="status"></p>
+        </div>`;
     return CYBER_HOME_GRID + `${isLong()?longNovelControlDeckHtml():''}
     <div class="flow-wrap">
             <section class="flow-sec" data-flow="1">
