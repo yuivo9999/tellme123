@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.332';
+const APP_VERSION = '1.0.334';
 const KEY_CFG = nsKey('cfg');
 
 let _bgTaskCount = 0;
@@ -64,7 +64,7 @@ let lib = { curId: null, items: [] }; // {curId, items:[{id, idea, outline, ...,
 let gglib = [];
 
 const state = {
-  mode: 'shortfilm',    // 'shortfilm' 短片 / 'longnovel' 经典长篇小说
+  mode: 'longnovel',    // 统一为长篇小说模式
   wordRange: null,      // (兼容遗留) 不再作为长篇必填；保留字段避免旧快照破坏
   chapterRange: null,   // (兼容遗留) 同上
   totalWords: null,     // (兼容遗留) 同上
@@ -82,6 +82,7 @@ const state = {
   soCollapsed: false,
   gsCatFold: { main:false, support:false, walkon:false, place:false, proper:false, sub:false },
   deCollapsed: false,
+  polishCollapsed: false,
   subAutoFill: true,
   subRecallRatio: 0.4,
   timeAnchor: true,
@@ -231,20 +232,20 @@ function _sndBeep(freq, start, dur, gain){ // 单音（正弦包络：快起快�
   }catch(e){}
 }
 const SND_SINGLE_PRESETS = [
-  { id:'be_dingdong', name:'经典叮咚',     seq:[[659.3,0,0.1],[880.0,0.12,0.2]] },
-  { id:'be_single',   name:'清亮单音',     seq:[[880.0,0,0.25]] },
-  { id:'be_duo',      name:'清脆双音',     seq:[[783.99,0,0.12],[1046.5,0.14,0.2]] },
-  { id:'be_tri',      name:'柔和三音',     seq:[[659.3,0,0.1],[784.0,0.12,0.12],[1046.5,0.24,0.2]] },
-  { id:'be_drop',     name:'水滴落音',     seq:[[1174.7,0,0.12],[880.0,0.16,0.22]] },
-  { id:'be_wind',     name:'风铃',         seq:[[1318.5,0,0.1],[987.8,0.13,0.12],[784.0,0.26,0.28]] }
+  { id:'be_paper',  name:'纸页轻响',   seq:[[523.25,0,0.08],[659.25,0.09,0.16]] },
+  { id:'be_piano',  name:'柔钢琴点',   seq:[[659.25,0,0.22]] },
+  { id:'be_glass',  name:'晶石轻触',   seq:[[783.99,0,0.11],[1046.5,0.13,0.22]] },
+  { id:'be_bell',   name:'小钟清鸣',   seq:[[880.0,0,0.12],[1174.66,0.15,0.25]] },
+  { id:'be_wood',   name:'木铃短拍',   seq:[[587.33,0,0.09],[783.99,0.11,0.18]] },
+  { id:'be_spark',  name:'星屑三音',   seq:[[659.25,0,0.08],[880.0,0.1,0.09],[1318.51,0.21,0.22]] }
 ];
 const SND_ALL_PRESETS = [
-  { id:'al_up2',      name:'快速两声上行', seq:[[1046.5,0,0.12],[1318.5,0.15,0.18]] },
-  { id:'al_triple',   name:'三连上行',     seq:[[1046.5,0,0.1],[1174.7,0.11,0.12],[1318.5,0.22,0.2]] },
-  { id:'al_joy',      name:'欢快双音',     seq:[[784.0,0,0.12],[1318.5,0.14,0.2]] },
-  { id:'al_arpeggio', name:'琶音上行',     seq:[[523.3,0,0.1],[659.3,0.1,0.12],[784.0,0.2,0.12],[1046.5,0.3,0.22]] },
-  { id:'al_fanfare',  name:'胜利号角',     seq:[[784.0,0,0.12],[1046.5,0.12,0.14],[1318.5,0.26,0.25]] },
-  { id:'al_ladder',   name:'四音阶梯',     seq:[[1046.5,0,0.1],[1174.7,0.1,0.11],[1318.5,0.2,0.11],[1568.0,0.3,0.24]] }
+  { id:'al_piano',   name:'钢琴上行',   seq:[[523.25,0,0.11],[659.25,0.12,0.12],[783.99,0.25,0.24]] },
+  { id:'al_glass',   name:'晶石琶音',   seq:[[659.25,0,0.08],[783.99,0.09,0.08],[1046.5,0.18,0.1],[1318.51,0.3,0.24]] },
+  { id:'al_chime',   name:'风铃庆成',   seq:[[783.99,0,0.1],[1046.5,0.11,0.1],[1318.51,0.23,0.28]] },
+  { id:'al_chord',   name:'柔和和弦',   seq:[[523.25,0,0.14],[659.25,0.02,0.14],[783.99,0.04,0.22]] },
+  { id:'al_spark',   name:'星光四步',   seq:[[659.25,0,0.08],[783.99,0.1,0.08],[1046.5,0.2,0.1],[1567.98,0.32,0.24]] },
+  { id:'al_finish',  name:'完成回响',   seq:[[587.33,0,0.1],[783.99,0.12,0.11],[987.77,0.25,0.12],[1174.66,0.39,0.3]] }
 ];
 const SND_TSINGLE_KEY = (typeof nsKey==='function') ? nsKey('snd_t_beats') : 'tz_snd_t_beats'; // 键名沿用旧值，保留用户已选音色
 const SND_TALL_KEY   = (typeof nsKey==='function') ? nsKey('snd_t_all')   : 'tz_snd_t_all';
@@ -560,7 +561,7 @@ function makeId(){ return 'p' + Date.now().toString(36) + Math.random().toString
 
 function projectSnapshot(){
   return {
-    mode: state.mode || 'shortfilm',
+    mode: 'longnovel',
     wordRange: state.wordRange || null,
     chapterRange: state.chapterRange || null,
     totalWords: state.totalWords || null,
@@ -582,6 +583,7 @@ function projectSnapshot(){
     cpCollapsed: state.cpCollapsed,
     soCollapsed: !!state.soCollapsed,
     deCollapsed: !!state.deCollapsed,
+    polishCollapsed: !!state.polishCollapsed,
     gsCatFold: (state.gsCatFold && typeof state.gsCatFold === 'object') ? state.gsCatFold : { main:false, support:false, walkon:false, place:false, proper:false, sub:false },   // 词典小类别折叠态（仅存结构，运行时各键默认见 state）
     useChapterPlans: true,
     plannerFinalized: !!state.plannerFinalized,
@@ -620,7 +622,7 @@ function projectSnapshot(){
   };
 }
 function applyProject(p){
-  state.mode = (p.mode === 'longnovel') ? 'longnovel' : 'shortfilm';
+  state.mode = 'longnovel';
   state.wordRange = (p.wordRange && p.wordRange.min && p.wordRange.max) ? {min:+p.wordRange.min, max:+p.wordRange.max} : (p.chapterRange ? null : null);
   state.chapterRange = (p.chapterRange && p.chapterRange.min && p.chapterRange.max) ? {min:+p.chapterRange.min, max:+p.chapterRange.max} : null;
   state.totalWords = (p.totalWords && +p.totalWords>0) ? +p.totalWords : null;
@@ -644,6 +646,7 @@ function applyProject(p){
   state.cpCollapsed = (typeof p.cpCollapsed === 'boolean') ? p.cpCollapsed : true;
   state.soCollapsed = !!p.soCollapsed;
   state.deCollapsed = !!p.deCollapsed;
+  state.polishCollapsed = !!p.polishCollapsed;
   state.gsCatFold = (p.gsCatFold && typeof p.gsCatFold === 'object') ? p.gsCatFold : { main:false, support:false, walkon:false, place:false, proper:false, sub:false };   // 词典小类别折叠态恢复
   const _gcf = state.gsCatFold; if(_gcf && typeof _gcf === 'object'){ ['main','support','walkon'].forEach(k=>{ if(typeof _gcf[k] !== 'boolean') _gcf[k] = false; }); }
   state.useChapterPlans = true;
@@ -696,7 +699,7 @@ function applyProject(p){
   normalizeOutline(state.outline);
 }
 function clearState(){
-  state.mode = 'shortfilm';
+  state.mode = 'longnovel';
   state.wordRange = null; state.chapterRange = null; state.totalWords = null; state.chapterCount = null;
   state.idea = ''; state.outline = null; state.coverPrompt = ''; state.coverWithTitle = false; state.outlineConfirmed = false;
   state.glossAdherence = 60; state.glossAllowFill = false; state.gsCollapsed = false;
@@ -719,6 +722,7 @@ function clearState(){
   state.longMemory = { uiOpen:false, foreshadow:[], lastAuditAt:0 };
   state.teamShape = 'solo';
   state.openingStrategy = 'auto';
+  state.polishCollapsed = false;
   state._chapterPartial = {};
   state.aiNetwork = { stage:'idle', running:[], completed:[], blockedBy:{} };
   state._lastCpRaw = '';
@@ -843,9 +847,7 @@ async function migrateLegacyLibrary(){
 function normalizeLegacyProject(p){
   const s = p && typeof p === 'object' ? p : {};
   const out = {};
-  out.mode = (s.mode === 'longnovel' || s.mode === 'long') ? 'longnovel' : (s.mode || 'shortfilm');
-  out.mode = (out.mode === 'long') ? 'longnovel' : out.mode;
-  out.mode = (out.mode === 'short' || out.mode === 'shortfilm') ? 'shortfilm' : out.mode;
+  out.mode = 'longnovel';
   out.idea = s.idea != null ? s.idea : '';
   out.outline = s.outline || null;
   out.outlineConfirmed = !!s.outlineConfirmed;
@@ -1500,6 +1502,7 @@ function showPolishResult(out, multi){
         _v45: pickV45(o)
       }));
       state.polishAdopted = null;   // 新方案列表，尚未采用
+      state.polishCollapsed = false;
       persist();
       render(); openPolishBox();
       return;
@@ -1518,6 +1521,7 @@ function showPolishResult(out, multi){
     snapshotPolishBatch('重新优化前');
     state.polishOptions = [{ name:'方案1', text: String(typeof out==='object' ? ((out&&out.optimizedIdea)||'') : out).trim(), _v45: pickV45(typeof out==='object'?out:{}) }];
     state.polishAdopted = null;
+    state.polishCollapsed = false;
     persist();
     render(); openPolishBox();
     return;
@@ -1574,6 +1578,8 @@ function importPolishToState(o){
 function openPolishBox(){
   const box = $('#polishBox'), cards = $('#polishCards');
   if(!box || !cards) return;
+  state.polishCollapsed = false;
+  persist();
   box.style.display = 'block';
   renderPolishCards(cards);
 }
@@ -2665,6 +2671,38 @@ function openingBudget(){
   if(n <= 50) return 5;
   return 8;
 }
+function openingStrategyExecutionCard(i=0){
+  if(!isLong() || i!==0) return '';
+  const selected = openingStrategyDef(currentOpeningStrategyId());
+  const rec = openingStrategyDef(recommendedOpeningStrategy());
+  const actual = currentOpeningStrategyId()==='auto' ? rec : selected;
+  const jobs = {
+    crisis:'第一段直接把读者放进正在发生的危机或倒计时中；随后只补最少必要背景。',
+    action:'先给一个可视化动作/事件，再在动作中自然带出主角、目标与冲突。',
+    normal:'先给一个有生活质感的具体场景，再让一个明确异常打破日常平衡。',
+    secret:'先露出人物隐瞒、关系裂缝或异常反应，再让读者追问秘密是什么。',
+    world:'先展示一个反常且可感知的世界现象，用人物反应把世界规则带出来。',
+    result:'先展示一个已经发生的结果或代价，再倒推出“为什么会走到这里”。',
+    future:'先给未来片段/预兆/结局影子，制造一个必须追问的悬念，再切回当下。',
+    action2:'先给一个可视化动作/事件，再在动作中自然带出主角、目标与冲突。'
+  };
+  const job = jobs[actual.id] || actual.desc;
+  return `【第一章开篇任务卡】
+策略：${actual.label}
+开篇职责：${job}
+首拍硬目标：首段尽早让读者看见“谁在什么处境中、正在发生什么问题”，并形成一个明确的继续阅读问题。
+首章前800字控制：以事件/人物现场为主，背景说明只允许为理解当前动作所必需的最小信息；禁止先写大段世界观说明、人物履历或空泛抒情。
+首拍验收：开篇方式必须能被读者从正文实际动作/场景中辨认，而不是只在教案里写“按${actual.label}开篇”。`;
+}
+function principalOpeningTaskExcerpt(){
+  const pr=(state.school&&state.school.principal)||{};
+  if(pr.raw){
+    const raw=String(pr.raw);
+    const heads=['## 第一章开篇任务卡','# 第一章开篇任务卡','第一章开篇任务卡'];
+    for(const h of heads){ const a=raw.indexOf(h); if(a>=0){ const tail=raw.slice(a); const m=tail.search(/\n#(?!#)|\n## /); const sec=(m>0?tail.slice(0,m):tail.slice(0,3000)).trim(); if(sec) return sec; } }
+  }
+  return openingStrategyExecutionCard(0);
+}
 function openingStrategyBrief(){
   if(!isLong()) return '';
   const selected = openingStrategyDef(currentOpeningStrategyId());
@@ -3223,7 +3261,8 @@ const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治
    · 权限边界：用户风格决定「怎么写」；老师教案决定「本章写什么」；词典决定事实一致性；正文 AI 不负责重新裁决风格组合。
 ② 各组组级框架——每组一份、逐组齐全。每份固定字段：
    · 起止章与剧情段；每章功能分工（仅到「引入/推进/转折/高潮/收束」标签 + 一句目标）；整组节奏与情绪曲线；跨组承接（承上=承接上一组末章收束后本组从何接续、首组按【开篇引擎】执行；启下=末章给下一组留的钩）；重点调用词典要素。
-③ 全书章节标题总表——为全部章节各拟一题，一批拉通给出、前后呼应。
+③ 第一章开篇任务卡：必须把【开篇引擎】从抽象策略转换成可执行的首章施工卡，至少明确：策略、首拍动作/场景、前800字必须建立的读者认知、禁止事项、继续阅读问题。该卡必须真正约束第1章教案，不得只写“按开篇引擎执行”。
+④ 全书章节标题总表——为全部章节各拟一题，一批拉通给出、前后呼应。
 
 【输出契约·严格遵守】
 - 只输出纯文本 Markdown；禁止 JSON、禁止用三个反引号围栏包裹输出、禁止引语/开场白/结束语/解释。
@@ -3235,6 +3274,12 @@ const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治
 ## 风格验收标准
 ## 因果闭环总纲
 ## 可执行纪律
+# 第一章开篇任务卡
+策略：……
+首拍动作/场景：……
+前800字必须建立：……
+禁止事项：……
+继续阅读问题：……
 # 各组组级框架
 ## 组1 · 老师1（第1-20章 · 段名）
 - 功能分工：第1章=引入/…；第2章=…
@@ -3262,7 +3307,8 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
    · 可执行纪律：微拍节奏指令与章间过桥律（尾留钩子首接余波，平滑对缝，严禁瞬移硬跳；时间不倒流，术语定稿不改）。
    · 因果闭环总纲：逐章审查重大事件的发生资格；任何关键结果都必须有前置状态、人物目标/动机、信息或线索来源、行动路径、能力/资源条件与触发依据。条件不足时必须补铺垫或调整达成方式，严禁为了完成节拍让事件凭空出现。偶然事件可以保留，但必须符合世界规则并具备最低限度的可解释触发。
    · 权限边界：用户风格决定「怎么写」；逐章教案决定「写什么」；正文 AI 只执行，不重新选风格。
-② 全书章节标题总表：
+② 第一章开篇任务卡：把【开篇引擎】转成第1章可直接施工的首拍任务，明确首拍动作/场景、前800字必须建立的认知、禁止事项与继续阅读问题，并让第1章教案第①环节严格执行。
+③ 全书章节标题总表：
    为全书第1章至最后一章各拟定一题，连贯排布、前后呼应。
 ③ 逐章教案（第1章 ~ 最后一章）：
    直接为每一章备出标准化教案，一章不少！每章严格遵循六栏（冒号紧跟）：
@@ -3284,6 +3330,12 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
 ## 风格验收标准
 ## 因果闭环总纲
 ## 可执行纪律
+# 第一章开篇任务卡
+策略：……
+首拍动作/场景：……
+前800字必须建立：……
+禁止事项：……
+继续阅读问题：……
 # 全书章节标题总表
 第1章 《标题》
 第2章 《标题》
@@ -3309,6 +3361,7 @@ function buildPrincipalUser(groups){
   if(cand && cand.name) lines.push(`【优化构想·所选方案】${String(cand.name).trim()}${cand.brief?('\n'+String(cand.brief).trim()):''}`);
   lines.push(`【全校章节数】${(o.chapters||[]).length || chapterCountVal() || '未知'} 章`);
   const _opening = openingStrategyBrief(); if(_opening) lines.push(_opening);
+  const _openingTask = openingStrategyExecutionCard(0); if(_openingTask) lines.push(_openingTask);
   const bc = currentBeatCfg ? currentBeatCfg() : null;
   if(bc && bc.label){
     const beatDetail = (bc.types||[]).map((t, idx) => `  ${idx+1}. 【${t.label}】(type=${t.key})：${t.note || ''} ${t.aiDirective ? `[执行指令: ${t.aiDirective}]` : ''}`).join('\n');
@@ -3390,6 +3443,8 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 【单源真理·微拍深度融合】：教案与微拍深度合一！请直接将【章节微拍】的节奏走向与高低起伏融入「本章推进骨架」各环节中，不再作为割裂体系，使教案成为正文 AI 执笔时的唯一航海图。
 【骨架首拍预留接引弹性】：你备课时并未看到上一章落地后的字面正文细节。因此，每章教案「本章推进骨架」的第 ① 环节必须兼备"承上启下"的弹性——它既能吸纳上一章正文末尾可能遗留的短暂动作/对话余波，又能给出通向本章新事件的平滑过渡方向，绝不要把第 ① 环节写成突兀割裂的硬跳切。
 
+【首章开篇执行锁】如果本组包含第1章，必须把输入中的【第一章开篇任务卡】直接落实为第1章教案的第一环节；不得只写“按开篇引擎执行”。教案必须明确：首拍发生什么、读者先看到什么、前800字应建立什么、哪些内容不得提前倾倒。
+
 【输入格式】(user 消息按【键】分节装载，逐节使用、缺失标「无」)
 【全校写作守则】/【本组组级框架】/【本组章节标题】/【全量词典·共享不切片】/【本组《全书节拍》节选】/【教师交接棒契约】。
 
@@ -3440,6 +3495,7 @@ function buildTeacherUser(g, gi){
   lines.push('【全量词典（共享不切片）】\n' + scGlossaryBrief(7000));
   lines.push(`【本组《全书节拍》节选】\n${scGroupBeats(g, 8000)}`);
   const _opening = openingStrategyBrief(); if(_opening) lines.push(_opening);
+  if(g && g.first===1){ const _openingTask = principalOpeningTaskExcerpt() || openingStrategyExecutionCard(0); if(_openingTask) lines.push(_openingTask); }
   lines.push(prevGroupTailState(gi, g));
   if(isLong()) lines.push(`【长篇记忆层·老师备课参考】\n${longMemoryBrief(g.first-1) || '（尚无已落地正文状态；以校长交接棒和本组教案输入为准。）'}\n执行要求：记忆层只用于保持状态、因果与伏笔连续，不得擅自新增剧情；本组每章重大事件仍须给出前置条件→触发/线索→人物行动→结果。`);
   lines.push('\n请对本组每一章产出一份「本章写作框架」，并在文末附上【本阶段向下一阶段移交的 3 大关键悬念与阶段高潮成果】。');
@@ -3463,6 +3519,7 @@ function prevGroupTailState(gi, g){
   const batonText = mBaton ? mBaton[1].trim() : '';
 
   const parts = [];
+  if(g && g.first===1){ const ot=principalOpeningTaskExcerpt() || openingStrategyExecutionCard(0); if(ot) parts.push(ot); }
   parts.push(`【教师交接棒契约（上一位老师${gi}移交 · 最高优先级硬性输入）】
 上一位老师负责第 ${prevGroup.first}-${prevGroup.last} 章。为彻底消除阶段之间的割裂感，本组（第 ${g.first}-${g.last} 章）第 1 章（第 ${g.first} 章）必须作为交接棒的第一承接者：`);
   
@@ -3538,6 +3595,11 @@ async function genSchoolAll(btn){
     ...groups.map((g,i)=>({ key:'t'+i, label:'老师'+(i+1)+'备课', run:()=> genTeacher(null,i) }))
   ];
   const allBtn = ()=> document.querySelector('[data-scp-all]');
+  const presetTitles = ()=>{
+    const titles = (state.school && state.school.principal && Array.isArray(state.school.principal.titles)) ? state.school.principal.titles : [];
+    if(titles.length && !isPrincipalTitlesApplied()) doApplyTitles(titles);
+  };
+  if(scDone('principal')) presetTitles();
   const setTxt = t=>{ const b=allBtn(); if(b){ if(b._txt === undefined) b._txt = b.innerHTML; b.textContent = t; } };
   const finish = ()=>{ const b=allBtn(); if(b){ if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; } b.classList.remove('running'); } };
   if(btn){ btn.classList.add('running'); setTxt(`学校一键（0/${steps.length}）…`); }
@@ -3551,10 +3613,16 @@ async function genSchoolAll(btn){
       if(zone){ showStopBtn(zone); zone.classList.add('cp-stopping'); if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true}); }
       const ok = await st.run();
       hideStopBtn(); if(zone) zone.classList.remove('cp-stopping');
+      if(ok && st.key==='principal'){
+        const titles = (state.school && state.school.principal && Array.isArray(state.school.principal.titles)) ? state.school.principal.titles : [];
+        if(titles.length && !isPrincipalTitlesApplied()){
+          doApplyTitles(titles);
+        }
+      }
       if(ok && scMark){ scMark(st.key, true); }
       if(!ok){ toast(stopped ? `已停止学校一键（停在「${st.label}」）` : `学校一键中断于「${st.label}」，可单独点该步骤重试`); return; }
     }
-    toast(folded ? '学校一键完成：达人→充实→校长兼老师直接备课就绪！' : '学校一键全部完成：达人→充实→校长→全部老师备课就绪');
+    toast(folded ? '学校一键完成：达人→充实→校长兼老师→标题已自动应用→正文就绪！' : '学校一键全部完成：达人→充实→校长→标题已自动应用→全部老师备课就绪！');
     playDoneSound('all');
   }finally{ finish(); }
 }
@@ -5296,7 +5364,8 @@ function render(){
     t.classList.toggle('active', n===currentStep);
   });
   const v = $('#view');
-  if(currentStep===1) v.innerHTML = viewStory();
+  if(v) v.classList.toggle('story-simple-view', currentStep===1 && storyUiMode()==='simple');
+  if(currentStep===1) v.innerHTML = storyUiMode()==='simple' ? viewStorySimple() : viewStory();
   else if(currentStep===2) v.innerHTML = viewCharacters();
   else if(currentStep===3) v.innerHTML = viewScenes();
   else if(currentStep===4) v.innerHTML = viewStoryboard();
@@ -6239,6 +6308,83 @@ function bindLongNovelMemoryRepo(){
   d.addEventListener('toggle',()=>{ ensureLongMemory().uiOpen=d.open; persist(); });
 }
 
+
+function storyUiMode(){
+  try{ const c=getCfg(); return c.storyUiMode==='detailed' ? 'detailed' : 'simple'; }catch(e){ return 'simple'; }
+}
+function updateStoryUiButton(){
+  const b=$('#btnStoryView'); if(!b) return;
+  const simple=storyUiMode()==='simple';
+  b.title=simple?'当前：简化版故事界面，点击切换为详细版':'当前：详细版故事界面，点击切换为简化版';
+  const lab=b.querySelector('.tb-lab'); if(lab) lab.textContent=simple?'简洁':'详细';
+  const ic=b.querySelector('.tb-view-ic'); if(ic) ic.textContent=simple?'▣':'▤';
+  b.classList.toggle('active', simple);
+}
+function toggleStoryUiMode(){
+  const c=getCfg();
+  c.storyUiMode=storyUiMode()==='simple'?'detailed':'simple';
+  saveCfg(c); updateStoryUiButton(); render(); window.scrollTo(0,0);
+  toast(c.storyUiMode==='simple'?'已切换为简化版故事界面':'已切换为详细版故事界面');
+}
+function simpleIdeaCardHtml(){
+  return `<div class="card card-theme-idea simple-action-card">
+    <div class="card-head-bar"><div class="ch-left"><span class="ch-badge ch-badge-idea">💡</span><h3 class="ch-title">故事构想与优化</h3><span class="ch-subtag ch-subtag-idea">${(state.polishOptions&&state.polishOptions.length)?'✨ 已有方案':'待优化'}</span></div></div>
+    <div class="idea-row"><textarea id="ideaInput" placeholder="描述你的故事点子（世界观、主角、核心冲突等）…">${esc(state.idea)}</textarea></div>
+    <div class="btn-row"><button id="btnPolishIdea" class="btn ghost ${polishIdle()?'first':''}">✨ 优化构想</button></div>
+    <div id="polishBox" class="pol-box" style="display:${state.polishCollapsed?'none':'block'}"><div class="pol-head"><b>✨ 方案比选</b><span class="pol-tools"><button id="btnPolishDiscard" class="btn small ghost">✕ 收起</button></span></div><div id="polishCards" class="pol-cards"></div></div>
+    ${(state.polishCollapsed && Array.isArray(state.polishOptions) && state.polishOptions.length)?`<div class="pol-keep pol-keep-collapsed"><span class="pol-keep-t">✓ 已采用：${esc(state.polishAdopted || state.polishOptions[0].name || '方案1')} · 优化方案已收起</span><span class="pol-keep-btns"><button type="button" class="btn small ghost" data-pol-keep-view>🔍 展开/更换方案</button></span></div>`:''}
+    ${polishKeepBar()}
+    <div class="btn-row"><button id="btnGenOutline" class="btn primary block" ${(!(Array.isArray(state.polishOptions)&&state.polishOptions.length))?'disabled title="请先优化构想再生成大纲"':''}>${(!(Array.isArray(state.polishOptions)&&state.polishOptions.length))?'📋 待优化构想后生成':'📚 生成大纲'}</button></div>
+    <p id="outlineStatus" class="status"></p>
+  </div>`;
+}
+function simpleBaseCardHtml(){
+  return `<div class="card card-theme-idea decision-base-card simple-action-card"><div class="card-head-bar"><div class="ch-left"><span class="ch-badge ch-badge-beat">🧭</span><h3 class="ch-title">故事基础设置</h3></div></div>
+    <div class="tw-panel" style="margin-bottom:10px"><div class="poly-head"><span class="poly-ic">📐</span><b>全书章节数</b><span class="poly-rule">必填 · 1-200 整数</span></div><div class="tw-row"><input type="number" id="chapterCountIn" class="tw-in cc-in" min="1" max="200" step="1" inputmode="numeric" placeholder="如 30" value="${chapterCountVal()||''}"/><span class="tw-unit">章</span>${chapterCountVal()?`<span class="pill tag-ok">${chapterCountHint()}</span>`:''}</div></div>
+    ${bookBeatHtml()}${openingStrategyHtml()}
+    <h4 style="margin:18px 0 6px">叙事视角</h4><div class="team-pick" id="teamPick">${TEAM_OPTIONS.map(o=>`<label class="team-item ${o.id===currentTeamShape().id?'sel':''}" data-team="${o.id}" title="${esc(o.desc)}"><span class="team-ic">${o.id==='solo'?'👤':o.id==='dual'?'👫':o.id==='trio'?'🤝':o.id==='quad'?'👥':'🧑‍🤝‍🧑'}</span><span class="team-txt"><b>${esc(o.label)}</b><i>${esc(o.desc)}</i></span><input type="radio" name="teamShape" value="${o.id}" style="display:none" ${o.id===currentTeamShape().id?'checked':''}></label>`).join('')}</div>
+  </div>`;
+}
+function simpleOutlineCardHtml(){
+  const o=state.outline||{};
+  return `<div class="card card-theme-idea simple-summary-card"><div class="card-head-bar"><div class="ch-left"><span class="ch-badge ch-badge-idea">📋</span><h3 class="ch-title">故事大纲与书名</h3><span class="ch-subtag ch-subtag-idea">《${esc(o.title||'未命名')}》</span></div></div><div class="simple-outline-summary"><b>简介</b><p>${esc(String(o.logline||'').trim()||'暂无简介')}</p><div class="btn-row"><button type="button" class="btn small ghost" data-simple-jump="outline">进入详细大纲</button></div></div></div>`;
+}
+function simpleModuleHtml(key){
+  if(key==='style') return safeCard(()=>writeStyleCard());
+  if(key==='base') return simpleBaseCardHtml();
+  if(key==='idea') return simpleIdeaCardHtml();
+  if(key==='outline') return simpleOutlineCardHtml();
+  if(key==='recipe') return aiRecipeCard();
+  if(key==='beat') return beatStructureCardHtml();
+  if(key==='dictmaster') return dictMasterBlockHtml();
+  if(key==='dictEnrich') return dictEnrichBlockHtml();
+  if(key==='school') return `${microBeatBlock()}${schoolZoneBlock()}`;
+  if(key==='glossary') return glossaryCardHtml();
+  if(key==='memory') return longNovelMemoryRepoHtml();
+  if(key==='prose') return `${qualityReportCardHtml()}<div class="ch-toolbar"><span class="ch-toolbar-t">📚 章节列表（共 ${state.chapters.length} 章，已生成 ${state.chapters.filter(c=>c.content&&String(c.content).trim()).length} 章）</span></div><div id="chaptersWrap"></div>${fixQueueCardHtml()}<div class="btn-row" style="margin-top:12px"><span class="multi-gen"><span class="multi-gen-main"><button id="btnGenMany" class="btn blue">⚡ 批量生成多章</button></span><span class="gen-stepper"><button type="button" class="gen-step" data-gen-dec>−</button><output id="genCountOut" class="gen-count-out">${genBatchN}</output><span class="gen-unit">章</span><button type="button" class="gen-step" data-gen-inc>＋</button></span></span></div><div class="range-gen"><button id="btnRangeGen" class="btn blue">⚡ 区间生成</button><label class="rg-label">从第 <input id="rgStart" type="number" min="1" max="${state.chapters.length}" value="1" class="rg-input"> 章</label><span class="muted">到第</span><label class="rg-label"><input id="rgEnd" type="number" min="1" max="${state.chapters.length}" value="2" class="rg-input"> 章</label><span id="rgStatus" class="muted"></span></div><p id="chStatus" class="status"></p><p id="bgTaskIndicator" class="status muted" style="display:none;font-size:12px;margin-top:2px"></p><div class="long-progress"></div>`;
+  return '';
+}
+function simpleActiveKeys(){
+  if(!state.outline) return ['style','base','idea'];
+  const sc = scState();
+  if(!scDone('dictMaster')) return ['outline','recipe','beat','dictmaster'];
+  if(!scDone('dictEnrich') || !scDone('principal')) return ['outline','dictEnrich','school'];
+  const groups = schoolStageGroups();
+  const teachersDone = groups.length ? groups.every((g,i)=>scDone('t'+i)) : false;
+  if(!teachersDone) return ['outline','school'];
+  return ['outline','prose'];
+}
+function viewStorySimple(){
+  const active=simpleActiveKeys();
+  const modules=[
+    ['style','写作风格','先锁定表达方式'],['base','创作基础','章节数、宏观节拍、开篇策略'],['idea','故事构想','优化并选择构想方案'],['outline','故事大纲','书名、简介与章节骨架'],['recipe','写作配方','把风格转成正文规则'],['beat','全书节拍','全书节奏与阶段映射'],['dictmaster','词典达人','建立全局设定词典'],['dictEnrich','词典充实','补齐可执行细节'],['school','学校统筹','校长裁决、老师备课'],['glossary','万物词典','全书共享事实数据库'],['memory','长篇记忆层','伏笔、因果、章节状态'],['prose','正文作家','生成与维护章节正文']
+  ];
+  const activeSet=new Set(active);
+  const activeHtml=active.map(k=>{ const m=modules.find(x=>x[0]===k); return `<section class="simple-current-module"><div class="simple-module-kicker">当前要做 · ${esc(m?m[1]:k)}</div>${simpleModuleHtml(k)}</section>`; }).join('');
+  const archived=modules.filter(m=>!activeSet.has(m[0])).map(m=>`<details class="simple-stowed"><summary><span>${esc(m[1])}</span><em>${esc(m[2])}</em><i>展开</i></summary><div class="simple-stowed-body">${simpleModuleHtml(m[0])}</div></details>`).join('');
+  return `${CYBER_HOME_GRID}<div class="simple-story-shell"><div class="simple-story-head"><div><span class="simple-kicker">LONGFORM · SIMPLE VIEW</span><h2>长篇小说工作台</h2><p>只把现在需要你决定或操作的内容放到前面；其他模块完整保留在“已收纳模块”。</p></div><button type="button" class="btn ghost" data-story-view-toggle>切换到详细界面</button></div><div class="simple-progress"><span>当前阶段</span><b>${active[0]==='style'?'创作准备':active[0]==='dictmaster'?'设定构建':active[0]==='school'?'学校统筹':'正文生产'}</b><span class="muted">其余模块不会消失</span></div><div class="simple-current">${activeHtml}</div><div class="simple-stowed-wrap"><div class="simple-stowed-title">🗂 已收纳模块 <span>需要修改时随时展开</span></div>${archived}</div></div>`;
+}
+
 function viewStory(){
   if(!state.outline){
     const homeSub = isLong()
@@ -6262,7 +6408,7 @@ function viewStory(){
           <div class="btn-row">
             <button id="btnPolishIdea" class="btn ghost ${polishIdle()?'first':''}">✨ 优化构想</button>
           </div>
-          <div id="polishBox" class="pol-box" style="display:none">
+          <div id="polishBox" class="pol-box" style="display:${state.polishCollapsed?'none':'block'}">
             <div class="pol-head"><b>✨ 方案比选</b>
               <span class="pol-tools">
                 <button id="btnPolishDiscard" class="btn small ghost">✕ 收起</button>
@@ -6270,6 +6416,7 @@ function viewStory(){
             </div>
             <div id="polishCards" class="pol-cards"></div>
           </div>
+          ${ (state.polishCollapsed && Array.isArray(state.polishOptions) && state.polishOptions.length) ? `<div class="pol-keep pol-keep-collapsed"><span class="pol-keep-t">✓ 已采用：${esc(state.polishAdopted || state.polishOptions[0].name || '方案1')} · 优化方案已收起</span><span class="pol-keep-btns"><button type="button" class="btn small ghost" data-pol-keep-view>🔍 展开/更换方案</button></span></div>` : '' }
           ${ polishKeepBar() }
           <div class="btn-row">
             <button id="btnGenOutline" class="btn primary block" ${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'disabled title="请先优化构想再生成大纲"':''}>${(!(Array.isArray(state.polishOptions) && state.polishOptions.length))?'📋 待优化构想后生成':(isLong()?'📚 生成大纲':'✨ 生成故事大纲')}</button>
@@ -6342,16 +6489,9 @@ function viewStory(){
         ${ safeCard(()=>microBeatBlock()) }
         ${ safeCard(()=>schoolZoneBlock()) }
       </section>
-<section class="flow-repo" data-repo="book-assets">
-  <details class="repo-drawer">
-    <summary><span class="repo-ic">🗃️</span><b>本书资料仓</b><span class="repo-note">资料与结果默认收起，不占主流程空间</span><span class="repo-open">展开资料 ▸</span></summary>
-    <div class="repo-body">
-      <div class="repo-item repo-glossary">
-        <div class="repo-item-head"><div><b>📇 万物词典</b><span>全书共享设定库 · 人物 / 地名 / 专名 / 副线</span></div><span class="repo-item-tag">资料库</span></div>
-        ${ glossaryCardHtml() }
-      </div>
-    </div>
-  </details>
+<section class="flow-sec flow-info-sec" data-flow="7.5">
+  <div class="flow-sec-head"><span class="fs-no">📇</span><span class="fs-name">万物词典</span><span class="fs-note">全书共享事实数据库 · 正文的设定唯一基准</span></div>
+  ${ glossaryCardHtml() }
 </section>
 ${longNovelMemoryRepoHtml()}
 <section class="flow-sec" data-flow="9">
@@ -9720,6 +9860,8 @@ function bindView(){
       });
     }
   }
+  $$('[data-story-view-toggle]').forEach(b=> b.onclick=()=>toggleStoryUiMode());
+  $$('[data-simple-jump]').forEach(b=> b.onclick=()=>{ const c=getCfg(); c.storyUiMode='detailed'; saveCfg(c); updateStoryUiButton(); render(); window.scrollTo(0,0); });
   bindPolishIdea();
   const _goB = $('#btnGenOutline'); if(_goB) _goB.onclick = ()=> genOutline();
   const _p2 = $('#polishCards2'); if(_p2) renderPolishCards(_p2);
@@ -10059,6 +10201,7 @@ const genOutline = async function(){
     const o = buildOutlineFromPolishCandidate(cand);
     applyOutlineObject(o, { silent: true });
     state.outlineConfirmed = true;
+    state.polishCollapsed = true;
     markAIDone('outline');   // 成功后标记完成
     persist(); render();
     toast('已生成大纲：书名 / 小说简介 / 全书节拍已搬入，直接进入正文写作（书名仅用户可改）');
@@ -10793,7 +10936,7 @@ function dictEnrichBlockHtml(){
     const cls = isCloud ? 'de-cloud' : 'de-grid';
     const body = (arr&&arr.length) ? arr.map(it=>{
       const nm = String(it&&it.name||'').trim(); if(!nm) return '';
-      const brief = String((it&&(it.identity||it.relation||it.note))||'').trim();
+      const brief = [it&&it.identity,it&&it.age,it&&it.gender,it&&it.appearance,it&&it.hobby,it&&it.catchphrase,it&&it.trait,it&&it.relation,it&&it.note].map(v=>String(v||'').trim()).filter(Boolean).join(' · ').slice(0,220);
       const isNew = !!(it && it._enrich);
       const goto = it.gsType ? `data-de-goto="${it.gsType}:${it.gsIdx}"` : '';
       if(isCloud) return `<button type="button" class="de-cloud-p${isNew?' new':''}" ${goto} title="${esc((brief||nm)+' · 点击定位万物词典')}">${isNew?'✦ ':''}${esc(nm)}</button>`;
@@ -11920,6 +12063,7 @@ function buildChapterUser(i, opt={}){
   const curN = i + 1;
   const parts = [];
   const _opening = openingStrategyBrief(); if(_opening) parts.push(_opening);
+  if(i===0){ const _openingTask = principalOpeningTaskExcerpt() || openingStrategyExecutionCard(0); if(_openingTask) parts.push(_openingTask); }
   const _lesson = teacherChapterPlan(i);
   const _closed = !!_lesson;   // 有本章教案 → 开启三层递进闭环上下文箱
 
@@ -11976,7 +12120,7 @@ ${_tail}
       parts.push(`【第三层 · 微观层（动态滚入 · 物理事实与动态状态战报包）】\n${microParts.join('\n\n')}`);
     } else {
       parts.push(`【第三层 · 微观层（首章开篇物理基准）】
-本章为全书第 1 章（首章开篇）：无上一章正文，请直接根据教案的【开篇引擎】策略、剧情时间落点与骨架第①拍开篇，迅速建立核心人物、类型信号与可见问题。`);
+本章为全书第 1 章（首章开篇）：无上一章正文。必须优先执行【第一章开篇任务卡】，并让教案骨架第①拍与该卡一致；首段从实际事件/人物现场起笔，迅速建立核心人物、类型信号、可见问题与继续阅读的下一问。禁止用大段背景说明替代开篇策略。`);
     }
 
     const isLast = (i + 1) >= (o.chapters||[]).length;
@@ -13283,7 +13427,7 @@ function renderHistList(){
       </div>
       <div class="hist-body">${preview}</div>
     </div>`;
-  }).join('') || `<div class="hist-empty">还没有作品，点击「＋ 新建小说」开始。</div>`;
+  }).join('') || `<div class="hist-empty">还没有作品，点击「＋ 新建长篇」开始。</div>`;
   $$('#histList [data-switch]').forEach(b=> b.onclick = ()=> switchProject(b.dataset.switch));
   $$('#histList [data-del]').forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); deleteProject(b.dataset.del); });
   $$('#histList [data-fypexp]').forEach(b=> b.onclick = (e)=>{ e.stopPropagation(); exportProjectFile(b.dataset.fypexp); });
@@ -13342,7 +13486,7 @@ function newProject(mode){
     if(oldest) lib.items = lib.items.filter(i=> i.id !== oldest.id);
   }
   clearState();
-  if(mode) state.mode = mode; // 'longnovel' 经典长篇小说
+  state.mode = 'longnovel';
   const snap = projectSnapshot();
   const newId = makeId();
   lib.items.unshift({ ...snap, id: newId, updatedAt: Date.now() });
@@ -13351,7 +13495,7 @@ function newProject(mode){
   closeHistPanel();
   render();
   window.scrollTo(0,0);
-  toast(mode==='longnovel' ? '已新建经典长篇小说' : '已新建空白小说');
+  toast('已新建长篇小说');
   return true;
 }
 function newLongProject(){
@@ -13386,8 +13530,6 @@ function rebindHistPanel(){
     const p = $('#histPanel');
     if(p.classList.contains('hidden')) openHistPanel(); else closeHistPanel();
   };
-  const nb = $('#btnNewProject');
-  if(nb) nb.onclick = (e)=>{ e.stopPropagation(); newProject(); };
   const nlo = $('#histNewLong');
   if(nlo) nlo.onclick = (e)=>{ e.stopPropagation(); newLongProject(); };
   const imp = $('#btnImportFyp');
@@ -14152,6 +14294,8 @@ function showBootLoading(show){
 async function init(){
   showBootLoading(true);
   try{ await loadState(); }catch(e){ /* 兜底：保持空白 state，不卡死 */ }
+  state.mode = 'longnovel';
+  if(lib && Array.isArray(lib.items)) lib.items.forEach(x=>{ if(x) x.mode='longnovel'; });
   loadGlib();
   const c = getCfg();
   applyTheme(c.theme || 'dark');
@@ -14159,6 +14303,9 @@ async function init(){
   const btnLog = $('#btnAiLog');
   if(btnLog) btnLog.onclick = (e)=>{ e.stopPropagation(); openAiLogPanel(); };
   rebindHistPanel();
+  const storyViewBtn = $('#btnStoryView');
+  if(storyViewBtn) storyViewBtn.onclick = (e)=>{ e.stopPropagation(); toggleStoryUiMode(); };
+  updateStoryUiButton();
   rebindWsColorPanel();
   const btnTheme = $('#btnTheme');
   if(btnTheme) btnTheme.onclick = (e)=>{ e.stopPropagation(); const p=$('#themePanel'); if(p.classList.contains('hidden')) openThemePanel(); else closeThemePanel(); };
