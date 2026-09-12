@@ -2134,3 +2134,12 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .simple-stowed-wrap{margin-top:20px}.simple-stowed-title{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:700;margin:0 0 8px}.simple-stowed-title span{font-weight:400;opacity:.6;font-size:11px}.simple-stowed{margin:7px 0;border:1px solid var(--line,#ddd);border-radius:12px;background:var(--card,#fff);overflow:hidden}.simple-stowed>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;align-items:center;gap:10px}.simple-stowed>summary::-webkit-details-marker{display:none}.simple-stowed>summary span{font-weight:700;font-size:13px}.simple-stowed>summary em{font-style:normal;font-size:11px;opacity:.58;flex:1}.simple-stowed>summary i{font-style:normal;font-size:11px;opacity:.65}.simple-stowed[open]>summary{border-bottom:1px solid var(--line,#ddd)}.simple-stowed-body{padding:12px}.simple-summary-card .simple-outline-summary{padding:4px 2px 2px}.simple-outline-summary p{font-size:13px;line-height:1.8;white-space:pre-wrap;max-height:130px;overflow:auto}.simple-action-card textarea{min-height:130px}
 #btnStoryView.active{border-color:var(--accent,#4da3ff)}
 @media(max-width:680px){.simple-story-head{padding:15px;flex-direction:column}.simple-story-head .btn{width:100%}.simple-stowed-body{padding:8px}.simple-progress{flex-wrap:wrap}}
+
+/* v1.0.335 长篇核心 AI 温度控制 */
+.tm-tempbox{display:flex;align-items:center;gap:5px;min-width:330px;justify-content:flex-end}
+.tm-tempbox input[type=range]{width:105px;accent-color:var(--accent,#8b5cf6)}
+.tm-temp-label,.tm-temp-stable,.tm-temp-free,.tm-temp-rec{font-size:11px;white-space:nowrap}
+.tm-temp-stable{opacity:.7}.tm-temp-free{opacity:.7}.tm-temp-rec{opacity:.6}
+.tm-temp{width:58px!important;padding:4px 5px!important}
+.tm-row.tm-custom{border-left:3px solid var(--accent,#8b5cf6);padding-left:10px}
+@media(max-width:700px){.tm-tempbox{min-width:0;width:100%;justify-content:flex-start;flex-wrap:wrap}.tm-tempbox input[type=range]{flex:1;min-width:110px}.tm-temp-rec{display:none}}

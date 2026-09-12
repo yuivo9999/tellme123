@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.334';
+const APP_VERSION = '1.0.335';
 const KEY_CFG = nsKey('cfg');
 
 let _bgTaskCount = 0;
@@ -412,11 +412,15 @@ let uidSeq = 1000;
 let genBatchN = 2;
 function remainingEmptyChapters(){ return (state.chapters||[]).filter(c=> !(c.content && String(c.content).trim())).length; }
 function uid(p){ return (p||'id')+(++uidSeq)+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
-const TM_KEYS = ['idea',
-  'plannerTitles','planBeats','planTimeline','plannerAux',
-  'dictmaster','chapter',
-  'strip','subplot','glossary','rolling',
-  'contentAdvice','assets','recipe'];
+const CORE_AI_TASKS = [
+  { key:'recipe', name:'AI 配方助手', note:'把用户构想整理成可执行的写作配方；创作入口', tempKey:'aiRecipeTemp', temp:0.9 },
+  { key:'dictmaster', name:'词典达人', note:'建立全书万物词典与关系/规则骨架；一致性底座', tempKey:'dictmasterTemp', temp:0.5 },
+  { key:'dictEnrich', name:'词典充实', note:'把人物、地名、专名与描写维度补齐；为正文施工备料', tempKey:'dictEnrichTemp', temp:0.6 },
+  { key:'principal', name:'校长', note:'统筹全书守则、阶段框架、标题与因果纪律', tempKey:'principalTemp', temp:0.5 },
+  { key:'teacher', name:'老师', note:'把校长总控转成逐章可执行教案；正文唯一施工航海图', tempKey:'teacherTemp', temp:0.5 },
+  { key:'chapter', name:'正文作家', note:'按用户风格 + 老师教案直接生成正文；质量与费用核心', tempKey:'chapterTemp', temp:0.75 }
+];
+const TM_KEYS = CORE_AI_TASKS.map(x=>x.key);
 
 function glmModels(){ return [
   {name:'glm-4.5-air', label:'GLM-4.5-Air（智谱 · 高性价比，现用）', kind:'pro'},
@@ -513,7 +517,11 @@ function resolveActiveSpec(taskKey){
     dictmasterTemp: (cfg.dictmasterTemp==null ? 0.5 : cfg.dictmasterTemp),
     assetsTemp:  (cfg.assetsTemp==null ? 0.7 : cfg.assetsTemp),
     titleTemp:   (cfg.titleTemp==null ? 0.5 : cfg.titleTemp),
-    chapterTemp: (cfg.chapterTemp==null ? 0.5 : cfg.chapterTemp),
+    chapterTemp: (cfg.chapterTemp==null ? 0.75 : cfg.chapterTemp),
+    aiRecipeTemp: (cfg.aiRecipeTemp==null ? 0.9 : cfg.aiRecipeTemp),
+    dictEnrichTemp: (cfg.dictEnrichTemp==null ? 0.6 : cfg.dictEnrichTemp),
+    principalTemp: (cfg.principalTemp==null ? 0.5 : cfg.principalTemp),
+    teacherTemp: (cfg.teacherTemp==null ? 0.5 : cfg.teacherTemp),
     qcTemp:      (cfg.qcTemp==null ? 0.2 : cfg.qcTemp),              // 分任务温度：词库提取（严谨低温）
     planTemp:    (cfg.planTemp==null ? 0.4 : cfg.planTemp),
     planBeatsTemp:(cfg.planBeatsTemp==null ? 0.4 : cfg.planBeatsTemp),
@@ -526,6 +534,14 @@ function resolveActiveSpec(taskKey){
     contentAdviseTemp: (cfg.contentAdviseTemp==null ? 0.6 : cfg.contentAdviseTemp)  // 分任务温度：内容建议（建议类）
   };
 }
+function coreAITask(key){ return CORE_AI_TASKS.find(x=>x.key===key) || null; }
+function resolveTaskTemperature(key){
+  const task = coreAITask(key);
+  if(!task) return resolveActiveSpec().temperature;
+  const cfg = getCfg();
+  return cfg[task.tempKey]==null ? task.temp : Number(cfg[task.tempKey]);
+}
+
 function currentSpecLabel(){
   const s = resolveActiveSpec();
   const model = s.model.replace('deepseek-v4-','').split('-')[0];
@@ -2351,7 +2367,7 @@ function recipeScBadge(c){
   return (c && c._gapOk === false) ? `<span class="ai-recipe-sc bad" title="建议的新词条缺少 note/tips/avoid/check/demo 中的维度，入典前请补全">⚠ 词条缺维</span>` : '';
 }
 async function aiRecipeProduce(system, user){
-  const opt = { maxTokens: clampMaxTokens('recipe'), temperature:(getCfg().aiRecipeTemp==null?0.9:getCfg().aiRecipeTemp), topP:0.5 };
+  const opt = { maxTokens: clampMaxTokens('recipe'), temperature:resolveTaskTemperature('recipe'), topP:0.5 };
   const FIX = `\n\n【上一轮修正：gap 按需给全、不机械硬造】缺口与否由你自主判断：现有词库能完全覆盖时 gap 应为 null（0 条，不要为凑数而硬造）；确有多条真实缺口时才写 gap，并把它们一次给全（不要只给 1 个、不要合并）；gap 非空时每个新词条必须五维齐全——note（一句话定位）、tips（≥2 条）、avoid（≥1 条）、check（≥1 条）、demo（示例句）。请为非 null 的 gap 给全、给对上述字段。`;
   const FIX_JSON = `\n\n【上一轮修正：JSON 解析失败】上一轮输出无法被解析为合法 JSON 数组。请严格只输出一个 JSON 数组（不要 markdown 代码块、不要解释、不要任何额外文字）。`;
   let list = null, lastJsonOk = false;
@@ -3399,7 +3415,7 @@ async function genPrincipal(btn, opts){
   try{
     for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
       try{
-        const txt = await callAIGuarded('principal', sys, buildPrincipalUser(groups), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
+        const txt = await callAIGuarded('principal', sys, buildPrincipalUser(groups), {}, { temperature:resolveTaskTemperature('principal'), maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry('principal', attempt); scRefreshBadge(btn,'principal'); throw new Error('校长返回空'); }
         const sc = scState();
         const titles = parsePrincipalTitles(txt);
@@ -3546,7 +3562,7 @@ async function genTeacher(btn, gi){
   try{
     for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
       try{
-        const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
+        const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:resolveTaskTemperature('teacher'), maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry(key, attempt); scRefreshBadge(btn,key); throw new Error('老师返回空'); }
         const sc = scState(); sc.teachers[gi] = { gi, ts:Date.now(), raw:String(txt) };
         scMark(key, true); markAIDone(key);
@@ -10868,7 +10884,7 @@ async function genDictEnrich(btn, opts){
     const user = buildDictEnrichUser();
     const onStream = delta => { if(stream){ stream.textContent += String(delta||''); stream.scrollTop = stream.scrollHeight; } };
     const res = await callAIWithContract(
-      callDeepSeek(DICT_ENRICH_SYS, user, { temperature: resolveActiveSpec().plannerAuxTemp, topP: 0.6, maxTokens: clampMaxTokens('plannerAux'), onStream, signal:_abortCtl?.signal, taskKey:'dictEnrich' }),
+      callDeepSeek(DICT_ENRICH_SYS, user, { temperature: resolveTaskTemperature('dictEnrich'), topP: 0.6, maxTokens: clampMaxTokens('plannerAux'), onStream, signal:_abortCtl?.signal, taskKey:'dictEnrich' }),
       { needJson:false, taskName:'词典充实' }
     );
     if(!res.ok) throw new Error(res.error || '生成失败');
@@ -13966,39 +13982,10 @@ function updateCfgBadge(){
 }
 
 const TM_GROUPS = [
-  { title:'🧠 前置 · 构想（项目起点，一次即可）', keys:[
-    ['idea','优化构想','对既有构想发散/收敛；创作第一步']
-  ]},
-  { title:'📐 规划师四步 · 章节规划（要质量，建议主力模型）', keys:[
-    ['plannerTitles','规划师 · 标题定稿','JSON，全书章节标题；短文本创意，中档够且省费'],
-    ['planBeats','规划师 · 节拍表','JSON，逐章情节节拍'],
-    ['planTimeline','规划师 · 时间线','JSON，全局章节时间线分段'],
-    ['plannerAux','词典充实 · 辅助','词典充实：为正文补充人物/地名/专名与路人龙套；JSON 严谨']
-  ]},
-  { title:'✍️ 重创作（正文费用大头，建议主力模型）', keys:[
-    ['dictmaster','词典达人','AI 生成万物词典（人物十维+人物关系表+地名关联表+专名关联表+世界观规则），供正文一致消费'],
-    ['chapter','正文生成','全书正文质量与费用大头；所选模型须支持流式（stream）']
-  ]},
-  { title:'🔧 每章/每批 · 轻维护（高频小请求，建议 flash 省钱）', keys:[
-    ['strip','本章梗概（速读）','每章生成后都会调用'],
-    ['subplot','副线追踪','小 JSON 追踪任务'],
-    ['glossary','词典提取','JSON 严谨任务；换弱模型解析失败率会升高（有校验兜底，不阻断）'],
-    ['rolling','滚动摘要','长篇记忆层，每批正文后调用']
-  ]},
-  { title:'💡 写作补充与资产', keys:[
-    ['contentAdvice','章节内容 AI 建议','JSON 任务'],
-    ['assets','封面/人物/场景/分镜','提示词类产出'],
-    ['recipe','AI 配方助手','候选配方需判断力；写风配方卡']
-  ]}
+  { title:'⭐ 长篇小说核心 AI · 建议优先调这里', keys: CORE_AI_TASKS.map(x=>[x.key,x.name,x.note]) }
 ];
+const TM_TEMP = Object.fromEntries(CORE_AI_TASKS.map(x=>[x.key,[x.tempKey,x.temp]]));
 
-const TM_TEMP = {
-  idea:['ideaTemp',0.5],
-  plannerTitles:['plannerTitlesTemp',0.4], planBeats:['planBeatsTemp',0.4], planTimeline:['planTimelineTemp',0.4], plannerAux:['plannerAuxTemp',0.4],
-  dictmaster:['dictmasterTemp',0.5], chapter:['chapterTemp',0.5],
-  strip:['stripTemp',1.0], subplot:['subplotTemp',0.25], glossary:['qcTemp',0.2], rolling:['rollingTemp',0.3],
-  contentAdvice:['contentAdviseTemp',0.6], assets:['assetsTemp',0.7], recipe:['aiRecipeTemp',0.9]
-};
 let editTM = null;          // 面板暂存：保存前绝不落盘（对齐设置弹窗 editCfg 模式）
 let editTemps = {};
 let _tmEscHandler = null;   // ESC 关闭挂钩（现有 modal 无全局 ESC，本面板自持）
@@ -14043,7 +14030,7 @@ function refreshTmResetBtn(){
   const btn=$('#btnTmReset'); if(!btn) return;
   const n = tmCustomCount(editTM||{});
   btn.classList.toggle('hidden', n===0);
-  btn.textContent = '全部恢复跟随全局（'+n+' 项自定义）';
+  btn.textContent = '全部核心 AI 恢复跟随全局（'+n+' 项自定义）';
 }
 function renderTaskModelPanel(){
   const body = $('#tmBody'); if(!body) return;
@@ -14065,7 +14052,13 @@ function renderTaskModelPanel(){
     const tval = tf ? (editTemps[tf[0]]==null ? tf[1] : editTemps[tf[0]]) : '';
     return `<div class="tm-row${tm?' tm-custom':''}" data-tm-row="${key}">
       <div class="tm-head"><span class="tm-name">${esc(name)}</span><span class="tm-note">${esc(note||'')}</span>
-        ${tf?`<input type="number" inputmode="decimal" step="0.05" min="0" max="2" class="tm-temp" data-tm-temp="${key}" value="${tval}" placeholder="温度 ${tf[1]}" title="${esc(name)} 的 AI 温度（留空并保存＝恢复建议值）">`:'<span class="tm-temp-void"></span>'}
+        ${tf?`<div class="tm-tempbox" title="${esc(name)} 的 AI 温度；推荐值 ${tf[1]}">
+          <span class="tm-temp-label">🌡</span><span class="tm-temp-stable">稳</span>
+          <input type="range" min="0" max="2" step="0.05" class="tm-temp-range" data-tm-temp="${key}" value="${tval}">
+          <span class="tm-temp-free">发散</span>
+          <input type="number" inputmode="decimal" step="0.05" min="0" max="2" class="tm-temp" data-tm-temp-num="${key}" value="${tval}">
+          <span class="tm-temp-rec">推荐 ${tf[1]}</span>
+        </div>`:'<span class="tm-temp-void"></span>'}
       </div>
       <div class="tm-sels">
         <select data-tm-sel="group" data-tm-key="${key}">
@@ -14079,7 +14072,7 @@ function renderTaskModelPanel(){
     </div>`;
   };
   body.innerHTML = `
-    <div class="cv-div">可按任务独立指定模型与 AI 温度，灵活平衡质量与效率。留空温度表示跟随建议值。</div>
+    <div class="cv-div">这里就是长篇小说真正会参与创作链路的 6 个 AI。每个 AI 都可独立指定服务/账号/模型与温度；未单独指定模型时跟随全局。温度越低越稳，越高越发散。</div>
     <div class="set-block">
       <div class="set-block-head"><span>◆ 全局默认（未单独设置的任务都用它）</span></div>
       <div class="tm-preview">${esc((curGroup.label||'AI') + ' · ' + (curKey?(curKey.label||'账号'):'⚠️ 无账号') + ' · ' + (curModel?curModel.name:'⚠️ 无模型'))}（只读；去上方「AI 模型配置」修改）</div>
@@ -14105,10 +14098,18 @@ function renderTaskModelPanel(){
     };
   });
   $$('#tmBody [data-tm-temp]').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
+    inp.addEventListener('input', ()=>{
       const tf = TM_TEMP[inp.dataset.tmTemp]; if(!tf) return;
       const v = parseFloat(inp.value);
-      editTemps[tf[0]] = (inp.value==='' || isNaN(v)) ? tf[1] : v;
+      if(!isNaN(v)) editTemps[tf[0]] = Math.max(0, Math.min(2, v));
+      const num = $('#tmBody [data-tm-temp-num=\"'+inp.dataset.tmTemp+'\"]'); if(num) num.value = inp.value;
+    });
+  });
+  $$('#tmBody [data-tm-temp-num]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const key=inp.dataset.tmTempNum, tf=TM_TEMP[key]; if(!tf) return;
+      const v=parseFloat(inp.value);
+      editTemps[tf[0]]=(inp.value==='' || isNaN(v)) ? tf[1] : Math.max(0,Math.min(2,v));
       renderTaskModelPanel();
       refreshTmResetBtn();
     });
@@ -14130,7 +14131,7 @@ function saveTaskModels(){
   const nT = Object.keys(TM_TEMP).filter(k=>{ const f=TM_TEMP[k][0]; return f && editTemps && editTemps[f]!=null; }).length;
   closeTaskModelPanel();
   updateCfgBadge();
-  toast(n ? ('分任务模型已保存：'+n+' 项自定义，其余跟随全局') : '分任务模型已保存：全部跟随全局')+(nT?('；已同步 '+nT+' 项任务温度'):'');
+  toast(n ? ('长篇核心 AI 设置已保存：'+n+' 项自定义，其余跟随全局') : '长篇核心 AI 设置已保存：全部跟随全局')+(nT?('；已同步 '+nT+' 项任务温度'):'');
 }
 
 function renderGroupsList(){
