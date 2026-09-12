@@ -100,7 +100,7 @@ const state = {
   cpCollapsed: false,   // 学校模式：规划师卡默认展开，初始态即铺开其内容（含🏫学校区）
   ctCollapsed: false,    // v10.53：章节标题管理块是否收缩（默认展开，让用户看到全部章节标题）
   soCollapsed: false,   // v1.0.107：故事大纲卡「小说简介」是否折叠（默认展开，点标题收起）
-  gsCatFold: { main:false, support:false, walkon:false, place:false, proper:false, sub:false },   // v1.0.307 词典小类别默认展开，让内容直接可见
+  gsCatFold: { main:true, support:true, walkon:true, place:true, proper:true, sub:true },   // 词典小类别默认折叠，保持界面整洁
   deCollapsed: false,   // v1.0.28x：阶段5「词典充实器」卡片是否折叠（默认展开，点标题收起）
   subAutoFill: true,    // v1.0.113 副线追踪开关（默认开）：每章生成后自动吸收章节正文推进到副线进度；独立于 glossAutoFill
   subRecallRatio: 0.4,  // v1.0.113 副线消失超全书比例阈值（超过则回归须 ≤20 字轻提前情）
@@ -660,7 +660,7 @@ function projectSnapshot(){
     cpCollapsed: state.cpCollapsed,   // v10.14 梗概卡折叠透传
     soCollapsed: !!state.soCollapsed,
     deCollapsed: !!state.deCollapsed,   // v1.0.28x：词典充实器卡片折叠态
-    gsCatFold: (state.gsCatFold && typeof state.gsCatFold === 'object') ? state.gsCatFold : { main:false, support:false, walkon:false, place:false, proper:false, sub:false },   // 词典小类别折叠态（仅存结构，运行时各键默认见 state）
+    gsCatFold: (state.gsCatFold && typeof state.gsCatFold === 'object') ? state.gsCatFold : { main:true, support:true, walkon:true, place:true, proper:true, sub:true },   // 词典小类别折叠态（默认折叠）
     useChapterPlans: true,   // v10.29 恒参与生成（开关已移除，节拍表始终注入）
     plannerFinalized: !!state.plannerFinalized,   // 4.5 规划师定稿标记（genChapterPlans 分批版写入）
     expOpenGroups: state.expOpenGroups,   // P5 长篇导出分组折叠所展开的分组透传
@@ -720,9 +720,9 @@ function applyProject(p){
   state.cpCollapsed = (typeof p.cpCollapsed === 'boolean') ? p.cpCollapsed : true;   // v10.14 梗概卡默认折叠
   state.soCollapsed = !!p.soCollapsed;
   state.deCollapsed = !!p.deCollapsed;   // v1.0.28x：词典充实器卡片折叠态恢复
-  state.gsCatFold = (p.gsCatFold && typeof p.gsCatFold === 'object') ? p.gsCatFold : { main:false, support:false, walkon:false, place:false, proper:false, sub:false };   // 词典小类别折叠态恢复
-  // v1.0.28x：旧存档 gsCatFold 只有旧四键（char/place/proper/sub），补新三键默认折叠
-  const _gcf = state.gsCatFold; if(_gcf && typeof _gcf === 'object'){ ['main','support','walkon'].forEach(k=>{ if(typeof _gcf[k] !== 'boolean') _gcf[k] = false; }); }
+  state.gsCatFold = (p.gsCatFold && typeof p.gsCatFold === 'object') ? p.gsCatFold : { main:true, support:true, walkon:true, place:true, proper:true, sub:true };   // 词典小类别折叠态恢复
+  // 旧存档补充分类默认折叠
+  const _gcf = state.gsCatFold; if(_gcf && typeof _gcf === 'object'){ ['main','support','walkon','place','proper','sub'].forEach(k=>{ if(typeof _gcf[k] !== 'boolean') _gcf[k] = true; }); }
   state.useChapterPlans = true;   // v10.29 恒参与生成（开关已移除，节拍表始终注入）
   state.plannerFinalized = (typeof p.plannerFinalized === 'boolean') ? p.plannerFinalized : false;   // v11 标题定稿标记（旧项目默认未定稿）
   state.expOpenGroups = Array.isArray(p.expOpenGroups) ? p.expOpenGroups : [];   // P5 长篇导出分组折叠所展开的分组
@@ -3257,9 +3257,21 @@ function chapterOfPlan(ci){
 }
 // v1.0.30x：取第 ci 章（0 基）的「本章教案」完整原文段（老师已备课才有），正文按图索骥；无则 ''
 function teacherChapterPlan(ci){
-  const gi = chapterOfPlan(ci); if(gi < 0) return '';
-  const t = state.school.teachers && state.school.teachers[gi]; if(!t || !t.raw) return '';
-  const re = new RegExp(`^第\\s*${ci+1}\\s*章\\b[\\s\\S]*?(?=^第\\s*\\d+\\s*章\\b|$)`, 'm');
+  if(!state.school) return '';
+  const chNum = ci + 1;
+  let gi = chapterOfPlan(ci);
+  let teachers = Array.isArray(state.school.teachers) ? state.school.teachers : [];
+  let t = (gi >= 0 && teachers[gi]) ? teachers[gi] : null;
+  if(!t || !t.raw){
+    t = teachers.find(x => x && x.raw && new RegExp('(?:^|\\n)\\s*(?:#+\\s*|\\*\\*|【)?\\s*第\\s*' + chNum + '\\s*章\\b', 'i').test(x.raw));
+  }
+  if((!t || !t.raw) && state.school.principal && state.school.principal.raw){
+    if(new RegExp('(?:^|\\n)\\s*(?:#+\\s*|\\*\\*|【)?\\s*第\\s*' + chNum + '\\s*章\\b', 'i').test(state.school.principal.raw)){
+      t = { raw: state.school.principal.raw };
+    }
+  }
+  if(!t || !t.raw) return '';
+  const re = new RegExp(`(?:^|\\n)\\s*(?:#+\\s*|\\*\\*|【)?\\s*第\\s*${chNum}\\s*章\\b[\\s\\S]*?(?=(?:\\n\\s*(?:#+\\s*|\\*\\*|【)?\\s*第\\s*\\d+\\s*章\\b|#\\s*本阶段|#\\s*全校|$))`, 'i');
   const m = String(t.raw).match(re);
   return m ? String(m[0]).trim() : '';
 }
@@ -8626,7 +8638,7 @@ function glossaryCardHtml(){
         ['proper', '📌 专名',     props,        (g.propernouns||[]).length],
         ['sub',    '🧵 副线',     subsHtml,     (g.subplots||[]).length],
       ]).map(([t,lab,body,cnt])=>{
-      const fold = !!(state.gsCatFold && state.gsCatFold[t]);
+      const fold = state.gsCatFold ? (state.gsCatFold[t] !== false) : true;
       return `<div class="gs-group${fold?' gs-folded':''}" data-gs-type="${t}" data-gs-catfold>
         <div class="gs-title" role="button" tabindex="0" title="展开/收起">${lab}（${cnt}）<span class="gs-cat-ico">${fold?'▸':'▾'}</span></div>
         ${body||'<span class="muted">（无）</span>'}
@@ -9730,14 +9742,36 @@ function bindReader(){
         return null;
       };
       let title, body;
-      // v1.0.321：点「概」优先展示本章老师教案（学生由教案动笔，概览先给教案）；无教案再回落节拍概览/梗概
+      // 优先展示本章老师教案（阅读界面「概」显示本章的老师教案）
       const _lesson = teacherChapterPlan ? teacherChapterPlan(readerCur) : null;
       if(_lesson && String(_lesson).trim()){
-        title = `第${toCnNum(readerCur+1)}章 · 本章教案`;
-        body = `<div class="syn-body"><div style="font-size:12px;color:var(--muted);margin-bottom:6px">🎓 老师教案（本章正文的唯一权威内容体）· 原始稿：</div><pre class="sc-plan-raw">${esc(_lesson)}</pre></div>`;
+        title = `第${toCnNum(readerCur+1)}章 · 老师教案`;
+        const gi = chapterOfPlan(readerCur);
+        const t = (gi >= 0 && state.school && state.school.teachers) ? state.school.teachers[gi] : null;
+        const rawText = (t && t.raw) ? t.raw : _lesson;
+        const blocks = rawText ? splitTeacherPlanChapters(rawText) : [];
+        const chBlock = blocks.find(b => b.ch === (readerCur + 1));
+        
+        let planFieldsHtml = '';
+        if(chBlock && chBlock.fields && chBlock.fields.length){
+          planFieldsHtml = chBlock.fields.map(f => `
+            <div class="rb-ov-sec" style="margin-bottom:10px;">
+              <b class="rb-ov-lb" style="color:var(--accent);font-size:12.5px;display:inline-block;margin-bottom:3px;">${esc(f.k)}</b>
+              <div style="font-size:13px;line-height:1.65;color:var(--txt);white-space:pre-wrap;">${esc(f.v)}</div>
+            </div>
+          `).join('');
+        } else {
+          planFieldsHtml = `<pre class="sc-plan-raw" style="white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.65;margin:0;color:var(--txt);">${esc(_lesson)}</pre>`;
+        }
+        
+        body = `<div class="syn-body rb-overview">
+          <div style="font-size:12px;color:var(--sub);margin-bottom:12px;padding-bottom:6px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:6px;">
+            <span>🎓</span> <b>老师教案</b> <span class="muted">（本章正文的唯一权威内容体）</span>
+          </div>
+          ${planFieldsHtml}
+        </div>`;
       } else if(btTxt){
         const cj = secOf('承接点','承接'); const ss = secOf('收束设计','收束');
-        // v1.0.289：时间线精华（tlEssence）——节拍表同源附带，供全书时间线判时；阅读处顺带展示，可预览时间线将注入的内容
         const _te = _timelineEssenceOf((Array.isArray(o.chapterPlans)?o.chapterPlans[readerCur]:null));
         title = `第${toCnNum(readerCur+1)}章 · 本章概览`;
         body = `<div class="syn-body rb-overview">
@@ -9749,8 +9783,8 @@ function bindReader(){
         title = `第${toCnNum(readerCur+1)}章 · 本章梗概`;
         body = `<div class="syn-body">${esc(strip)}</div>`;
       } else {
-        title = `第${toCnNum(readerCur+1)}章 · 节拍表`;
-        body = `<div class="syn-body muted">本章暂无节拍表：请先在「全书规划师」生成①节拍表。</div>`;
+        title = `第${toCnNum(readerCur+1)}章 · 老师教案`;
+        body = `<div class="syn-body muted">🎓 本章暂无老师教案：老师尚未为此章节备课。请在全书规划师中点击「🎓 任课教师备课」生成教案。</div>`;
       }
       synCard.innerHTML = `<h4>${title}</h4>${body}`;
       synPop.classList.remove('hidden');
