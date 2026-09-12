@@ -7,7 +7,7 @@
 'use strict';
 
 /* ---------- 全局状态 ---------- */
-const APP_VERSION = '1.0.325';   // v1.0.325 界面整理：把用户操作与资料展示分层；全书四/七/十二/十五拍前置到优化构想之前
+const APP_VERSION = '1.0.330';   // v1.0.325 界面整理：把用户操作与资料展示分层；全书四/七/十二/十五拍前置到优化构想之前
 const KEY_CFG = nsKey('cfg');
 
 // 后台任务追踪：autoExtractGlossary / autoUpdateSubplots / extractGlossaryFromChapter 等 fire-and-forget 异步任务
@@ -128,7 +128,8 @@ const state = {
   storyboard: [],       // [{镜号,章节,时长,景别,角度,运镜,主体,构图,光线,画面描述,对白,转场,出图提示词,连续性,剪辑动机}]
   boardConcepts: [],    // 每章一条 {视觉概念, 母题}（分镜生成时随章节返回）
   titleHistory: [],     // 曾用书名记录 [{name, date}]（改名时追加，最新在前）
-  raw: {}               // 容错：各阶段原始返回
+  raw: {},              // 容错：各阶段原始返回
+  longMemory: { uiOpen: false, foreshadow: [], lastAuditAt: 0 }, // v1.0.330 长篇小说制作记忆层
 };
 let currentStep = 1;
 
@@ -695,7 +696,8 @@ function projectSnapshot(){
     dictmasterLatest: state.dictmasterLatest || null,   // 阶段3/3.3
     dictmasterRan: !!state.dictmasterRan,   // 阶段3/3.0
     originalIdeaSnapshot: state.originalIdeaSnapshot || '',   // 阶段3/3.7
-    school: (state.school && typeof state.school === 'object') ? state.school : null   // 学校模式：校长/老师 产出 + 各步重试/完成标记（随项目持久化）
+    school: (state.school && typeof state.school === 'object') ? state.school : null,   // 学校模式：校长/老师 产出 + 各步重试/完成标记（随项目持久化）
+    longMemory: state.longMemory || { uiOpen:false, foreshadow:[], lastAuditAt:0 }
   };
 }
 // 把项目快照写入当前 state；内容缺失/损坏时切到空白但保持调用方可控
@@ -706,6 +708,7 @@ function applyProject(p){
   state.totalWords = (p.totalWords && +p.totalWords>0) ? +p.totalWords : null;
   state.chapterCount = (p.chapterCount && +p.chapterCount>0) ? +p.chapterCount : null;
   state.bookBeat = [4,7,12,15].includes(Number(p.bookBeat)) ? Number(p.bookBeat) : (state.bookBeat || BOOK_BEAT_DEFAULT_ID);
+  state.longMemory = (p.longMemory && typeof p.longMemory === 'object') ? p.longMemory : { uiOpen:false, foreshadow:[], lastAuditAt:0 };
   state.idea = p.idea || '';
   state.coverPrompt = p.coverPrompt || '';
   state.coverWithTitle = !!p.coverWithTitle;
@@ -800,6 +803,7 @@ function clearState(){
   state.dictmasterRan = false;   // 阶段3/3.0
   state.originalIdeaSnapshot = '';   // 阶段3/3.7
   state.school = null;   // 学校模式：新项目/重置清空（校长/老师产出 + 重试/完成标记）
+  state.longMemory = { uiOpen:false, foreshadow:[], lastAuditAt:0 }; // v1.0.330 长篇记忆层重置
   state.teamShape = 'solo';   // v1.0.186 叙事主体·团队重置为默认「主角线」
   state._chapterPartial = {};   // 4.8 旗舰版（板块一-3）：流式中断续写缓存重置
   state.aiNetwork = { stage:'idle', running:[], completed:[], blockedBy:{} };   // 4.8 旗舰版 AI 协作网络重置
@@ -971,6 +975,7 @@ function normalizeLegacyProject(p){
   out.storyboard = Array.isArray(s.storyboard) ? s.storyboard : [];
   out.qcRecord = undefined;   // 无残留
   if(out.outline) delete out.outline.titleQC;
+  out.longMemory = (s.longMemory && typeof s.longMemory === 'object') ? s.longMemory : { uiOpen:false, foreshadow:[], lastAuditAt:0 };
   out.chapterStyle = (s.chapterStyle && typeof s.chapterStyle === 'object')
     ? { tags: Array.isArray(s.chapterStyle.tags)?s.chapterStyle.tags:[], collapsed:!!s.chapterStyle.collapsed }
     : { tags:[], collapsed:false };
@@ -3801,6 +3806,7 @@ function buildTeacherUser(g, gi){
   lines.push('【全量词典（共享不切片）】\n' + scGlossaryBrief(7000));
   lines.push(`【本组《全书节拍》节选】\n${scGroupBeats(g, 8000)}`);
   lines.push(prevGroupTailState(gi, g));
+  if(isLong()) lines.push(`【长篇记忆层·老师备课参考】\n${longMemoryBrief(g.first-1) || '（尚无已落地正文状态；以校长交接棒和本组教案输入为准。）'}\n执行要求：记忆层只用于保持状态、因果与伏笔连续，不得擅自新增剧情；本组每章重大事件仍须给出前置条件→触发/线索→人物行动→结果。`);
   lines.push('\n请对本组每一章产出一份「本章写作框架」，并在文末附上【本阶段向下一阶段移交的 3 大关键悬念与阶段高潮成果】。');
   return lines.join('\n\n');
 }
@@ -6821,12 +6827,154 @@ function safeCard(fn, fb){
   try{ return fn(); }catch(e){ console.error('[safeCard]', e); return fb || ''; }
 }
 
+/* =========================================================
+ * v1.0.330 长篇小说「制作操作系统」：导演台 / 状态账本 / 因果地图 / 伏笔银行 / 章间接缝 / 小说体检
+ * 设计原则：不改写现有正文链路；所有新增层均从现有大纲、教案、词典、摘要、正文派生，作为记忆与可视化中间件。
+ * ========================================================= */
+function ensureLongMemory(){
+  state.longMemory = state.longMemory || {uiOpen:false, foreshadow:[], lastAuditAt:0};
+  if(!Array.isArray(state.longMemory.foreshadow)) state.longMemory.foreshadow=[];
+  return state.longMemory;
+}
+function writtenChapterCount(){
+  return (state.chapters||[]).filter(c=>c && String(c.content||'').trim()).length;
+}
+function currentWrittenIndex(){
+  for(let i=(state.chapters||[]).length-1;i>=0;i--) if(state.chapters[i] && String(state.chapters[i].content||'').trim()) return i;
+  return -1;
+}
+function extractPlanField(plan, names){
+  const t=String(plan&&plan.beatsText||'');
+  for(const n of names){
+    const re=new RegExp('(?:^|\\n)\\s*'+n+'[：:]\\s*([^\\n]+)','m');
+    const m=t.match(re); if(m) return m[1].trim();
+  }
+  return '';
+}
+function refreshForeshadowBank(){
+  const mem=ensureLongMemory(), o=state.outline||{};
+  const plans=Array.isArray(o.chapterPlans)?o.chapterPlans:[];
+  const next=[];
+  plans.forEach((p,i)=>{
+    const f=extractPlanField(p,['埋设伏笔','伏笔','埋伏笔']);
+    if(!f || /^(无|暂无|无。|没有)$/i.test(f.trim())) return;
+    const later=(state.chapters||[]).slice(i+1).map(c=>String(c&&c.content||'')).join('\n');
+    const key=f.replace(/[「」“”【】（）()]/g,'').split(/[，,；;。]/)[0].trim().slice(0,18);
+    const recovered=key && later.includes(key);
+    next.push({id:`${i+1}-${key}`, chapter:i+1, text:f.slice(0,180), status:recovered?'suspected-recovered':'open'});
+  });
+  mem.foreshadow=next.slice(-120);
+  mem.lastAuditAt=Date.now();
+  return mem.foreshadow;
+}
+function longNovelMemoryData(){
+  const o=state.outline||{}, g=o.glossary||{}, idx=currentWrittenIndex();
+  const dig=Array.isArray(o._chapterDigests)?o._chapterDigests:[];
+  const fc=o._factCard||{};
+  const plan=idx>=0 && Array.isArray(o.chapterPlans)?o.chapterPlans[idx]:null;
+  const prev=idx>=0?state.chapters[idx]:null;
+  const time=(fc.timeAnchors||[]).find(x=>x && x.ch===idx);
+  const mem=ensureLongMemory();
+  if(!mem.foreshadow.length && plansExist(o)) refreshForeshadowBank();
+  return {o,g,idx,digest:idx>=0?(dig[idx]&&dig[idx].text||''):'',fc,plan,prev,time,foreshadow:mem.foreshadow};
+}
+function plansExist(o){ return !!(o && Array.isArray(o.chapterPlans) && o.chapterPlans.some(Boolean)); }
+function longMemoryBrief(i){
+  if(!isLong() || !state.outline) return '';
+  const d=longNovelMemoryData();
+  const lines=[];
+  if(d.idx>=0){
+    lines.push(`【小说当前状态账本｜截至第 ${d.idx+1} 章】`);
+    if(d.prev && d.prev.title) lines.push(`- 最近完成章节：第 ${d.idx+1} 章《${String(d.prev.title).trim()}》`);
+    if(d.fc.lastScene) lines.push(`- 最后定格场景：${String(d.fc.lastScene).slice(0,140)}`);
+    if(d.time) lines.push(`- 最近时间锚：${String(d.time.time||d.time.to||d.time.from||'').slice(0,80)}`);
+    if(d.digest) lines.push(`- 最近剧情事实：${String(d.digest).slice(0,360)}`);
+  }
+  const open=(d.foreshadow||[]).filter(x=>x.status==='open').slice(-8);
+  if(open.length) lines.push(`【伏笔银行｜未确认回收】\n${open.map(x=>`- 第${x.chapter}章埋设：${x.text}`).join('\n')}`);
+  if(d.plan){
+    const causal=extractPlanField(d.plan,['事件因果施工','因果施工']);
+    const conn=extractPlanField(d.plan,['连续性','承接']);
+    if(conn) lines.push(`【当前章节承接锚】${conn.slice(0,220)}`);
+    if(causal) lines.push(`【当前章节因果施工】${causal.slice(0,260)}`);
+  }
+  return lines.join('\n');
+}
+function longMemoryPromptBlock(i){
+  const b=longMemoryBrief(i);
+  if(!b) return '';
+  return `\n\n${b}\n【长篇记忆执行令】以上内容是从已落地正文/教案/词典派生的记忆层，不是新剧情指令。不得用记忆层制造新事实；必须从既有状态继续，重大事件仍需通过教案与因果闭环抵达。`;
+}
+function causalityMapHtml(){
+  const o=state.outline||{}; const plans=Array.isArray(o.chapterPlans)?o.chapterPlans:[]; const written=writtenChapterCount();
+  const rows=[];
+  plans.slice(0, Math.min(plans.length, written+4)).forEach((p,i)=>{
+    const b=extractPlanField(p,['承接点','承接']); const a=extractPlanField(p,['逐拍推进','场景链与切换','场景链']); const z=extractPlanField(p,['收束设计','收束']);
+    if(b||a||z) rows.push(`<div class="lm-causal-row"><span>第${i+1}章</span><div><b>${esc(b||'承接既有状态')}</b><span>→ ${esc(a||'推进本章教案事件')}</span><span>→ ${esc(z||'形成下一章接口')}</span></div></div>`);
+  });
+  return rows.length?rows.join(''):'<div class="muted">尚无足够章节教案可形成因果地图。</div>';
+}
+function relationshipTrajectoryHtml(){
+  const g=(state.outline&&state.outline.glossary)||{}, rel=Array.isArray(g._relationshipTable)?g._relationshipTable:[];
+  if(!rel.length) return '<div class="muted">词典尚无关系表；词典达人产出后这里会自动显示。</div>';
+  return `<div class="lm-rel-grid">${rel.slice(0,24).map(x=>`<div class="lm-rel"><b>${esc(x.a||'?')}</b><span>↔ ${esc(x.relation||'关系')} ↔</span><b>${esc(x.b||'?')}</b>${x.note?`<small>${esc(x.note)}</small>`:''}</div>`).join('')}</div>`;
+}
+function seamAuditHtml(){
+  const written=writtenChapterCount(); if(written<2) return '<div class="muted">至少完成 2 章后才能进行章间接缝检查。</div>';
+  const rows=[]; const o=state.outline||{};
+  for(let i=Math.max(1,written-5);i<written;i++){
+    const prev=state.chapters[i-1], cur=state.chapters[i];
+    const tail=String(prev&&prev.content||'').trim().slice(-120); const plan=Array.isArray(o.chapterPlans)?o.chapterPlans[i]:null;
+    const conn=extractPlanField(plan,['承接点','承接','连续性']);
+    const ok=!!tail && !!conn;
+    rows.push(`<div class="lm-seam-row"><b>第${i}→第${i+1}章</b><span class="pill ${ok?'tag-ok':'tag-warn'}">${ok?'✓ 有物理接缝':'△ 需要检查'}</span><small>${esc(conn||'教案未提供明确承接点')}</small></div>`);
+  }
+  return rows.join('');
+}
+function longNovelHealthHtml(){
+  const o=state.outline||{}, total=(o.chapters||[]).length||chapterCountVal()||0, written=writtenChapterCount();
+  const plans=Array.isArray(o.chapterPlans)?o.chapterPlans:[];
+  const noPlan=Math.max(0,total-plans.filter(Boolean).length), noDigest=Math.max(0,written-(Array.isArray(o._chapterDigests)?o._chapterDigests.filter(Boolean).length:0));
+  const fo=refreshForeshadowBank(); const open=fo.filter(x=>x.status==='open').length;
+  const scores={连续性:Math.max(55,100-Math.min(35,noDigest*4)),因果:Math.max(55,100-Math.min(35,noPlan*3)),伏笔:open?Math.max(60,96-Math.min(30,open*2)):96,记忆:written?Math.max(65,100-Math.min(30,noDigest*5)):60};
+  return `<div class="lm-health-grid">${Object.entries(scores).map(([k,v])=>`<div class="lm-score"><b>${k}</b><strong>${v}</strong><span>/100</span></div>`).join('')}</div><div class="lm-health-notes"><span>已写 ${written}/${total||'?'} 章</span><span>缺教案 ${noPlan}</span><span>缺细摘要 ${noDigest}</span><span>未确认回收伏笔 ${open}</span></div>`;
+}
+function longNovelControlDeckHtml(){
+  if(!isLong()) return '';
+  const d=longNovelMemoryData(); const total=(state.outline&&state.outline.chapters||[]).length||chapterCountVal()||0, written=writtenChapterCount();
+  const current=written?written:0; const pct=total?Math.round(written/total*100):0;
+  return `<section class="novel-control-deck" data-novel-deck>
+    <div class="ncd-head"><div><span class="ncd-kicker">🎬 LONGFORM CONTROL DESK</span><h2>长篇导演台</h2><p>只显示“现在最重要的状态与动作”；详细资料收进下方资料仓。</p></div><div class="ncd-progress"><b>${current}/${total||'?'}</b><span>章节落地</span><i><em style="width:${pct}%"></em></i></div></div>
+    <div class="ncd-steps"><span class="done">风格</span><b>→</b><span class="done">构想</span><b>→</b><span class="done">大纲</span><b>→</b><span class="done">节拍</span><b>→</b><span class="done">词典</span><b>→</b><span class="done">校长</span><b>→</b><span class="active">老师</span><b>→</b><span>正文</span></div>
+    <div class="ncd-grid">
+      <div class="ncd-card"><small>当前小说状态</small><b>${written?`第 ${written} 章已落地`:'尚未落地正文'}</b><span>${esc(d.fc.lastScene||'等待第一章形成真实世界状态')}</span></div>
+      <div class="ncd-card"><small>下一关键动作</small><b>${written<total?'继续生成下一章':'检查全书收束'}</b><span>${written<total?'正文将从上一章真实状态继续，不另起炉灶。':'全书已达到计划章节数，可进入体检与收束检查。'}</span></div>
+      <div class="ncd-card"><small>长篇健康</small><b>${written?'记忆链已启用':'等待首章'}</b><span>状态账本 · 因果地图 · 伏笔银行 · 章间接缝</span></div>
+    </div>
+  </section>`;
+}
+function longNovelMemoryRepoHtml(){
+  if(!isLong() || !state.outline) return '';
+  return `<section class="flow-repo long-memory-repo" data-repo="novel-memory"><details class="repo-drawer" ${ensureLongMemory().uiOpen?'open':''}><summary><span class="repo-ic">🧠</span><b>长篇记忆与体检仓</b><span class="repo-note">状态、因果、伏笔、人物关系、章间接缝集中管理</span><span class="repo-open">展开检查 ▸</span></summary><div class="repo-body">
+    <div class="lm-section"><div class="lm-title">🧭 小说状态账本</div><div class="lm-state"><div><b>当前章</b><span>${writtenChapterCount()?`第${writtenChapterCount()}章`:'—'}</span></div><div><b>最后定格</b><span>${esc((state.outline._factCard&&state.outline._factCard.lastScene)||'—')}</span></div><div><b>章节数</b><span>${(state.outline.chapters||[]).length||chapterCountVal()||'—'}</span></div></div></div>
+    <div class="lm-section"><div class="lm-title">🕸️ 因果地图</div><div class="lm-causal">${causalityMapHtml()}</div></div>
+    <div class="lm-section"><div class="lm-title">🏦 伏笔银行</div><div class="lm-foreshadow">${refreshForeshadowBank().slice(-12).reverse().map(x=>`<div><span class="pill ${x.status==='open'?'tag-warn':'tag-ok'}">${x.status==='open'?'待回收':'疑似回收'}</span><b>第${x.chapter}章</b><span>${esc(x.text)}</span></div>`).join('')||'<span class="muted">暂无可识别伏笔；教案中的“埋设伏笔”会自动进入这里。</span>'}</div></div>
+    <div class="lm-section"><div class="lm-title">👥 人物关系状态</div>${relationshipTrajectoryHtml()}</div>
+    <div class="lm-section"><div class="lm-title">🪡 章间接缝</div><div class="lm-seams">${seamAuditHtml()}</div></div>
+    <div class="lm-section"><div class="lm-title">📊 小说体检</div>${longNovelHealthHtml()}</div>
+  </div></details></section>`;
+}
+function bindLongNovelMemoryRepo(){
+  const d=document.querySelector('.long-memory-repo details'); if(!d) return;
+  d.addEventListener('toggle',()=>{ ensureLongMemory().uiOpen=d.open; persist(); });
+}
+
 function viewStory(){
   if(!state.outline){
     const homeSub = isLong()
       ? `用几句话描述你的长篇构想（世界观、主角、核心冲突都行）。AI 会按你设定的章节数与全书拍子扩写成大纲，之后按「生成章节」逐步写完。`
       : '用几句话描述你的点子（世界观、主角、核心冲突都行）。AI 会扩写成完整故事大纲与章节。';
-    return CYBER_HOME_GRID + `
+    return CYBER_HOME_GRID + `${isLong()?longNovelControlDeckHtml():''}
     <div class="flow-wrap">
             <section class="flow-sec" data-flow="1">
         <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">写作风格</span><span class="fs-note">用户先定表达方式 · 全书共享 · 表达层最高权威</span></div>
@@ -6902,6 +7050,7 @@ function viewStory(){
     </div>
   </details>
 </section>
+${longNovelMemoryRepoHtml()}
 <section class="flow-sec" data-flow="9">
         <div class="flow-sec-head"><span class="fs-no">9</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
@@ -6949,6 +7098,7 @@ function viewStory(){
   const o = state.outline;
   // v1.0.325 界面整理：生成大纲后保留主操作链；万物词典收进独立资料仓，不占正文流程空间
   let html = `
+  ${longNovelControlDeckHtml()}
   <div class="flow-wrap">
         <section class="flow-sec" data-flow="1">
       <div class="flow-sec-head"><span class="fs-no">1</span><span class="fs-name">写作风格</span><span class="fs-note">用户先定表达方式 · 全书共享 · 表达层最高权威</span></div>
@@ -7018,6 +7168,7 @@ function viewStory(){
       ${ microBeatBlock() }
       ${ schoolZoneBlock() }
     </section>
+${longNovelMemoryRepoHtml()}
 <section class="flow-sec" data-flow="8">
       <div class="flow-sec-head"><span class="fs-no">8</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
         ${ isLong() ? `<div class="btn-row" style="margin-top:8px">
@@ -10569,6 +10720,7 @@ function bindView(){
   $$('[data-gen-outline]').forEach(b=> b.onclick = ()=> genOutline());
   bindDictMaster();
   bindDictEnrich();
+  bindLongNovelMemoryRepo();
   // v10.18 结构骨架 / 可复用词典折叠（默认收起，点标题展开）
   $$('[data-rec-fold]').forEach(h=> h.onclick = ()=>{
     const key = h.dataset.recFold;
@@ -13463,7 +13615,7 @@ function invalidateChapterMemory(i){
 
 // v228/P5：逐章细摘要（200-300 字/章）。与 5 章一块的粗摘要互补——粗块在第 5 章前完全缺位（旧版开头几章记忆真空，
 // 正是「第三章开始乱来」的根因），细摘要从第 2 章起即有。失败静默、下次触发再续，绝不阻塞写作主流程。
-const CHAPTER_DIGEST_SYS = `你是长篇小说剧情摘要助手。把这一章压缩成 200-300 字的剧情纪要：本章发生的事件、人物状态变化、新出现的人/物/设定。只记事实，不写景不抒情。`;   // v1.0.280：留下的伏笔已随伏笔网移除
+const CHAPTER_DIGEST_SYS = `你是长篇小说剧情摘要助手。把这一章压缩成 200-300 字的剧情纪要：本章发生的事件、人物状态变化、新出现的人/物/设定、章节末尾形成的新状态。只记事实，不写景不抒情。不要猜测正文没有出现的事实。`;   // v1.0.280：留下的伏笔已随伏笔网移除
 async function ensureChapterDigests(onlyIdx){
   const o = state.outline; if(!o) return;
   if(!Array.isArray(o._chapterDigests)) o._chapterDigests = [];
