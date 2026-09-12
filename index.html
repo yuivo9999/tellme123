@@ -10,9 +10,9 @@
 <meta name="application-flow" content="写作风格 → 故事构想与优化 → 写作配方 → 全书节拍 → 词典达人 → 词典充实 → 学校统筹 → 正文作家">
 <meta property="og:title" content="小说与提示词">
 <meta property="og:description" content="影视前期提示词与小说生成器 H5 应用">
-<meta name="app-version" content="1.0.331">
+<meta name="app-version" content="1.0.334">
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <link rel="stylesheet" href="assets/style.css?v=209">
+  <link rel="stylesheet" href="assets/style.css?v=210">
 <link rel="stylesheet" href="assets/vendor/nouislider/nouislider.min.css">
   <link rel="stylesheet" href="assets/vendor/tom-select/tom-select.css">
 <link rel="stylesheet" href="assets/theme-light.css?v=4">
@@ -23,7 +23,7 @@
 <link rel="stylesheet" href="assets/theme-aurora.css?v=2">
 <link rel="stylesheet" href="assets/theme-paper.css?v=4">
 <link rel="stylesheet" href="assets/style-polish.css?v=3">
-<meta name="story-engine-version" content="1.0.331">
+<meta name="story-engine-version" content="1.0.334">
   <!-- v1.0.325：创作决策链 2.0 + 事件因果闭环锁；CSS/JS cache-bust 同步升级 -->
 </head>
 <body>
@@ -34,6 +34,7 @@
     <div class="tb-row tb-row-1">
       <div class="tb-left">
         <button id="btnHist" class="icon-btn" title="历史作品"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg><span class="tb-lab">历史</span></button>
+        <button id="btnStoryView" class="icon-btn" title="切换故事界面：简化版 / 详细版"><span class="tb-view-ic">▣</span><span class="tb-lab">简洁</span></button>
       </div>
       <div class="tb-right">
         <button id="btnNarrativeEngine" class="icon-btn" title="叙事引擎"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg><span class="tb-lab">叙事</span></button>
@@ -57,7 +58,6 @@
       <span>📚 历史作品</span>
       <span class="spec-actions">
         <button id="histNewLong" class="hist-new-btn" type="button">＋ 新建长篇</button>
-        <button id="btnNewProject" class="hist-new-btn" type="button">＋ 新建小说</button>
       </span>
     </div>
     <!-- v10.17 第二行最左：导入项目（原「导入 .fyp」改名改色，移入此行） -->
@@ -278,6 +278,6 @@
   <script src="assets/vendor/tom-select/tom-select.complete.min.js"></script>
 <script src="assets/vendor/jszip.min.js"></script>
 <script src="assets/idb.js?v=5"></script>
-  <script src="assets/app.js?v=373"></script>
+  <script src="assets/app.js?v=374"></script>
   </body>
 </html>
