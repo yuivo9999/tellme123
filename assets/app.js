@@ -3279,10 +3279,25 @@ function schoolStepBtn(key, icon, label, title){
   return `<button type="button" class="sc-step ${done?'done':''}" data-scp-step="${key}" title="${esc(title||'')}">${icon}<span class="sc-lab">${esc(label)}</span><i class="sc-tick">${done?'✓':''}</i>${scBadge(key)}</button>`;
 }
 function schoolTeacherBtn(g, i){
+  const folded = isSchoolFolded();
   const key = 't'+i, done = scDone(key);
   const nCh = g.last - g.first + 1;
   const sc = g.stage || `第${i+1}组`;
   const range = `${g.first}-${g.last} 章`;
+  if(folded){
+    return `<div class="sc-teacher-card ${done?'done':'todo'} sc-teacher-folded">
+      <div class="sc-tc-h">
+        <span class="sc-tc-no">👑 兼 🎓</span>
+        <span class="sc-tc-stage">${esc(sc)} (≤20章直接备课)</span>
+        <span class="sc-tc-ch">${esc(range)} (${nCh}章)</span>
+        <span class="sc-tc-st ${done?'done':'todo'}">${done?'✓ 一步到位已备':'⏳ 待校长直出'}</span>
+      </div>
+      <div class="sc-tc-b">
+        <button type="button" class="sc-step sc-teacher ${done?'done':''}" data-scp-step="principal" title="全书≤20章：三层折叠为一层，由校长兼任课教师直接出齐守则、标题与逐章教案">${done?'重新备课':'👑兼🎓 备课'}${scBadge('principal')}</button>
+        <button type="button" class="sc-plan-btn" data-scp-plan="0" title="${done?'查看逐章教案（六栏目预览 / 原始稿切换）':'尚未生成，请先点击备课'}">📖 读教案</button>
+      </div>
+    </div>`;
+  }
   return `<div class="sc-teacher-card ${done?'done':'todo'}">
     <div class="sc-tc-h">
       <span class="sc-tc-no">🎓 ${i+1}</span>
@@ -3343,6 +3358,10 @@ function scAllGroupsBeats(groups, maxChar){
   if(s.length > m) s = s.slice(0, m) + '…（已截断）';
   return s;
 }
+function isSchoolFolded(){
+  const g = schoolStageGroups();
+  return g.length === 1;
+}
 function extractSection(txt, from, until){
   const s = String(txt||'');
   const i = s.indexOf(from); if(i < 0) return '';
@@ -3350,10 +3369,69 @@ function extractSection(txt, from, until){
   const seg = j > i ? s.slice(i, j) : s.slice(i);
   return seg.trim();
 }
+function parsePrincipalTitles(raw){
+  if(!raw) return [];
+  const sec = extractSection(raw, '全书章节标题总表', '') || raw;
+  const list = [];
+  const lines = String(sec).split('\n');
+  for(const line of lines){
+    const clean = line.replace(/^[#*\-\s]+/, '').trim();
+    const m = clean.match(/^(?:第\s*(\d+)\s*章|(\d+)[\.、\s])\s*[:：、\s]*(?:《([^》]+)》|([^\n\r#*]+))/);
+    if(m){
+      const num = parseInt(m[1] || m[2], 10);
+      const title = String(m[3] || m[4] || '').trim().replace(/^《|》$/g, '');
+      if(num > 0 && title && !list.find(x => x.num === num)){
+        list.push({ num, title });
+      }
+    }
+  }
+  list.sort((a,b) => a.num - b.num);
+  return list;
+}
+function isPrincipalTitlesApplied(){
+  const titles = (state.school && state.school.principal && state.school.principal.titles) || [];
+  if(!titles.length || !state.outline || !Array.isArray(state.outline.chapters)) return false;
+  const oCh = state.outline.chapters;
+  return titles.every(t => {
+    const ch = oCh[t.num - 1];
+    return ch && String(ch.title || '').trim() === t.title;
+  });
+}
+function applyPrincipalTitles(){
+  const titles = (state.school && state.school.principal && state.school.principal.titles) || [];
+  if(!titles.length){ toast('未检测到校长拟定的标题'); return false; }
+  if(!state.outline) state.outline = { chapters: [] };
+  if(!Array.isArray(state.outline.chapters)) state.outline.chapters = [];
+  const maxNum = Math.max(...titles.map(t=>t.num), state.outline.chapters.length);
+  while(state.outline.chapters.length < maxNum){
+    state.outline.chapters.push({ title: '' });
+  }
+  if(!Array.isArray(state.chapters)) state.chapters = [];
+  while(state.chapters.length < maxNum){
+    state.chapters.push({ title: '', content: '' });
+  }
+  snapshotTitleBatch('选用校长拟定标题');
+  titles.forEach(t => {
+    const idx = t.num - 1;
+    if(idx >= 0 && idx < state.outline.chapters.length){
+      state.outline.chapters[idx].title = t.title;
+    }
+    if(idx >= 0 && idx < state.chapters.length){
+      state.chapters[idx].title = t.title;
+    }
+  });
+  persist();
+  render();
+  toast(`已成功将校长拟定的 ${titles.length} 章标题应用到全书大纲与章节！`);
+  return true;
+}
 function scGroupTitles(g){
   const out = [];
+  const pTitles = (state.school && state.school.principal && Array.isArray(state.school.principal.titles)) ? state.school.principal.titles : [];
   for(let i=g.first-1;i<g.last;i++){
-    const title = (state.outline && state.outline.chapters && state.outline.chapters[i] && String(state.outline.chapters[i].title||'').trim()) || '';
+    const pt = pTitles.find(x=>x.num === i+1);
+    const ot = (state.outline && state.outline.chapters && state.outline.chapters[i] && String(state.outline.chapters[i].title||'').trim()) || '';
+    const title = (pt && pt.title) ? pt.title : ot;
     out.push(`第${i+1}章 ${title?('《'+title+'》'):'（待命）'}`);
   }
   return out;
@@ -3391,6 +3469,49 @@ const PRINCIPAL_SYS = `你是一位统筹一部长篇小说的「校长」（治
 第1章 《标题》
 第2章 《标题》
 …（连排到全书最后一章）`;
+
+// —— 校长兼老师折叠施教（≤20章直接备课：守则 + 标题总表 + 逐章教案一步到位）——
+const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师」的长篇小说统筹大师。在当前全书篇幅（≤20章）下，三层架构折叠为单层：由你持全量材料直接一次性施教，免去层层传达损耗。
+
+【输入格式】(user 消息按【键】分节装载，逐节使用、缺失标「无」)
+【长篇小说】书名；【全书简介】；【优化构想·所选方案】；【全校章节数】；【章节微拍】；【写作风格/配方】；【全量万物词典】(全量共享不切片)；【既有《全书节拍》】。
+
+【任务·一次性出齐三大成果】
+① 全校写作守则：
+   · 配方锚点：逐条浓缩写作配方要点，保留原汁原味
+   · 可执行纪律：章间过桥律（尾留钩子首接余波，平滑对缝，严禁瞬移硬跳；时间不倒流，术语定稿不改）
+② 全书章节标题总表：
+   为全书第1章至最后一章各拟定一题，连贯排布、前后呼应。
+③ 逐章教案（第1章 ~ 最后一章）：
+   直接为每一章备出标准化教案，一章不少！每章严格遵循六栏（冒号紧跟）：
+   - 功能与位置：本章在全书结构中的定位与必须完成的核心事件。
+   - 剧情时间落点：具体时间范围与起止时点（时/日/旬/月/季/年，非机械编号；跨章时间不回退，时长随剧情，不机械排满一天）。
+   - 本章推进骨架：按所选【章节微拍】节奏，逐拍写清场景地点、在场人物、具体冲突与事件动作（建议5-8环节，密而留白，不套字数）。
+   - 情绪走向与突出点：情绪弧度与章内高光张力点（示例锚点一两句话点到为止，禁代写成品段）。
+   - 连续性：承上（接上一章末尾动作/定格）、启下（章末留钩子给下一章）。首章承上写「冷开场」。
+   - 本章出场名单：本章必须出场人物（仅限词典与剧情核心角色）。
+
+【输出契约·严格遵守】
+- 严格输出纯文本 Markdown，禁止 JSON、禁止三个反引号代码块包裹、禁止引语和客套。
+- 格式严格如下（段名顶格）：
+# 全校写作守则
+## 配方锚点
+## 可执行纪律
+# 全书章节标题总表
+第1章 《标题》
+第2章 《标题》
+…（连排到最后一章）
+# 逐章教案
+第1章 《标题》
+- 功能与位置：……
+- 剧情时间落点：……
+- 本章推进骨架：……
+- 情绪走向与突出点：……
+- 连续性：承上=……；启下=……
+- 本章出场名单：……
+第2章 《标题》
+……（逐章齐全，连排到最后一章）`;
+
 function buildPrincipalUser(groups){
   const o = state.outline || {};
   const lines = [];
@@ -3399,33 +3520,54 @@ function buildPrincipalUser(groups){
   let cand = null; try{ cand = selectedPolishCandidate && selectedPolishCandidate(); }catch(e){}
   if(cand && cand.name) lines.push(`【优化构想·所选方案】${String(cand.name).trim()}${cand.brief?('\n'+String(cand.brief).trim()):''}`);
   lines.push(`【全校章节数】${(o.chapters||[]).length || chapterCountVal() || '未知'} 章`);
-  // 章节微拍注入校长守则（结构化键值）→ 老师教案「节奏/情绪」
   const bc = currentBeatCfg ? currentBeatCfg() : null;
-  if(bc && bc.label) lines.push(`【章节微拍】名称=${bc.label}${bc.desc?('；说明='+bc.desc):''}\n要求：把这套整章节奏写进「全校写作守则·可执行纪律」，并让每位老师落进组内每份教案的「本章推进骨架 / 情绪走向与突出点」。`);
+  if(bc && bc.label) lines.push(`【章节微拍】名称=${bc.label}${bc.desc?('；说明='+bc.desc):''}\n要求：把这套整章节奏写进「全校写作守则·可执行纪律」，并落进每份教案的「本章推进骨架 / 情绪走向与突出点」。`);
   lines.push('【写作风格/配方】\n' + scStyleBrief());
   lines.push('【全量万物词典·共享不切片】\n' + scGlossaryBrief(7000));
-  lines.push('【既有《全书节拍》· 阶段优先分组】');
-  groups.forEach((g,i)=>{ lines.push(`组${i+1}·老师${i+1}（第${g.first}-${g.last}章${g.stage?('·'+g.stage):''}）`); });
-  lines.push('\n【各组对应的《全书节拍》节选】\n' + scAllGroupsBeats(groups, 10000));
-  lines.push('\n请按输出契约产出【全校写作守则】【各组组级框架】【全书章节标题总表】三段（逐组齐全），只给纯文本 Markdown。');
+  if(isSchoolFolded()){
+    lines.push('【篇幅说明】当前全书篇幅 ≤20 章，三层架构折叠为单层：由校长兼任课教师一人直接持全部材料备齐全书每一章教案。');
+    lines.push('\n【对应的《全书节拍》】\n' + scAllGroupsBeats(groups, 10000));
+    lines.push('\n请按输出契约一次性出齐【全校写作守则】【全书章节标题总表】【逐章教案】三大成果（全书每一章教案均齐全），只给纯文本 Markdown。');
+  } else {
+    lines.push('【既有《全书节拍》· 阶段优先分组】');
+    groups.forEach((g,i)=>{ lines.push(`组${i+1}·老师${i+1}（第${g.first}-${g.last}章${g.stage?('·'+g.stage):''}）`); });
+    lines.push('\n【各组对应的《全书节拍》节选】\n' + scAllGroupsBeats(groups, 10000));
+    lines.push('\n请按输出契约产出【全校写作守则】【各组组级框架】【全书章节标题总表】三段（逐组齐全），只给纯文本 Markdown。');
+  }
   return lines.join('\n\n');
 }
 async function genPrincipal(btn, opts){
-  if(!isLong()){ toast('仅长篇小说模式支持校长分组'); return false; }
+  if(!isLong()){ toast('仅长篇小说模式支持校长统筹'); return false; }
   const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能分组'); return false; }
   scState();
-  markAIRunning('principal'); if(btn) busy(btn, true, '校长统筹中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
+  const folded = isSchoolFolded();
+  const sys = folded ? PRINCIPAL_FOLDED_SYS : PRINCIPAL_SYS;
+  markAIRunning('principal'); if(btn) busy(btn, true, folded ? '校长兼任课教师备课中…' : '校长统筹中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
   try{
     for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
       try{
-        const txt = await callAIGuarded('principal', PRINCIPAL_SYS, buildPrincipalUser(groups), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
+        const txt = await callAIGuarded('principal', sys, buildPrincipalUser(groups), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry('principal', attempt); scRefreshBadge(btn,'principal'); throw new Error('校长返回空'); }
         const sc = scState();
-        sc.principal = { ts:Date.now(), groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt) };
-        scMark('principal', true); markAIDone('principal');
-        render();
-        toast(`校长统筹完成：${groups.length} 位老师分组 + 全校守则 + 组级框架 + 标题总表已就绪`);
-        playDoneSound('single');   // 校长步完成 → 单个完成音
+        const titles = parsePrincipalTitles(txt);
+        if(folded){
+          const lessonRaw = extractSection(txt, '# 逐章教案', '') || extractSection(txt, '逐章教案', '') || txt;
+          sc.principal = { ts:Date.now(), folded:true, groups: [{ gi:0, stage: groups[0].stage, first: groups[0].first, last: groups[0].last }], raw:String(txt), titles };
+          sc.teachers = [{ gi:0, ts:Date.now(), raw:String(lessonRaw) }];
+          scMark('principal', true);
+          scMark('t0', true);
+          markAIDone('principal');
+          markAIDone('t0');
+          render();
+          toast(`校长兼老师备课完成：守则 + ${titles.length||groups[0].last}章标题 + 逐章教案已一步到位就绪！`);
+        } else {
+          sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles };
+          scMark('principal', true);
+          markAIDone('principal');
+          render();
+          toast(`校长统筹完成：${groups.length} 位老师分组 + 全校守则 + 组级框架 + ${titles.length}章标题总表已就绪`);
+        }
+        playDoneSound('single');
         return true;
       }catch(e){
         if(e && e.name === 'AbortError'){ setScRetry('principal', attempt); toast('已停止校长统筹'); return false; }
@@ -3445,7 +3587,7 @@ async function genPrincipal(btn, opts){
 const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），负责对校长分给你的一整组章节，一次性备好组内每一章的「本章写作框架（教案）」，供下面的「学生（正文 AI）」照此写正文。
 
 【教学观·必须贯穿始终】
-你是老师，给的是"怎么教"的写作指令，不是"代写答案"。你立好本章的框架骨架——它告诉学生"这一章从哪里写到哪里、期间要走完哪些环节、每环节的落点是什么"，把框架缝隙铺得密一点、好带学生走完一整章；但你要给学生留出充分的创作空间，绝不要替学生把正文写出来，也不要给一整段成品范文让他照抄。示例只允许"点到为止"：一句话的情绪基调、一个代表性动作或氛围点，作示范方向即可，严禁成段示范散文、严禁把某段正文替你写掉。框架是用来"引学生写长、写完整"，不是"紧箍咒"——不要用密到窒息的字数要求或逐句规定把学生框死，导致正文写不长。
+你是老师，给的是"怎么教"的写作指令，不是"代写答案"。你立好本章的框架骨架——它告诉学生"这一章从哪里写到哪里、期间要走完哪些环节、每环节的落点是什么"，把框架缝隙铺得密一点、好带学生走完一整章；但你要给学生留出充分的创作空间，绝不要替学生把正文写出来，也不要给一整段成品范文让他照抄。示例只允许"点到为止"：一句话的情绪基调、一个代表性动作或氛围点，作示范方向即可，严禁成段示范散文、严禁把某段正文替你写掉。框架是用来"引学生写长、写完整"，不是"紧箍咒"——禁止强制字数配比或逐句规定把学生框死。
 【骨架首拍预留接引弹性】：你备课时并未看到上一章落地后的字面正文细节。因此，每章教案「本章推进骨架」的第 ① 环节必须兼备"承上启下"的弹性——它既能吸纳上一章正文末尾可能遗留的短暂动作/对话余波，又能给出通向本章新事件的平滑过渡方向，绝不要把第 ① 环节写成突兀割裂的硬跳切。
 
 【输入格式】(user 消息按【键】分节装载，逐节使用、缺失标「无」)
@@ -3459,9 +3601,9 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
   (3) 别为"覆盖完整"牺牲节奏：一章可以只写一小时的关键场景，可以写满一整天，也可以跨数天、甚至数日之后跳跃（跳过处一句话交代）。严禁把每章机械排成"清晨→傍晚"去凑"覆盖每一天"——时间跨度长短由本章剧情决定，该紧凑紧凑、该拉长拉长。
 - 本章推进骨架（从哪写到哪）：把本章从开篇承接点到收尾的整条推进路线，拆成一连串更细的环节（建议 5-8 个推进环节，覆盖 承接点→铺垫→第一次小冲突/变化→推进→转折/升温→高潮→余波→收束/钩子），按顺序逐个写出每个环节"这一环节要发生/要写到什么"（一两句话说明该环节的落点即可，点到即止）。环节之间要有先后与因果，让整体既密集成串、又给学生留了在每个环节内自由铺陈的余地；不要把每环节再套字数，也不要写成逐句剧本。
   - 【随微拍调密·骨架环节数不等同微拍拍数】本章口径是【章节微拍】注入的节奏类型。微拍拍数只决定"整章节奏怎么走"，与骨架拆几个环节无关——无论哪种微拍，骨架始终拆满 5-8 个环节。
-  - 若是【双拍结构】（前段长铺垫 2500 字 + 后段揭示收束 500 字）：骨架仍保 5-8 环节，但按"铺垫多环节 + 揭示少环节"重新排布——把 4-7 个细环节放进前段长铺垫内部（承接点→设疑/立局→逐层铺线索、一根明/暗线索一个环节→丢一个歧途/假象/误判→气氛或矛盾加温→推向临界点），每根线索单独占一个环节点明"这一环节埋下什么/让人误以为是什么"，这正是双拍的密处；后段揭示只留 1-2 个环节（一次性串合前面全部线索、点明每根线怎么接上→以一句交代事件后果/余味并留钩收束）。严禁因只有 2 拍就把骨架压成 2 个环节。
+  - 若是【双拍结构】（前段长铺垫 + 后段集中揭示收束）：骨架仍保 5-8 环节，但按"铺垫多环节 + 揭示少环节"重新排布——把 4-7 个细环节放进前段长铺垫内部（承接点→设疑/立局→逐层铺线索、一根明/暗线索一个环节→丢一个歧途/假象/误判→气氛或矛盾加温→推向临界点），每根线索单独占一个环节点明"这一环节埋下什么/让人误以为是什么"，这正是双拍的密处；后段揭示只留 1-2 个环节（一次性串合前面全部线索、点明每根线怎么接上→以一句交代事件后果/余味并留钩收束）。严禁因只有 2 拍就把骨架压成 2 个环节。
   - 微三拍可相应压缩到 4-5 环节、微七拍可放开到 8 环节，但都不得低于 4 个、不得写成笼统一段。
-- 情绪走向与突出点：推向什么情绪、突出什么（可给一句简短的情绪基调或一个代表性动作/氛围点作示例锚点，点到为止——只示范方向方向即可，禁止代写成段正文）
+- 情绪走向与突出点：推向什么情绪、突出什么（可给一句简短的情绪基调或一个代表性动作/氛围点作示例锚点，点到为止——只示范方向即可，禁止代写成段正文）
 - 连续性：上一章收尾到哪、本章从何承接。写明两项：①【承接物理态】（写明承接自第几章哪个具体人物处境、定格动作或未决悬念）；②【转场过桥建议】（若本章时间或场景有跨度，给出 1-2 句如何自然平滑过渡到本章骨架第①环节的笔法建议，防生硬跳切）。
 - 本章出场名单：本章推进骨架中涉及的全部有名角色（骨架与名单 100% 严格对齐，骨架有戏必有名单点名，无戏绝不混入；名单外角色正文一律不可写、不可提），据此防止正文漏戏/剧透。
 标题直接用给定的本组标题，不另写、不改写。
@@ -3476,6 +3618,7 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 - 情绪走向与突出点：…（示例锚点一句话即可，点到为止，禁代写成品段）
 - 连续性：…（写明【承接物理态】与【转场过桥建议】）
 - 本章出场名单：…（骨架涉及角色全部列出，无则写「无」）`;
+
 function buildTeacherUser(g, gi){
   const pr = (state.school && state.school.principal) || {};
   const o = state.outline || {};
@@ -3483,24 +3626,22 @@ function buildTeacherUser(g, gi){
   lines.push(`【全校写作守则】\n${(pr.raw && extractSection(pr.raw,'全校写作守则','各组组级框架')) || '（校长未产出守则）'}`);
   lines.push(`【本组组级框架（组${gi+1}·老师${gi+1}，第${g.first}-${g.last}章）】\n${(pr.raw && extractSection(pr.raw,'各组组级框架','全书章节标题总表')) || (pr.raw || '（校长未产出组级框架）')}`);
   lines.push(`【本组章节标题】\n${scGroupTitles(g).join('\n')}`);
-  // v1.0.315 章节微拍直喂老师：不再只靠校长守则带一句，让老师明确本章口径是哪种微拍，好按双拍等节奏把骨架写密
   const _bc = currentBeatCfg ? currentBeatCfg() : null;
-  if(_bc && _bc.label) lines.push(`【章节微拍】名称=${_bc.label}${_bc.wc?('；配比='+_bc.wc):''}${_bc.types?('；拍=('+_bc.types.map(t=>t.label+' '+t.wc).join('，')+')'):''}\n要求：对每章教案的「本章推进骨架」按此微拍节奏写密（环节数可 4-8，不等同微拍拍数；双拍按"铺垫多环节+揭示少环节"排布，详见教案字段说明）。`);
+  if(_bc && _bc.label) lines.push(`【章节微拍】名称=${_bc.label}${_bc.desc?('；说明='+_bc.desc):''}${_bc.types?('；拍=('+_bc.types.map(t=>t.label).join('，')+')'):''}\n要求：对每章教案的「本章推进骨架」按此微拍节奏写密（环节数可 4-8，不等同微拍拍数；双拍按"铺垫多环节+揭示少环节"排布，详见教案字段说明）。`);
   lines.push('【全量词典（共享不切片）】\n' + scGlossaryBrief(7000));
   lines.push(`【本组《全书节拍》节选】\n${scGroupBeats(g, 8000)}`);
-  // v1.0.310 跨组红线清单：上一老师末章教案的收束状态，供本老师据以承接（第一刀）
   lines.push('【上一组末章·收束状态】\n' + prevGroupTailState(gi, g));
   lines.push('\n请对本组每一章产出一份「本章写作框架」，逐章齐全。');
   return lines.join('\n\n');
 }
-// v1.0.310 跨组红线清单：返回上一老师组末章教案的收束状态（供下一老师承接；gi=0 首组返回开篇提示）
+
 function prevGroupTailState(gi, g){
   const groups = schoolStageGroups();
   if(gi <= 0 || !groups[gi-1]) return '（本组为全书首组：上一组为「开篇」）——首章采用冷开场/悬念引入，无需承接前文。';
   const prev = (state.school && state.school.teachers && state.school.teachers[gi-1]) || null;
   const prevGroup = groups[gi-1];
   if(!prev || !prev.raw || !prevGroup) return '（上一组（老师'+gi+'）尚未备课）：请本组首章按「承上节的钩」自行设计衔接。';
-  const lastCh = prevGroup.last;   // 上一组末章（1 基）
+  const lastCh = prevGroup.last;
   const re = new RegExp(`^第\\s*${lastCh}\\s*章\\b[\\s\\S]*?(?=^第\\s*\\d+\\s*章\\b|$)`, 'm');
   const m = String(prev.raw).match(re);
   if(!m) return '（上一组（老师'+gi+'）末章教案缺失）请本组首章按承上节的钩自洽设计衔接。';
@@ -3509,6 +3650,7 @@ function prevGroupTailState(gi, g){
   const continuity = grab('连续性') || grab('本章推进骨架');
   return '上一组末章（第'+lastCh+'章）教案原文片段，供本组首章据此承接：\n' + raw.slice(0, 700) + (continuity ? ('\n【重点承接】' + continuity.slice(0, 350)) : '');
 }
+
 async function genTeacher(btn, gi){
   if(!isLong()){ toast('仅长篇小说模式支持老师施教'); return false; }
   const groups = schoolStageGroups(); const g = groups[gi];
@@ -3526,7 +3668,7 @@ async function genTeacher(btn, gi){
         scMark(key, true); markAIDone(key);
         render();
         toast(`老师${gi+1}备课完成：第 ${g.first}-${g.last} 章共 ${g.last-g.first+1} 份教案已就绪`);
-        playDoneSound('single');   // 老师步完成 → 单个完成音
+        playDoneSound('single');
         return true;
       }catch(e){
         if(e && e.name === 'AbortError'){ setScRetry(key, attempt); toast('已停止备课'); return false; }
@@ -3559,9 +3701,13 @@ async function nailRetry(key, label, run, btn){
 async function genSchoolAll(btn){
   if(genBusy()){ toast('已有生成任务进行中，请稍候'); return; }
   const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能一键开学'); return; }
-  const steps = [
+  const folded = isSchoolFolded();
+  const steps = folded ? [
     { key:'dictMaster', label:'词典达人', run:()=> genDictMaster(null) },
-    // v1.0.316 修「一键在词典充实处中断」：总控串行直跑必须带 force=true——否则 dictEnrichGate 里的 genBusy() 会把本链路自己 showStopBtn 置起的 _abortCtl 误判为"有任务进行中"，下一拍直接被拦下、中断
+    { key:'dictEnrich', label:'词典充实', run:()=> genDictEnrich(null,{force:true}) },
+    { key:'principal', label:'校长兼老师备课', run:()=> genPrincipal(null) }
+  ] : [
+    { key:'dictMaster', label:'词典达人', run:()=> genDictMaster(null) },
     { key:'dictEnrich', label:'词典充实', run:()=> genDictEnrich(null,{force:true}) },
     { key:'principal', label:'校长统筹', run:()=> genPrincipal(null) },
     ...groups.map((g,i)=>({ key:'t'+i, label:'老师'+(i+1)+'备课', run:()=> genTeacher(null,i) }))
@@ -3573,7 +3719,6 @@ async function genSchoolAll(btn){
   try{
     for(let i=0;i<steps.length;i++){
       const st = steps[i];
-      // v1.0.317 断点续跑：已完成的步跳过，重按「一键开学」只续未完成（不再每次重跑词典达人后停下）
       if(scDone && scDone(st.key)) continue;
       setTxt(`学校一键（${i+1}/${steps.length}·${st.label}）…`);
       const zone = document.querySelector('.school-zone');
@@ -3581,11 +3726,10 @@ async function genSchoolAll(btn){
       if(zone){ showStopBtn(zone); zone.classList.add('cp-stopping'); if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true}); }
       const ok = await st.run();
       hideStopBtn(); if(zone) zone.classList.remove('cp-stopping');
-      // v1.0.316 每步成功即写入 scDone，让「备料→开学」进度条与各步按钮的 ✓ 实时对上（否则一键只跑不标记，界面仍显示 0/4）
       if(ok && scMark){ scMark(st.key, true); }
       if(!ok){ toast(stopped ? `已停止学校一键（停在「${st.label}」）` : `学校一键中断于「${st.label}」，可单独点该步骤重试`); return; }
     }
-    toast('学校一键全部完成：达人→充实→校长→全部老师备课就绪');
+    toast(folded ? '学校一键完成：达人→充实→校长兼老师直接备课就绪！' : '学校一键全部完成：达人→充实→校长→全部老师备课就绪');
     playDoneSound('all');
   }finally{ finish(); }
 }
@@ -3593,6 +3737,8 @@ async function genSchoolAll(btn){
 // —— 学校区按钮绑定（render 时经 bindChapterPlan 调用）——
 function bindSchoolSteps(){
   const all = $('[data-scp-all]'); if(all) all.onclick = ()=> genSchoolAll(all);
+  const applyBtn = $('[data-scp-apply-titles]');
+  if(applyBtn) applyBtn.onclick = ()=> applyPrincipalTitles();
   $$('[data-scp-step]').forEach(btn=>{
     if(btn._sB) return; btn._sB = 1;
     btn.onclick = async ()=>{
@@ -3601,14 +3747,13 @@ function bindSchoolSteps(){
       if(step === 'dictEnrich'){ const ok = await nailRetry('dictEnrich','词典充实', ()=> genDictEnrich(btn,{}), btn); if(ok) playDoneSound('single'); return; }
       if(step === 'principal'){ const ok = await genPrincipal(btn); return; }
       if(step === 'teacher'){ const gi = Number(btn.dataset.scpTeacher); const ok = await genTeacher(btn, gi); return; }
-      // v1.0.316 「全部老师」单步：逐位备课，中断后可从第 1 位补到末位（已完成的组自动跳过：genTeacher 内 scDone 前置由调用侧判定）
       if(step === 'teacherAll'){
         const groups = schoolStageGroups();
         if(!groups.length){ toast('请先填写章节数，才能备课'); return; }
         if(!scDone('principal')){ toast('请先生成校长（分组/守则/组级框架）'); return; }
         let allOk = true;
         for(let i=0;i<groups.length;i++){
-          if(scDone('t'+i)) continue;   // 该老师已备好，跳过
+          if(scDone('t'+i)) continue;
           const ok = await genTeacher(null, i);
           if(!ok){ allOk=false; break; }
         }
@@ -3617,14 +3762,56 @@ function bindSchoolSteps(){
       }
     };
   });
-  // v1.0.30x：教案阅读器入口（老师「📖 教案」 / 校长「📋 成果」）
   $$('[data-scp-plan]').forEach(b=>{ b.onclick = ()=> openSchoolPlanReader(+b.dataset.scpPlan); });
   const pv = $('[data-scp-plan-pr]');
-  if(pv) pv.onclick = ()=> openSchoolRawPanel('📋 校长成果','全校写作守则 + 组级框架 + 全书章节标题总表', (state.school&&state.school.principal&&state.school.principal.raw)||'');
+  if(pv) pv.onclick = ()=> openSchoolPrincipalReader();
+}
+
+// —— 彩色标签分级函数 ——
+function getFieldTagClass(k){
+  if(/时间|落点|时点/.test(k)) return 'sc-tag-blue';
+  if(/连续|承上|启下|承接|过桥/.test(k)) return 'sc-tag-green';
+  if(/推进|骨架|拍|事件/.test(k)) return 'sc-tag-amber';
+  if(/功能|位置|分工/.test(k)) return 'sc-tag-purple';
+  if(/情绪|弧|高潮|突出/.test(k)) return 'sc-tag-pink';
+  if(/出场|名单|人物|实体/.test(k)) return 'sc-tag-teal';
+  return 'sc-tag-blue';
+}
+
+function saveTeacherFieldEdit(gi, ch, k, newV){
+  const t = state.school && state.school.teachers && state.school.teachers[gi];
+  if(!t || !t.raw) return;
+  const lines = String(t.raw).split('\n');
+  let inCh = false;
+  let replaced = false;
+  for(let i=0; i<lines.length; i++){
+    const ln = lines[i];
+    const mCh = ln.match(/^\s*第\s*(\d+)\s*章/);
+    if(mCh){
+      if(parseInt(mCh[1],10) === ch){ inCh = true; }
+      else if(inCh){ break; }
+    }
+    if(inCh){
+      const mF = ln.match(/^(\s*(?:[-•*>\d().]+\s*)*)([^：:]{1,10})([：:])\s*(.*)$/);
+      if(mF && mF[2].trim() === k){
+        lines[i] = `${mF[1]}${mF[2]}${mF[3]} ${newV.trim()}`;
+        replaced = true;
+        break;
+      }
+    }
+  }
+  if(!replaced && inCh){
+    lines.push(`- ${k}：${newV.trim()}`);
+    replaced = true;
+  }
+  if(replaced){
+    t.raw = lines.join('\n');
+    persist();
+    toast(`第${ch}章「${k}」已保存修改`);
+  }
 }
 
 // —— 教案阅读器：预览（卡片）/ 原始稿（纯文本）切换 ——
-// 教案固定六栏目（TEACHER_SYS 输出契约）；预览字段解析以限定集合精确识别，容忍有/无 bullet 前缀
 const PLAN_FIELD_KEYS = ['功能与位置','剧情时间落点','本章推进骨架','情绪走向与突出点','连续性','本章出场名单'];
 function splitTeacherPlanChapters(raw){
   const res = [];
@@ -3633,8 +3820,6 @@ function splitTeacherPlanChapters(raw){
     const m = String(ln).match(/^\s*第\s*(\d+)\s*章[^(《（]*\s*(.*)$/);
     if(m){ cur = { ch:+m[1], title:String(m[2]||'').replace(/[《》（）()【】]/g,'').trim(), fields:[] }; res.push(cur); return; }
     if(cur){
-      // v1.0.321：字段行不强制要求「- / • / *」bullet 前缀——老师输出的原文常是「功能与位置：…」直接开头；
-      // 用固定栏目名精确匹配，行首允许任意数量 bullet/序号/空白，避免误抓正文里无关的「x：」。
       const f = String(ln).match(/^\s*(?:[-•*>\d().]+\s*)*([^：:]{1,10})[：:]\s*(.*)$/);
       if(f && PLAN_FIELD_KEYS.indexOf(f[1].trim()) >= 0 && String(f[2]||'').trim()){
         cur.fields.push({ k:f[1].trim(), v:String(f[2]).trim() });
@@ -3651,11 +3836,13 @@ function openSchoolPlanReader(gi, jumpCh){
   _planCUR_GI = gi; _planCUR_VIEW = 'card';
   const n = g.last - g.first + 1;
   const ov = document.createElement('div'); ov.className='gs-overlay';
+  const isFolded = isSchoolFolded();
+  const titleText = isFolded ? '👑兼🎓 校长兼老师 · 全书教案' : `🎓 老师${gi+1} · 本组教案`;
   ov.innerHTML = `<div class="gs-modal school-plan-modal">
-    <div class="gs-modal-head"><b>🎓 老师${gi+1} · 本组教案</b><span class="sc-plan-meta muted">段「${esc(g.stage||'')}」 · 第 ${g.first}-${g.last} 章 · ${n} 章</span></div>
+    <div class="gs-modal-head"><b>${titleText}</b><span class="sc-plan-meta muted">${isFolded ? '≤20章折叠直出' : `段「${esc(g.stage||'')}」`} · 第 ${g.first}-${g.last} 章 · ${n} 章</span></div>
     <div class="sc-plan-tool">
       <span class="sc-plan-tgl" id="scPlanTgl">
-        <span class="sp-tgl-itm on" data-v="card">预览</span><span class="sp-tgl-itm" data-v="raw">原始稿</span>
+        <span class="sp-tgl-itm on" data-v="card">六栏目预览</span><span class="sp-tgl-itm" data-v="raw">原始稿</span>
       </span>
       <button class="gs-x" data-sp-close>✕</button>
     </div>
@@ -3679,15 +3866,193 @@ function renderSchoolPlanBody(ov, gi, jumpCh){
   let html = '';
   for(let ch=g.first; ch<=g.last; ch++){
     const b = byCh.get(ch) || null;
-    const rows = (b && b.fields.length) ? b.fields.map(f=>`<div class="sc-kf"><span class="sc-kf-k">${esc(f.k)}</span><span class="sc-kf-v">${esc(f.v)}</span></div>`).join('') : '<div class="sc-kf"><span class="sc-kf-k">提示</span><span class="sc-kf-v">该章节教案缺少可读字段，可切「原始稿」查看。</span></div>';
+    let rows = '';
+    if(b && b.fields.length){
+      rows = b.fields.map(f => {
+        const isLongText = f.v.length > 110;
+        const tagCls = getFieldTagClass(f.k);
+        return `
+          <div class="sc-kf">
+            <span class="sc-kf-k ${tagCls}">${esc(f.k)}</span>
+            <div class="sc-kf-v-col">
+              <div class="sc-kf-v ${isLongText ? 'sc-collapse-clamp' : ''}" data-val-raw="${esc(f.v)}">${esc(f.v)}</div>
+              ${isLongText ? `<button type="button" class="sc-expand-btn">展开全文 ▾</button>` : ''}
+            </div>
+            <button type="button" class="sc-field-edit-btn" data-edit-ch="${ch}" data-edit-k="${esc(f.k)}" title="编辑该字段">✎</button>
+          </div>
+        `;
+      }).join('');
+    } else {
+      rows = '<div class="sc-kf"><span class="sc-kf-k sc-tag-blue">提示</span><span class="sc-kf-v">该章节教案缺少可读字段，可切「原始稿」查看。</span></div>';
+    }
     html += `<div class="sc-plan-ch" id="planCh-${ch}">
       <div class="sc-plan-ch-t">第${ch}章${b&&b.title?(' · '+esc(b.title)):''}</div>
       <div class="sc-kf-wrap">${rows}</div>
     </div>`;
   }
   body.innerHTML = html;
+
+  // 绑定折叠展开
+  body.querySelectorAll('.sc-expand-btn').forEach(btn => {
+    btn.onclick = () => {
+      const vEl = btn.previousElementSibling;
+      vEl.classList.toggle('sc-collapse-clamp');
+      btn.textContent = vEl.classList.contains('sc-collapse-clamp') ? '展开全文 ▾' : '收起 ▴';
+    };
+  });
+
+  // 绑定行内编辑
+  body.querySelectorAll('.sc-field-edit-btn').forEach(btn => {
+    btn.onclick = () => {
+      const ch = +btn.dataset.editCh;
+      const k = btn.dataset.editK;
+      const row = btn.closest('.sc-kf');
+      const valCol = row.querySelector('.sc-kf-v-col');
+      const oldVal = valCol.querySelector('.sc-kf-v').getAttribute('data-val-raw') || '';
+      valCol.innerHTML = `
+        <div class="sc-kf-edit-box" style="display:flex;flex-direction:column;gap:6px;width:100%;margin-top:4px;">
+          <textarea class="sc-kf-edit-input" style="width:100%;min-height:80px;font-size:13px;padding:6px;border-radius:4px;border:1px solid var(--accent);background:var(--bg-card);color:inherit;">${esc(oldVal)}</textarea>
+          <div style="display:flex;gap:8px">
+            <button type="button" class="btn small primary" data-save>保存</button>
+            <button type="button" class="btn small ghost" data-cancel>取消</button>
+          </div>
+        </div>
+      `;
+      btn.style.display = 'none';
+      valCol.querySelector('[data-save]').onclick = () => {
+        const newV = valCol.querySelector('textarea').value;
+        saveTeacherFieldEdit(gi, ch, k, newV);
+        renderSchoolPlanBody(ov, gi, ch);
+      };
+      valCol.querySelector('[data-cancel]').onclick = () => {
+        renderSchoolPlanBody(ov, gi, ch);
+      };
+    };
+  });
 }
-// 通用原始稿阅读（校长成果等纯文本）
+
+// —— 校长统筹全局成果阅读器（结构化卡片 + 原始稿） ——
+let _prCUR_VIEW = 'card';
+function openSchoolPrincipalReader(){
+  const sc = state.school;
+  const p = sc && sc.principal;
+  const raw = (p && p.raw) || '';
+  if(!raw){
+    toast('校长统筹成果尚未生成，请先点击「校长统筹」或「一键开学」');
+    return;
+  }
+  _prCUR_VIEW = 'card';
+  const ov = document.createElement('div'); ov.className = 'gs-overlay';
+  ov.innerHTML = `
+  <div class="gs-modal school-plan-modal" style="max-width:920px">
+    <div class="gs-modal-head">
+      <b>👑 校长统筹全局成果</b>
+      <span class="sc-plan-meta muted">全校写作守则 · 各组组级框架 · 全书章节标题总表</span>
+    </div>
+    <div class="sc-plan-tool">
+      <span class="sc-plan-tgl">
+        <span class="sp-tgl-itm on" data-prv="card">结构化卡片</span>
+        <span class="sp-tgl-itm" data-prv="raw">原始稿</span>
+      </span>
+      <button class="gs-x" data-pr-close>✕</button>
+    </div>
+    <div class="sc-plan-body" id="scPrincipalBody" style="max-height:72vh;overflow:auto;padding:14px 18px 22px"></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('[data-pr-close]').onclick = ()=> ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target===ov) ov.remove(); });
+  ov.querySelectorAll('[data-prv]').forEach(el=>{
+    el.onclick = ()=>{
+      _prCUR_VIEW = el.dataset.prv;
+      ov.querySelectorAll('[data-prv]').forEach(x=>x.classList.toggle('on', x===el));
+      renderSchoolPrincipalBody(ov, raw);
+    };
+  });
+  renderSchoolPrincipalBody(ov, raw);
+}
+
+function renderSchoolPrincipalBody(ov, raw){
+  const body = ov.querySelector('#scPrincipalBody');
+  if(!body) return;
+  if(_prCUR_VIEW === 'raw'){
+    body.innerHTML = `<pre class="sc-plan-raw">${esc(raw||'（暂无内容）')}</pre>`;
+    return;
+  }
+  
+  const rulesSec = extractSection(raw, '全校写作守则', '各组组级框架') || extractSection(raw, '全校写作守则', '全书章节标题总表') || '';
+  const frameSec = extractSection(raw, '各组组级框架', '全书章节标题总表') || '';
+  const titles = (state.school && state.school.principal && state.school.principal.titles && state.school.principal.titles.length)
+    ? state.school.principal.titles
+    : parsePrincipalTitles(raw);
+  const titlesApplied = isPrincipalTitlesApplied();
+  
+  let html = '';
+  
+  // 1. 全校写作守则
+  if(rulesSec){
+    html += `
+    <div class="sc-pr-card">
+      <div class="sc-pr-card-h"><span class="sc-pr-card-ic">📜</span> <b>全校写作守则（配方锚点与可执行纪律）</b></div>
+      <div class="sc-pr-card-b">
+        <div class="sc-pr-rules-wrap">${esc(rulesSec).replace(/\n/g, '<br>')}</div>
+      </div>
+    </div>`;
+  }
+  
+  // 2. 各组组级框架 (如果非折叠状态)
+  if(frameSec){
+    html += `
+    <div class="sc-pr-card">
+      <div class="sc-pr-card-h"><span class="sc-pr-card-ic">🗺</span> <b>各组组级框架</b></div>
+      <div class="sc-pr-card-b">
+        <div class="sc-pr-rules-wrap">${esc(frameSec).replace(/\n/g, '<br>')}</div>
+      </div>
+    </div>`;
+  } else if(isSchoolFolded()){
+    html += `
+    <div class="sc-pr-card">
+      <div class="sc-pr-card-h"><span class="sc-pr-card-ic">⚡</span> <b>单组折叠架构（≤20章直通）</b></div>
+      <div class="sc-pr-card-b">
+        <div class="muted">当前篇幅 ≤20 章，三层折叠为单层：校长兼任课教师，免去组级框架中间传递损耗，直接出齐全校守则、章节标题与逐章教案。</div>
+      </div>
+    </div>`;
+  }
+  
+  // 3. 全书章节标题总表
+  html += `
+  <div class="sc-pr-card">
+    <div class="sc-pr-card-h" style="display:flex;align-items:center;justify-content:space-between">
+      <span><span class="sc-pr-card-ic">📑</span> <b>全书章节标题总表（共 ${titles.length} 章）</b></span>
+      ${titles.length ? `<button type="button" class="btn primary small" id="btnPrApplyTitles" ${titlesApplied?'disabled style="opacity:0.75"':''}>${titlesApplied ? '✓ 标题已全部应用至全书' : `✨ 选用这套章节标题（${titles.length} 章）`}</button>` : ''}
+    </div>
+    <div class="sc-pr-card-b">
+      ${titles.length ? `
+        <div class="sc-title-grid">
+          ${titles.map(t=>`
+            <div class="sc-title-item">
+              <span class="sc-t-no">第${t.num}章</span>
+              <span class="sc-t-name">《${esc(t.title)}》</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : '<div class="muted">未能从原始稿中解析出标题列表，可切换到「原始稿」查看。</div>'}
+    </div>
+  </div>`;
+  
+  body.innerHTML = html;
+  
+  const btnApply = body.querySelector('#btnPrApplyTitles');
+  if(btnApply && !titlesApplied){
+    btnApply.onclick = ()=>{
+      const ok = applyPrincipalTitles();
+      if(ok){
+        renderSchoolPrincipalBody(ov, raw);
+      }
+    };
+  }
+}
+
+// 通用原始稿阅读（校长成果等纯文本降级备份）
 function openSchoolRawPanel(title, sub, raw){
   const ov = document.createElement('div'); ov.className='gs-overlay';
   ov.innerHTML = `<div class="gs-modal school-plan-modal">
@@ -3872,30 +4237,30 @@ function bookBeatHtml(){
  * v1.0.163 双层拆分：type.note / type.aiDirective 仅供 AI（节拍设计师 buildBeatsSys 注入），
  * type.uiHint 仅供用户（节拍表卡/提示 UI 显示）。label/key 双端共享（名称 + JSON 契约），wc 为结构指令。 */
 const BEAT_OPTIONS = [
-  { id:5,  label:'微五拍', emoji:'⚖️', desc:'五段式最稳妥：起头→推进→加转折→交出一项成果→结尾留钩子，节奏不赶不拖、最百搭', wc:'500/800/500/700/500（共约3000字/章）', types:[
-      { key:'setup',  label:'开篇铺垫', uiHint:'开头先说清：在哪里、和谁、要做什么，别急着倒信息。', note:'交代本章的时间、地点与在场人物，说明当前要做的事（~500字）', aiDirective:'必须用简短铺垫立境（场景＋此刻要做的事）；禁止在本拍灌注大段设定或人物背景。', wc:'~500字' },
-      { key:'rise',   label:'冲突推进', uiHint:'推进主线，制造一处具体阻力或新信息，让情节往前动。', note:'引入一个具体的阻力或新信息，推动本章目标向前进展（~800字）', aiDirective:'必须引入具体的阻力或新信息推动目标进展，事件要具体可感；禁止原地重复、禁止只剩对话而无动作推进。', wc:'~800字' },
-      { key:'turn',   label:'意外转折', uiHint:'先让人以为会怎样，再给出变化，超出读者预判。', note:'先建立预期，再呈现计划之外的变化，使发展超出读者预判（~500字）', aiDirective:'必须先立预期再呈现计划外的变化；禁止无铺垫的随意反转、禁止反转后与主线脱节。', wc:'~500字' },
-      { key:'climax', label:'阶段高潮', uiHint:'收拢整段的积累，给出一次明确的成果或回报。', note:'收拢本章积累，达成一次明确的成果或回报（~700字）', aiDirective:'必须收拢前面积累并交付一项明确的成果/回报/认知；禁止在无积累时凭空给奖励、禁止重复已用过的回报类型。', wc:'~700字' },
-      { key:'hook',   label:'收束+悬念', uiHint:'把这一拍收好，在结尾留一个新信息或钩子给下一章。', note:'收束本章，并以一处伏笔或新信息为下一章留下接口（~500字）', aiDirective:'必须收束本拍阶段情绪，并在章末留出新信息/新目标/关系变化作为续读钩子；禁止以总结句或无关陈述收尾。', wc:'~500字' }
+  { id:5,  label:'微五拍', emoji:'⚖️', desc:'五段式最稳妥：起头→推进→加转折→交出一项成果→结尾留钩子，节奏不赶不拖、最百搭', types:[
+      { key:'setup',  label:'开篇铺垫', uiHint:'开头先说清：在哪里、和谁、要做什么，别急着倒信息。', note:'交代本章的时间、地点与在场人物，说明当前要做的事', aiDirective:'必须用简短铺垫立境（场景＋此刻要做的事）；禁止在本拍灌注大段设定或人物背景。' },
+      { key:'rise',   label:'冲突推进', uiHint:'推进主线，制造一处具体阻力或新信息，让情节往前动。', note:'引入一个具体的阻力或新信息，推动本章目标向前进展', aiDirective:'必须引入具体的阻力或新信息推动目标进展，事件要具体可感；禁止原地重复、禁止只剩对话而无动作推进。' },
+      { key:'turn',   label:'意外转折', uiHint:'先让人以为会怎样，再给出变化，超出读者预判。', note:'先建立预期，再呈现计划之外的变化，使发展超出读者预判', aiDirective:'必须先立预期再呈现计划外的变化；禁止无铺垫的随意反转、禁止反转后与主线脱节。' },
+      { key:'climax', label:'阶段高潮', uiHint:'收拢整段的积累，给出一次明确的成果或回报。', note:'收拢本章积累，达成一次明确的成果或回报', aiDirective:'必须收拢前面积累并交付一项明确的成果/回报/认知；禁止在无积累时凭空给奖励、禁止重复已用过的回报类型。' },
+      { key:'hook',   label:'收束+悬念', uiHint:'把这一拍收好，在结尾留一个新信息或钩子给下一章。', note:'收束本章，并以一处伏笔或新信息为下一章留下接口', aiDirective:'必须收束本拍阶段情绪，并在章末留出新信息/新目标/关系变化作为续读钩子；禁止以总结句或无关陈述收尾。' }
   ]},
-  { id:3,  label:'微三拍', emoji:'🚀', desc:'三段快速爽：开头一小节，中段一口气猛推进，结尾收尾+留钩，一章一个明确节点', wc:'300/1500/1200（共约3000字/章）', types:[
-      { key:'setup',  label:'开局铺垫', uiHint:'一两句话交代主角处境和本章要处理的问题，快速入题。', note:'交代主角当前处境与本章要处理的问题（~300字）', aiDirective:'必须简洁交代主角当前处境与本章要解决的问题并迅速进入；禁止用长篇心理或环境描写拖慢节奏。', wc:'~300字' },
-      { key:'climax', label:'核心进展', uiHint:'给出本章最要紧的进展或成果，回应开头的期待。', note:'给出本章的关键进展或成果，回应开头建立的期待（~1500字）', aiDirective:'必须给出本章关键进展并回应前文期待、占篇幅最大；禁止无进展的注水对白或冗余环节。', wc:'~1500字' },
-      { key:'hook',   label:'收束+悬念', uiHint:'收好本章成果，在衔接处留个新信息点当引子。', note:'收束本章成果，在衔接处留下新的信息点以引出下一章（~1200字）', aiDirective:'必须收束本章成果，并在章末留下一个新信息点引出下一章；禁止以强行悬念或重复信息收尾。', wc:'~1200字' }
+  { id:3,  label:'微三拍', emoji:'🚀', desc:'三段快速爽：开头一小节，中段一口气猛推进，结尾收尾+留钩，一章一个明确节点', types:[
+      { key:'setup',  label:'开局铺垫', uiHint:'一两句话交代主角处境和本章要处理的问题，快速入题。', note:'交代主角当前处境与本章要处理的问题', aiDirective:'必须简洁交代主角当前处境与本章要解决的问题并迅速进入；禁止用长篇心理或环境描写拖慢节奏。' },
+      { key:'climax', label:'核心进展', uiHint:'给出本章最要紧的进展或成果，回应开头的期待。', note:'给出本章的关键进展或成果，回应开头建立的期待', aiDirective:'必须给出本章关键进展并回应前文期待、占篇幅最大；禁止无进展的注水对白或冗余环节。' },
+      { key:'hook',   label:'收束+悬念', uiHint:'收好本章成果，在衔接处留个新信息点当引子。', note:'收束本章成果，在衔接处留下新的信息点以引出下一章', aiDirective:'必须收束本章成果，并在章末留下一个新信息点引出下一章；禁止以强行悬念或重复信息收尾。' }
   ]},
-  { id:7,  label:'微七拍', emoji:'🍵', desc:'七段慢慢升温、主打细腻走心：靠人物互动和情绪一点点拉近，不追快进度，结尾留暖意', wc:'350/400/500/600/550/400/200（共约3000字/章）', types:[
-      { key:'daily',     label:'日常铺垫', uiHint:'先立时间、地点、气温等感官氛围，让读者进得来。', note:'以时节/气温/光线等感官细节立境，交代时间地点与主角当下去向（~350字）', aiDirective:'必须用具体的气候、光线、气味等感官细节把日常铺开并立境；禁止在本拍制造冲突或信息倾倒。', wc:'~350字' },
-      { key:'interact',  label:'小互动', uiHint:'引入一个活物或熟识的人，几句最简往来，让画面活起来。', note:'借一个活物或熟识的人带出极简对话的细微往来（~400字）', aiDirective:'必须借具体活物或熟人带出一段日常互动、对话点到为止；禁止空泛寒暄、禁止长篇对话独白。', wc:'~400字' },
-      { key:'misunder',  label:'小误会', uiHint:'一次轻微又双向的理解偏差，带起一点克制的小波澜。', note:'一次双向无恶意的轻微误解，读者是"早知道"的知情者（~500字）', aiDirective:'必须设计成双向无恶意的轻微偏差、并让读者处于知情位置制造张力；禁止让误会失控成激烈对立或长时间冷场。', wc:'~500字' },
-      { key:'heart',     label:'谈心推进', uiHint:'借一件共同的琐事把两人推近，走到情感破冰的一刻。', note:'借外在事件（雨/食事/修葺等）促成靠近，推动一次真心交流（~600字）', aiDirective:'必须用一个具体外在契机把两人推近并推进一段走心对话；禁止用说教或空谈代替具体情节。', wc:'~600字' },
-      { key:'warm',      label:'温馨高点', uiHint:'全段唯一的小高点，力度极轻：只写身体本能，不靠告白。', note:'本段唯一高点但力度极轻：以手温/指尖/汤暖等生理细节呈现暖意（~550字）', aiDirective:'必须以极轻的生理细节（心跳漏拍、耳朵发烫、低头搅汤、嘴角微弯）呈现暖意；禁止直接表白、禁止大动作煽情。', wc:'~550字' },
-      { key:'glow',      label:'余味收束', uiHint:'情绪缓缓回落，镜头拉远到周遭的声音、气味与光。', note:'情绪回落，镜头拉远收进环境的声音/气味/光线，余味悠长（~400字）', aiDirective:'必须让上一拍的情绪自然回落、以环境感官细节收束；禁止突然跳入新冲突。', wc:'~400字' },
-      { key:'promise',   label:'明日约定', uiHint:'用一句"明天/改日"的约定或期许收章，留一个弱悬念与盼头。', note:'以一句约定/期许收章，留弱悬念与明日的延续感（~200字）', aiDirective:'必须以约定/期许/承诺收章并留弱悬念与延续感；禁止封闭式总结、禁止开放式烂尾。', wc:'~200字' }
+  { id:7,  label:'微七拍', emoji:'🍵', desc:'七段慢慢升温、主打细腻走心：靠人物互动和情绪一点点拉近，不追快进度，结尾留暖意', types:[
+      { key:'daily',     label:'日常铺垫', uiHint:'先立时间、地点、气温等感官氛围，让读者进得来。', note:'以时节/气温/光线等感官细节立境，交代时间地点与主角当下去向', aiDirective:'必须用具体的气候、光线、气味等感官细节把日常铺开并立境；禁止在本拍制造冲突或信息倾倒。' },
+      { key:'interact',  label:'小互动', uiHint:'引入一个活物或熟识的人，几句最简往来，让画面活起来。', note:'借一个活物或熟识的人带出极简对话的细微往来', aiDirective:'必须借具体活物或熟人带出一段日常互动、对话点到为止；禁止空泛寒暄、禁止长篇对话独白。' },
+      { key:'misunder',  label:'小误会', uiHint:'一次轻微又双向的理解偏差，带起一点克制的小波澜。', note:'一次双向无恶意的轻微误解，读者是"早知道"的知情者', aiDirective:'必须设计成双向无恶意的轻微偏差、并让读者处于知情位置制造张力；禁止让误会失控成激烈对立或长时间冷场。' },
+      { key:'heart',     label:'谈心推进', uiHint:'借一件共同的琐事把两人推近，走到情感破冰的一刻。', note:'借外在事件（雨/食事/修葺等）促成靠近，推动一次真心交流', aiDirective:'必须用一个具体外在契机把两人推近并推进一段走心对话；禁止用说教或空谈代替具体情节。' },
+      { key:'warm',      label:'温馨高点', uiHint:'全段唯一的小高点，力度极轻：只写身体本能，不靠告白。', note:'本段唯一高点但力度极轻：以手温/指尖/汤暖等生理细节呈现暖意', aiDirective:'必须以极轻的生理细节（心跳漏拍、耳朵发烫、低头搅汤、嘴角微弯）呈现暖意；禁止直接表白、禁止大动作煽情。' },
+      { key:'glow',      label:'余味收束', uiHint:'情绪缓缓回落，镜头拉远到周遭的声音、气味与光。', note:'情绪回落，镜头拉远收进环境的声音/气味/光线，余味悠长', aiDirective:'必须让上一拍的情绪自然回落、以环境感官细节收束；禁止突然跳入新冲突。' },
+      { key:'promise',   label:'明日约定', uiHint:'用一句"明天/改日"的约定或期许收章，留一个弱悬念与盼头。', note:'以一句约定/期许收章，留弱悬念与明日的延续感', aiDirective:'必须以约定/期许/承诺收章并留弱悬念与延续感；禁止封闭式总结、禁止开放式烂尾。' }
   ]},
-  { id:2,  label:'双拍结构', emoji:'🔍', desc:'前头一大段慢慢铺陈（看似平淡、其实全是伏笔），最后一小段集中揭晓真相/抛出惊吓，专治悬疑惊悚推理', wc:'2500/500（共约3000字/章）', types:[
-      { key:'hold',   label:'长段铺垫', uiHint:'前面一大段都用来铺线索、攒信息，把气氛一点点垫起来。', note:'用较长篇幅铺设线索、逐步积累信息，营造渐进的氛围（~2500字）', aiDirective:'必须用长篇幅连续铺设线索、逐步积累信息、营造渐进氛围；禁止情绪化辞藻堆砌、禁止段落间信息断裂。', wc:'~2500字' },
-      { key:'burst',  label:'揭示收束', uiHint:'结尾极短篇幅，把前面线索一次性揭示、收束，并留一句事件后果。', note:'在较短篇幅给出关键揭示并收束前面积累的线索，末尾再以一句交代事件后果或余味（~500字）', aiDirective:'必须在结尾用较短篇幅对前面积累的线索给出关键揭示并收束，各线索须自洽串起；揭示收束后必须再以一句交代事件后果或余味再结束；禁止为反转引入未铺垫的新元素、禁止悬而未决、禁止揭晓后戛然而止无任何收尾。', wc:'~500字' }
+  { id:2,  label:'双拍结构', emoji:'🔍', desc:'前头一大段慢慢铺陈（看似平淡、其实全是伏笔），最后一小段集中揭晓真相/抛出惊吓，专治悬疑惊悚推理', types:[
+      { key:'hold',   label:'长段铺垫', uiHint:'前面一大段都用来铺线索、攒信息，把气氛一点点垫起来。', note:'用较长篇幅铺设线索、逐步积累信息，营造渐进的氛围', aiDirective:'必须用长篇幅连续铺设线索、逐步积累信息、营造渐进氛围；禁止情绪化辞藻堆砌、禁止段落间信息断裂。' },
+      { key:'burst',  label:'揭示收束', uiHint:'结尾极短篇幅，把前面线索一次性揭示、收束，并留一句事件后果。', note:'在较短篇幅给出关键揭示并收束前面积累的线索，末尾再以一句交代事件后果或余味', aiDirective:'必须在结尾用较短篇幅对前面积累的线索给出关键揭示并收束，各线索须自洽串起；揭示收束后必须再以一句交代事件后果或余味再结束；禁止为反转引入未铺垫的新元素、禁止悬而未决、禁止揭晓后戛然而止无任何收尾。' }
   ]}
 ];
 /* 微拍选型铁律（用户主导、随拍数注入规划师 prompt）：
@@ -3946,17 +4311,17 @@ function isClimaxType(key){ return /高潮|高点/.test(BEAT_LABEL_ALL[key] || k
 // 动态节拍系统提示词（v1.0.273 纯文本化）：不再生成 JSON"拍表"骨架，而是为每个章节输出内容丰满、可让正文展开成约3000字的「章节编排」纯文本。
 function buildBeatsSys(){
   const cfg = currentBeatCfg(), defs = cfg.types;
-  const rhythm = defs.map((t,i)=>`${i+1}. ${t.label}（type=${t.key}）：${t.note}${t.wc?`（该拍字数配比：${t.wc}）`:''}`).join('\n');
-  const selectRule = cfg.id===3 ? '读者偏好短促密集的节奏（新媒体型）' : (cfg.id===5 ? '读者偏好约 1500 字一次小幅情绪起伏（传统男女频标准）' : (cfg.id===2 ? '读者偏好前段积累、后段集中揭示的结构（悬疑惊悚）' : '读者偏好细腻温和的情感递进（慢热细腻型）'));
+  const rhythm = defs.map((t,i)=>`${i+1}. ${t.label}（type=${t.key}）：${t.note}`).join('\n');
+  const selectRule = cfg.id===3 ? '读者偏好短促密集的节奏（新媒体型）' : (cfg.id===5 ? '读者偏好情绪起伏张弛有度（传统标准）' : (cfg.id===2 ? '读者偏好前段积累、后段集中揭示的结构（悬疑惊悚）' : '读者偏好细腻温和的情感递进（慢热细腻型）'));
   const shape = shapeKind()==='team' ? `本作采用团队群像：每章须让核心团队在场并让每位成员有“存在反应”，对话要有多声口对手戏，不得整章只写主角独角戏、配角当背景板。` : (shapeKind()==='dual' ? `本作采用双主角：两条主线都要拿到实质推进与镜头，交汇/对照/张力拍是本书记忆点，不得只写一方晾另一方。` : `本作采用主角线单人叙事，专注单主角的行为与心理。`);
-  return `你是一位资深长篇「章节编排师」。请为指定批次的章节，基于【全书章节标题】【全书节拍阶段】【设定词典】【前文骨架】，为每一章各输出一份「章节编排」纯文本。**你的职责是排「节拍」——这一章由哪几个节拍、按什么顺序推进，每个节拍具体发生什么——而不是写正文散文。**正文散文由正文 AI 负责；你只产出每一章的节拍蓝图：每个节拍一段微剧情梗概 + 字数配比，让正文 AI 拿着它就能按拍展开成约3000字正文，且不机械重复。
+  return `你是一位资深长篇「章节编排师」。请为指定批次的章节，基于【全书章节标题】【全书节拍阶段】【设定词典】【前文骨架】，为每一章各输出一份「章节编排」纯文本。**你的职责是排「节拍」——这一章由哪几个节拍、按什么顺序推进，每个节拍具体发生什么——而不是写正文散文。**正文散文由正文 AI 负责；你只产出每一章的节拍蓝图：每个节拍一段微剧情梗概，让正文 AI 拿着它就能按图索骥展开成扎实生动的正文，且不机械重复。
 【当章微拍节奏（${cfg.label}）——${selectRule}】
 ${rhythm}
 ${shape}
 【每章编排要素（一律用独立小节标题顶格起行，冒号紧跟；节拍表按这些小节清晰展示，不是散文）】
 1. 承接点：本章从上一章哪个动作/对话/悬念自然续上（第1章则写登场切入点）。
 2. 场景链与切换：本章依剧情推进依次经过哪些场景/地点，用「→」连成一条场景链，并在节点括号注明该场景在此发生什么；刻意让场景与地点错落变化，严禁连续多章默认落在同一场景里原地打转；确需重复地点时，也要换人物组合/新冲突/新信息切进这一地点的不同侧面。
-3. 逐拍推进（核心·要密实）：必须严格按上方【当章微拍节奏】的每一拍，**逐拍单独成行**输出，格式为「拍名（约字数）：该拍具体发生什么」；「约字数」取该拍自身标注的字数配比。**严禁把任何一拍写成一句话概括**：每一拍都必须写成一段"微剧情"（至少 2~4 句、约 60~120 字），写清——该拍发生在何地/何时、在场有谁、主角在此拍的动作与交锋、遇到的冲突或阻碍、以及这拍结束时人物/局势的状态变化或新信息；不要用"他遇到了困难"这类空洞概括，要给出能直接落成画面、动作、对话、心理活动的具体素材，让正文 AI 拿它就能独自把这一拍铺成约其目标字数的正文。禁止把各拍合并成整段散文、禁止省略或合并任何一拍、禁止只留一句骨架。
+3. 逐拍推进（核心·要密实）：必须严格按上方【当章微拍节奏】的每一拍，**逐拍单独成行**输出，格式为「拍名：该拍具体发生什么」。**严禁把任何一拍写成一句话概括**：每一拍都必须写成一段"微剧情"（至少 2~4 句、约 60~120 字），写清——该拍发生在何地/何时、在场有谁、主角在此拍的动作与交锋、遇到的冲突或阻碍、以及这拍结束时人物/局势的状态变化或新信息；不要用"他遇到了困难"这类空洞概括，要给出能直接落成画面、动作、对话、心理活动的具体素材，让正文 AI 拿它就能独自把这一拍铺展成细节饱满的正文。禁止把各拍合并成整段散文、禁止省略或合并任何一拍、禁止只留一句骨架。
 4. 情绪弧：本章情绪从什么到什么，一句话概括。
 5. 出场实体：本章要落到文中的人名/地名/专名（优先取自设定词典；确需新增的配角/路人/地名/专名一并纳入，并在底部【本章实体清单】统一登记）。
 6. 埋设伏笔：本章要在文中悄悄埋下什么线索（可留空，有则写，措辞直白不绕弯）。
@@ -3967,9 +4332,9 @@ ${shape}
 承接点：……
 场景链与切换：青石村（林小满的家）→ 村口（……）→ 田地（……）
 逐拍推进：
-开篇铺垫（约500字）：……
-冲突推进（约800字）：……
-（其余每拍按【当章微拍节奏】继续，“拍名（约字数）：内容”各占一行，拍数与节拍一一对应）
+开篇铺垫：……
+冲突推进：……
+（其余每拍按【当章微拍节奏】继续，“拍名：内容”各占一行，拍数与节拍一一对应）
 情绪弧：……
 出场实体：……
 埋设伏笔：……
@@ -3981,7 +4346,7 @@ ${shape}
 1. 每章编排须落在其所属「全书节拍的阶段」内、服务该阶段走向，不得越过当前阶段提前兑现后续阶段剧情；相邻章连续递进。
 2. 事件描述必须具体、无歧义、给正文留演绎空间：写清谁、做了什么、结果/冲突是什么，可直白、不要反义/潜台词式的绕弯表达（正文会误读）。
 3. 出场实体可取自设定词典；确需引入词典外的下位配角/路人/地名/专名以丰满本章时，允许适度新增（主角/核心反派/核心地域的绝对核心名仍禁止乱加），所增新名一律登记到本块【本章实体清单】供词典充实收编。
-4. 每章编排要足够密实——要让正文能据此写出约3000字。自我判定：只看「逐拍推进」下每一拍的描述，若某一拍一两句就能读完、正文 AI 拿它无米可下锅，就判为"一句话骨架"并重写；全章所有拍的描述合起来，须让正文 AI 有充足的场景、地点、动作、人物互动、冲突与结果可铺，足以撑起约3000字的正文。不要流水账、不要多章雷同、不要总分总套话。
+4. 每章编排要足够密实——自我判定：只看「逐拍推进」下每一拍的描述，若某一拍一两句就能读完、正文 AI 拿它无米可下锅，就判为"一句话骨架"并重写；全章所有拍的描述合起来，须让正文 AI 有充足的场景、地点、动作、人物互动、冲突与结果可铺。按教案按图索骥，有多少料写多少正文。不要流水账、不要多章雷同、不要总分总套话。
 5. 只输出上述章节编排纯文本。
 `;}
 
@@ -7246,60 +7611,6 @@ function chapterTitleListText(){
   return arr.map((c,i)=>`第${i+1}章 ${cleanChapterTitle((c&&c.title)||'')}`.replace(/\s+$/,'')).filter(Boolean).join('\n');
 }
 
-// v10.14 章节标题管理块：工具行（复制全部）+ 每行标题 + ✎ 编辑
-// v11 第二步：无标题时渲染「全书章节数 + 生成全部章节标题」最小入口；有标题时渲染完整管理。
-function chapterTitleBlock(){
-  const o = state.outline;
-  const arr = (o && Array.isArray(o.chapters)) ? o.chapters : [];
-  const cc = chapterCountVal();
-  const ccOn = !!cc;
-  // v1.0.119 阶段C（已生成标题）整块移除章节数面板（不占版面），总数并入标题栏；A/B 保留可编辑输入
-  // v225/P5-B：locked 改为"存在非空标题"——标题全空（占位态）时章节数输入保持可改
-  const locked = arr.some(c=>String(c&&c.title||'').trim());
-  const nIn = locked ? ''
-    : `
-    <div class="tw-panel ct-n-panel">
-      <div class="poly-head"><span class="poly-ic">📐</span><b>全书章节数</b><span class="poly-rule">第一步 · 生成大纲前必填 · 1-200 整数</span></div>
-      <div class="tw-row">
-        <input type="number" id="totalWordsIn" class="tw-in cc-in" min="1" max="200" step="1" inputmode="numeric" placeholder="如 30" value="${cc||''}" ${ccOn?'':'data-first'} />
-        <span class="tw-unit">章</span>
-        ${cc ? `<span class="pill tag-ok">${chapterCountHint()}</span>` : ''}
-      </div>
-    </div>`;
-  // v225/P5-B：无标题时纯展示——仅章节数输入 + 序号占位列表；标题生成统一归「全书规划师」，卡片不再提供任何 AI 生成入口
-  if(!arr.length){
-    const phRows = cc ? Array.from({length:cc},(_,i)=>`<div class="ct-row"><span class="ct-no">第${i+1}章</span><span class="ct-title muted">（待规划师生成）</span></div>`).join('') : '';
-    return `<div class="ct-block">
-    <div class="ct-head" style="cursor:default">
-      <b>📚 章节标题</b>
-    </div>
-    ${nIn}
-    <p class="muted" style="margin:8px 0 6px">第二步：填写「全书章节数」后即可进入第三步，标题由「全书规划师」统一生成。${cc?'下方按当前章节数展示章节序号（标题待生成）。':'先填写章节数。'}</p>
-    ${phRows?`<div class="ct-list">${phRows}</div>`:''}
-  </div>`;
-  }
-  const rows = arr.map((c,i)=>`
-    <div class="ct-row" data-ct-row="${i}">
-      <span class="ct-no">第${i+1}章</span>
-      <span class="ct-title${String((c&&c.title)||'').trim()?'':' muted'}" title="${esc((c&&c.title)||'')}">${esc(String((c&&c.title)||'').trim())||'（待规划师生成）'}</span>
-      <button type="button" class="ct-edit" data-ct-edit="${i}" title="编辑标题">✎</button>
-    </div>`).join('');
-  return `<div class="ct-block${state.ctCollapsed?' ct-collapsed':''}">
-    <div class="ct-head" data-ct-fold role="button" tabindex="0" title="展开/收起">
-      <b>📚 章节标题（共 ${arr.length} 章） <span class="ct-fold-ico">${state.ctCollapsed?'▸':'▾'}</span></b>
-      <span class="ct-tools">
-        <button type="button" class="btn small ghost" data-ct-hist>单历(${chTitleHistory().length})</button>
-        <button type="button" class="btn small ghost" data-ct-copy>📋 复制全部章节标题</button>
-      </span>
-    </div>
-    <div class="ct-row2">
-      <button type="button" class="btn small ghost" data-ct-batch title="查看并可整批回退「重生成全部标题」的历史版本">版本(${chTitleBatches().length}/50)</button>
-    </div>
-    ${nIn}
-    <div class="ct-list">${rows}</div>
-  </div>`;
-}
-
 // v10.14 章节标题绑定：复制全部 / ✎ 进入编辑态（失焦或回车存、Esc 还原、同刻单行互斥）
 function bindChapterTitles(){
   const ctFold = $('[data-ct-fold]');
@@ -7759,6 +8070,21 @@ function microBeatBlock(){
 // v1.0.316 学校「备料 → 开学」链路：四步改可单独点击（中断后可点某一步单独重跑，不必从头再来）
 function schoolPipelineProgress(){
   const groups = schoolStageGroups();
+  const folded = isSchoolFolded();
+  if(folded){
+    const keys = ['dictMaster','dictEnrich','principal'];
+    const done = keys.filter(scDone).length;
+    const pct = Math.round(done / 3 * 100);
+    return `<div class="sc-pipeline">
+      <div class="sc-pipe-top"><span class="sc-pipe-t">⏳ 备料 → 开学（≤20章折叠直出）</span><span class="sc-pipe-m">${done}/3 步就绪 · ${pct}%</span></div>
+      <div class="sc-pipe-bar"><span class="sc-pipe-in" style="width:${pct}%"></span></div>
+      <div class="sc-pipe-steps">
+        <button type="button" class="sc-step ${scDone('dictMaster')?'done':''}" data-scp-step="dictMaster" title="词典达人：先给全员备料。中断后点此单独重跑">📖 词典达人${scBadge('dictMaster')}</button>
+        <button type="button" class="sc-step ${scDone('dictEnrich')?'done':''}" data-scp-step="dictEnrich" title="词典充实：与达人平级、补全词典。中断后点此单独重跑">🗂 词典充实${scBadge('dictEnrich')}</button>
+        <button type="button" class="sc-step ${scDone('principal')?'done':''}" data-scp-step="principal" title="校长兼任课教师：一次性出齐守则、章节标题总表与逐章教案">👑兼🎓 校长兼老师备课${scBadge('principal')}</button>
+      </div>
+    </div>`;
+  }
   const total = 3 + groups.length;
   const keys = ['dictMaster','dictEnrich','principal', ...groups.map((g,i)=>'t'+i)];
   const done = keys.filter(scDone).length;
@@ -7778,6 +8104,9 @@ function schoolPipelineProgress(){
 
 function schoolZoneBlock(){
   const groups = schoolStageGroups();
+  const folded = isSchoolFolded();
+  const pTitles = (state.school && state.school.principal && Array.isArray(state.school.principal.titles)) ? state.school.principal.titles : [];
+  const titlesApplied = isPrincipalTitlesApplied();
   const tBody = groups.length
     ? groups.map((g,i)=> schoolTeacherBtn(g,i)).join('')
     : `<div class="sc-teachers-ph">🎓 老师区：填写「全书章节数」后，将按《全书节拍》自动分为若干组，每组对应一位老师（这里会展示各位老师卡，可逐位备课）。</div>`;
@@ -7792,104 +8121,21 @@ function schoolZoneBlock(){
     <div class="cp-body">
       <div class="school-zone">
         <div class="school-zone-head">
-          <span>👑 校长 → 🎓 老师 → ✍️ 正文 AI</span>
-          <em class="school-zone-tip">${(()=>{ const s=schoolStageGroups(); return s.length? (`按《全书节拍》分组 → ${s.length} 位老师`):'先填章节数'; })()}</em>
+          <span>${folded ? '👑 校长兼老师（≤20章折叠直通） → ✍️ 正文 AI' : '👑 校长 → 🎓 老师 → ✍️ 正文 AI'}</span>
+          <em class="school-zone-tip">${groups.length ? (folded ? `全书共 ${groups[0].last} 章 · 单组折叠直接备课` : `按《全书节拍》分组 → ${groups.length} 位老师`) : '先填章节数'}</em>
         </div>
         ${schoolPipelineProgress()}
         <div class="school-steps">
           <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成；中断后可点上方各步单独续跑">⚡ 一键开学</button>
           <span class="school-spacer"></span>
-          <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表">📋 读校长产出</button>
+          ${pTitles.length ? `<button type="button" class="sc-plan-btn sc-plan-apply-t ${titlesApplied?'applied':''}" data-scp-apply-titles title="校长已拟定 ${pTitles.length} 章标题，点击应用到全书大纲与正文列表">${titlesApplied ? '✓ 标题已选用' : `✨ 选用校长拟定标题 (${pTitles.length}章)`}</button>` : ''}
+          <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看校长统筹全局成果：全校写作守则 + 组级框架 + 全书章节标题总表">📋 读校长成果</button>
         </div>
         <div class="school-teachers">
           ${tBody}
         </div>
       </div>
       <!-- 完成声音 + 音量：单个完成 / 全部完成 的音色在顶部 🎨 主题面板挑选，这里只留开关与音量 -->
-      <div class="cp-sound-tool">
-        <label class="cps-switch" title="某一步完成响「单个完成」音；学校一键全跑完响「全部完成」音">
-          <input id="cpsSoundDone" type="checkbox">
-          <span class="cps-wrap"><i>🔔</i><b>完成声音</b></span>
-        </label>
-        <label class="cps-vol" title="提醒音音量">
-          <span>🔊</span>
-          <input id="cpsSoundVol" type="range" min="0" max="100" step="5" value="80">
-          <em id="cpsSoundVolLb" class="muted">80%</em>
-        </label>
-      </div>
-    </div>
-  </div>`;
-}
-
-function chapterPlanBlock(){
-  const o = state.outline;
-  const plans = (o && Array.isArray(o.chapterPlans)) ? o.chapterPlans : [];
-  const hasPlans = plans.some(Boolean);
-  const collapsed = !!state.cpCollapsed;
-  // v1.0.28y：规划区不再铺开任何节拍表内容（手风琴卡片 / 摘要列表均不显示）；内容全部收进「📖 阅读节拍表」界面。
-  return `<div class="card cp-card">
-    <div class="cp-head" data-cp-fold role="button" tabindex="0" title="展开/收起">
-      <div class="cp-head-top">
-        <div class="cp-head-left">
-          <h3>🧭 全书规划师 <span class="cp-arrow">${collapsed?'▸':'▾'}</span></h3>
-        </div>
-        <!-- v240/906-4：「🔧 原始数据」上移第一行最右 -->
-        <div class="cp-head-tools">
-          <button type="button" class="btn ghost" data-cp-raw title="手动提取 AI 原始响应数据，当自动更新失败时使用">🔧</button>
-        </div>
-      </div>
-      <!-- v246：标题条只保留标题一行（全城渐变背景）；微拍选择与「⚡ 一键五步」移出标题条，收进下方规划区 -->
-    </div>
-    <div class="cp-body"${collapsed?' hidden':''}>
-      <!-- v246：微拍选择区（竖向，标题+作用描述，供用户先行挑选）→ 一键五步 → 五步 stagebar -->
-      <div class="cp-micropick">
-        <div class="cp-micropick-title">选择章节微拍节奏 <em>（每章约 3000 字单章）</em></div>
-        <div class="cp-micropick-opts">
-          ${BEAT_OPTIONS.map(b=>`
-            <label class="cp-micropick-item ${b.id===currentBeatId()?'sel':''}" data-micropick="${b.id}" title="${esc(b.desc||'')}">
-              <span class="cp-micropick-ic">${b.emoji||'🥁'}</span>
-              <span class="cp-micropick-txt">
-                <b>${esc(b.label)}</b>
-                <i>${esc(b.desc||'')}</i>
-              </span>
-              <input type="radio" name="cpMicroPick" value="${b.id}" ${b.id===currentBeatId()?'checked':''} style="display:none">
-            </label>
-          `).join('')}
-        </div>
-      </div>
-      <div class="cp-micropick-actions">
-        <button type="button" class="cp-stage-all" data-cp-all title="智能执行规划师阶段：默认跳过已完成步骤，只跑未完成的（也可选择全部重跑）">⚡ 一键四步</button>
-      </div>
-      <div class="cp-stagebar">
-        ${PLANNER_STAGES.map(st=>{
-          const done = plannerStageDone(st.id);
-          const _dot = done ? '✓' : '·';
-          return `<button type="button" class="cp-stage ${done?'done':'undone'}" data-cp-stage="${st.id}" title="${st.label}：${done?'已完成（点击可重新生成）':'未完成（点击生成）'}；四步可任意顺序单独点击，无需按顺序完成">
-            <i class="cp-dot">${_dot}</i>${st.num}${st.label}
-          </button>`;
-        }).join('')}
-        </div>
-      ${hasPlans ? `<div class="cp-plans-tool">
-          <button type="button" class="btn small ghost" data-cp-time-board title="纵览全书时间线（来自④全局时间线，纯文本排版）">⏱ 时间线</button>
-        </div>`
-        : ``}
-      <!-- 学校模式 · 校长分组 + 老师按钮（按 ⌈N÷20⌉ 目标、阶段优先的动态分组渲染；老师数=最终分组数） -->
-      <div class="school-zone">
-        <div class="school-zone-head">
-          <span>🏫 学校 · 校长分组</span>
-          <em class="school-zone-tip">${(()=>{ const s=schoolStageGroups(); return s.length? (`按《全书节拍》分组 → ${s.length} 位老师`):'先填章节数'; })()}</em>
-        </div>
-        ${schoolPipelineProgress()}
-        <div class="school-steps">
-          <button type="button" class="sc-step sc-runall" data-scp-all title="学校一键：词典达人→词典充实→校长→全部老师备课，一气呵成；中断后可点上方各步单独续跑">⚡ 一键开学</button>
-          <span class="school-spacer"></span>
-          <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看校长产出：全校写作守则 + 组级框架 + 章节标题总表">📋 读校长产出</button>
-        </div>
-        <div class="school-teachers">
-          ${schoolStageGroups().map((g,i)=> schoolTeacherBtn(g,i)).join('')}
-        </div>
-      </div>
-      <!-- 完成声音 + 音量（内嵌学校区）：单个完成 / 全部完成 的音色在顶部 🎨 主题面板挑选，这里只留开关与音量 -->
       <div class="cp-sound-tool">
         <label class="cps-switch" title="某一步完成响「单个完成」音；学校一键全跑完响「全部完成」音">
           <input id="cpsSoundDone" type="checkbox">

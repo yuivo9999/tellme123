@@ -2010,3 +2010,40 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 #app .sc-plan-btn.sc-plan-pr:hover{transform:translateY(-1px)}
 /* v1.0.307：未填章节数时老师区的可见占位（避免用户误以为没有老师卡） */
 #app .sc-teachers-ph{grid-column:1 / -1;display:flex;align-items:center;gap:8px;padding:10px 12px;border:1px dashed color-mix(in srgb, var(--accent) 38%, var(--line));border-radius:10px;background:color-mix(in srgb, var(--accent) 6%, transparent);color:var(--muted);font-size:12.5px;line-height:1.6}
+
+/* E1 彩虹标签分色（WCAG AA）与教案交互 */
+.sc-tag-blue { background: #e0f2fe; color: #0369a1; border: 1px solid #7dd3fc; }
+.sc-tag-green { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+.sc-tag-amber { background: #fef3c7; color: #b45309; border: 1px solid #fcd34d; }
+.sc-tag-purple { background: #f3e8ff; color: #6b21a8; border: 1px solid #d8b4fe; }
+.sc-tag-pink { background: #fce7f3; color: #be185d; border: 1px solid #f472b6; }
+.sc-tag-teal { background: #ccfbf1; color: #0f766e; border: 1px solid #5eead4; }
+
+.sc-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 6px; font-size: 11px; font-weight: 750; line-height: 1.3; }
+.sc-kf-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+.sc-kf-act { display: inline-flex; align-items: center; gap: 6px; }
+.sc-kf-editbtn { font-size: 10px; color: var(--muted); cursor: pointer; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--line); background: var(--panel2); }
+.sc-kf-editbtn:hover { color: var(--accent); border-color: var(--accent); }
+.sc-kf-collapsible .sc-kf-v { max-height: 4.8em; overflow: hidden; position: relative; transition: max-height .25s ease; }
+.sc-kf-collapsible.expanded .sc-kf-v { max-height: none; }
+.sc-kf-more { font-size: 11px; color: var(--accent); cursor: pointer; margin-top: 3px; user-select: none; font-weight: 600; display: inline-block; }
+.sc-kf-edit-area { width: 100%; min-height: 68px; font-size: 12px; font-family: inherit; padding: 6px 8px; border-radius: 6px; border: 1px solid var(--accent); background: var(--panel); color: var(--txt); box-sizing: border-box; margin-top: 4px; }
+.sc-kf-edit-btns { display: flex; gap: 6px; margin-top: 4px; }
+
+/* 校长成果阅读器 */
+.sc-principal-preview { display: flex; flex-direction: column; gap: 14px; }
+.sc-pcard { border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); padding: 12px 14px; }
+.sc-pcard-h { font-size: 13.5px; font-weight: 800; color: var(--txt); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.sc-pcard-sec { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.sc-pcard-sub { font-size: 12px; font-weight: 750; color: var(--accent); margin-bottom: 4px; }
+.sc-title-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; margin-top: 8px; }
+.sc-title-item { display: flex; align-items: baseline; gap: 6px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); font-size: 12px; }
+.sc-title-num { font-weight: 800; color: var(--accent); font-size: 11px; flex: none; }
+.sc-title-txt { font-weight: 600; color: var(--txt); word-break: break-all; }
+
+/* 折叠模式教师卡与标题选用按钮样式 */
+#app .sc-teacher-card.sc-teacher-folded { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); background: color-mix(in srgb, var(--accent) 4%, var(--panel2)); }
+#app .sc-plan-btn.sc-plan-apply-t { padding: 9px 16px; border-radius: 11px; font-size: 12.5px; font-weight: 750; line-height: 1.4; gap: 6px; background: color-mix(in srgb, var(--accent) 15%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line)); color: var(--accent); cursor: pointer; transition: all .15s ease; }
+#app .sc-plan-btn.sc-plan-apply-t:hover { background: color-mix(in srgb, var(--accent) 25%, var(--panel)); transform: translateY(-1px); }
+#app .sc-plan-btn.sc-plan-apply-t.applied { border-color: color-mix(in srgb, #22c55e 50%, var(--line)); color: #16a34a; background: color-mix(in srgb, #22c55e 12%, transparent); }
+
