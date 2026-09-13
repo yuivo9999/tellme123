@@ -146,6 +146,60 @@ function _timeRewind(a, b){
   return oa > ob;
 }
 
+// 时间系统 v2：时间先作为“状态合同”锁定，再交给正文 AI 做文学表达。
+const TIME_OPENERS = [
+  '天刚蒙蒙亮','天刚亮','天色刚亮','晨光初现','晨光熹微','清晨','清早','一大早','翌日清晨','第二天清晨','次日清晨',
+  '夜幕降临','夜幕落下','夜色降临','夜色深了','夜色渐深','入夜','天黑了','天黑下来','暮色降临','暮色四合','黄昏时分','傍晚时分',
+  '午后的阳光','午后','正午时分','日头西斜','夕阳西下','月亮升起','月色落下','黎明时分','深夜时分','深夜里'
+];
+function _extractPlanTimeRange(plan){
+  const raw = extractPlanField(plan, ['剧情时间落点']);
+  if(!raw) return {raw:'',from:'',to:''};
+  const t=String(raw).trim();
+  const m=t.match(/(?:从\s*)?(.+?)\s*(?:到|至|—|–|→|->)\s*(.+)$/);
+  return m ? {raw:t,from:m[1].trim(),to:m[2].trim()} : {raw:t,from:t,to:t};
+}
+function _globalTimeEntry(i){
+  const gt=state.outline&&state.outline._globalTimeline;
+  return gt&&Array.isArray(gt.chapters) ? (gt.chapters.find(x=>x&&Number(x.index)===i)||null) : null;
+}
+function _plannedTimeRange(i){
+  const o=state.outline||{}, ge=_globalTimeEntry(i);
+  const plan=Array.isArray(o.chapterPlans)?(o.chapterPlans[i]||{}):{};
+  const pr=_extractPlanTimeRange(plan);
+  return {source:ge?'globalTimeline':(pr.raw?'teacherPlan':''),from:ge&&String(ge.from||'').trim()?String(ge.from).trim():pr.from,to:ge&&String(ge.to||'').trim()?String(ge.to).trim():pr.to,jump:ge&&String(ge.jump||'').trim()?String(ge.jump).trim():''};
+}
+function _timeContractForChapter(i){
+  if(!isLong()||!_timeAnchorOn()) return null;
+  const cur=_plannedTimeRange(i), prev=i>0?_plannedTimeRange(i-1):null;
+  const fc=state.outline&&state.outline._factCard;
+  const observedPrev=fc&&Array.isArray(fc.timeAnchors)?fc.timeAnchors.find(x=>x&&x.ch===i-1):null;
+  if(!cur.from&&!cur.to&&!prev?.to&&!observedPrev?.time) return null;
+  const lines=['【本章时间合同｜生成前机器状态，优先于文学直觉】'];
+  lines.push(`- 时间真相来源：${cur.source==='globalTimeline'?'全书规划时间线（最高权威）':cur.source==='teacherPlan'?'老师教案“剧情时间落点”':'上一章已落地状态'}`);
+  if(prev&&(prev.from||prev.to)) lines.push(`- 上一章计划收尾：${prev.to||prev.from}`);
+  if(observedPrev&&observedPrev.time) lines.push(`- 上一章正文观测收尾（仅供审计，不得覆盖计划）：${observedPrev.time}`);
+  if(cur.from) lines.push(`- 本章计划起点：${cur.from}`);
+  if(cur.to) lines.push(`- 本章计划终点：${cur.to}`);
+  if(cur.jump) lines.push(`- 规划时间跳跃说明：${cur.jump}`);
+  lines.push('- 状态规则：本章主线必须从上一章计划终点自然延续；若本章起点晚于上一章终点，只允许用真实时间/空间流逝过桥。');
+  lines.push('- 绝对禁止：时间回到上一章已结束的更早时段；上一章已经入睡、休息或结束当日后，本章不得再次用“夜幕降临/黄昏到来/天刚蒙蒙亮”等把同一时段重新开启。');
+  lines.push('- 第一场时间锁：第一场只能发生在本章计划起点或其自然延续，不得先写更早的时间氛围段再进入教案。');
+  lines.push('- 时间是内部状态，不是写作任务：知道时间即可，不必主动告诉读者。');
+  lines.push('- 时间表达预算：默认不要让时间词充当段落/章节开头；同一时间状态不要重复命名。');
+  lines.push('- 文学表现优先级：优先通过人物行动、生活节律、环境声音、光线变化、身体状态和场景活动自然体现时间。');
+  return lines.join('\n');
+}
+function auditTimePresentation(i,text){
+  const body=String(text||'').trim(), paras=body.split(/\n\s*\n/).map(x=>x.trim()).filter(Boolean), openers=[];
+  paras.forEach((p,n)=>{const hit=TIME_OPENERS.find(w=>p.startsWith(w));if(hit)openers.push({paragraph:n+1,word:hit});});
+  const counts={}; TIME_OPENERS.forEach(w=>{const n=(body.match(new RegExp(escapeRegExp(w),'g'))||[]).length;if(n)counts[w]=n;});
+  const repeated=Object.entries(counts).filter(([,n])=>n>=2).map(([w,n])=>`${w}×${n}`);
+  const result={chapter:i,openerCount:openers.length,openers:openers.slice(0,12),repeated:repeated.slice(0,12),status:openers.length>=3||repeated.length>=2?'warn':'pass',ts:Date.now()};
+  if(state.outline){state.outline._timeAudit=state.outline._timeAudit||{};state.outline._timeAudit[i]=result;}
+  return result;
+}
+
 state.aiNetwork = state.aiNetwork || {
   stage: 'idle',          // idle / idea / recipe / outline / titles / plan / writing / review
   running: [],            // 当前正在运行的 AI kind 列表
@@ -158,6 +212,7 @@ function normalizeOutline(o){
   if(o.structure) delete o.structure;
   o._rollingSummaries = o._rollingSummaries || [];
   o._factCard = o._factCard || { characters:{}, timeline:[], lastScene:'' };
+  o._timeAudit = o._timeAudit || {};
   if(Array.isArray(o.chapterPlans)){
     o.chapterPlans = o.chapterPlans.map(p => {
       if(typeof p === 'string') return { beatsText:'', emotionalArc:'', requiredEntities:[] };   // 旧字符串形态（原主线简述）视为旧数据，直接丢弃
@@ -170,7 +225,71 @@ function normalizeOutline(o){
   }
   if(o._mainlineLedger) delete o._mainlineLedger;   // 主线进度账随主线简述一并移除（旧存档静默清理）
   if(o._beatsHist) delete o._beatsHist;
+  // v3：正式区分“已定稿世界”“章节计划”“正文观测”。AI可以创造，但下游不得越权改写。
+  o._storyState = o._storyState || { schema:1, canon:{dictmasterAt:0,dictEnrichAt:0,principalAt:0,teacherAt:{}}, chapters:{}, current:{chapter:-1,time:'',location:'',characters:{},endingState:'',openThreads:[]} };
+  o._storyState.canon = o._storyState.canon || {dictmasterAt:0,dictEnrichAt:0,principalAt:0,teacherAt:{}};
+  o._storyState.chapters = o._storyState.chapters || {};
+  o._storyState.current = o._storyState.current || {chapter:-1,time:'',location:'',characters:{},endingState:'',openThreads:[]};
 }
+
+function storyState(){
+  const o=state.outline || (state.outline={});
+  normalizeOutline(o);
+  return o._storyState;
+}
+function storyStateCanonBlock(){
+  const c=storyState().canon||{};
+  return `【小说创作权限链｜系统状态】
+- 词典达人：创造并定稿全局核心设定；词典充实：在既有世界内继续创造扩建素材。
+- 校长：组织全书结构、阶段、标题和学校纪律；老师：组织自己负责章节的教案。
+- 正文AI：负责文学表达与现场执行，不重新定义世界、人物核心事实或章节主线。
+- 状态AI：只记录正文已经写成的事实，不拥有创作裁决权。
+- 核心原则：AI可以大胆创造；进入正式词典/规划/正文状态后，必须尊重其来源与权限，不得偷偷改写。
+- 当前链路：${c.dictmasterAt?'词典达人✓':'词典达人待完成'} → ${c.dictEnrichAt?'词典充实✓':'词典充实待完成'} → ${c.principalAt?'校长✓':'校长待完成'} → 老师分组备课 → 正文执笔。`;
+}
+function storyStateChapterBlock(i){
+  const ss=storyState(), prev=ss.chapters&&ss.chapters[i-1], cur=ss.chapters&&ss.chapters[i], lines=[];
+  if(prev&&prev.observed){
+    const p=prev.observed;
+    lines.push(`【上一章正文结算状态｜只读事实】第${i}章之后实际写成：`);
+    if(p.time) lines.push(`- 正文观测时间：${p.time}`);
+    if(p.location) lines.push(`- 正文观测地点：${p.location}`);
+    if(p.endingState) lines.push(`- 章末定格：${p.endingState}`);
+    if(p.characters&&Object.keys(p.characters).length) lines.push(`- 人物定格：${Object.entries(p.characters).slice(0,12).map(([n,v])=>`${n}=${v}`).join('；')}`);
+    if(Array.isArray(p.openThreads)&&p.openThreads.length) lines.push(`- 未决线索：${p.openThreads.slice(0,8).join('；')}`);
+    lines.push('- 这是正文实际状态，只能承接，不能为了符合计划而篡改。');
+  }
+  if(cur&&cur.planned){
+    const p=cur.planned;
+    lines.push(`【本章计划状态｜老师已决定】${p.from||p.to?`时间=${p.from||''}${p.to?` → ${p.to}`:''}`:''}${p.location?`；地点=${p.location}`:''}`);
+    if(p.endState) lines.push(`- 计划结束状态：${p.endState}`);
+  }
+  return lines.join('\n');
+}
+function commitPlannedChapterState(i, plan, source){
+  const ss=storyState(), p=ss.chapters[i]=ss.chapters[i]||{}, tr=_extractPlanTimeRange(plan);
+  p.planned={time:tr.raw||'',from:tr.from||'',to:tr.to||'',continuity:String(extractPlanField(plan,['连续性','承接'])||'').trim(),cast:String(extractPlanField(plan,['本章出场名单'])||'').trim(),location:String(extractPlanField(plan,['场景地点','主要地点','地点'])||'').trim(),endState:String(extractPlanField(plan,['收束状态','章末状态'])||'').trim()};
+  const prev=ss.chapters[i-1]&&ss.chapters[i-1].planned;
+  p.boundaryAudit = { rewind:false, note:'' };
+  if(prev && prev.to && p.from && _timeRewind(prev.to,p.from)){ p.boundaryAudit.rewind=true; p.boundaryAudit.note=`第${i}章计划起点「${p.from}」早于上一章计划终点「${prev.to}」`; }
+  p.plannedAt=Date.now(); p.plannedSource=source||'teacher'; return p.planned;
+}
+const CHAPTER_STATE_SYS = `你是长篇小说“正文状态结算器”，不是作者、不是编辑。只从已经写完的正文提取实际发生的状态，供下一章承接。
+规则：只记录正文明确发生/明确说出/直接可观察的事实；不确定就留空；不得脑补；不得修改教案、时间线、词典或剧情计划；只记录实际写成了什么。输出严格JSON：{"time":"","location":"","characters":{"人物":"章末状态"},"endingState":"","openThreads":[],"newFacts":[]}`;
+async function commitChapterObservedState(i,text){
+  if(!isLong()||!String(text||'').trim()) return null;
+  const o=state.outline||{}, plan=(o.chapterPlans||[])[i]||{}, ss=storyState();
+  const user=`【第${i+1}章教案】\n${String(plan.beatsText||'').slice(0,7000)}\n【本章正文】\n${String(text).slice(-40000)}`;
+  try{
+    const raw=unwrapAIResult(await callDeepSeek(CHAPTER_STATE_SYS,user,{maxTokens:1800,temperature:0.1,topP:0.2,signal:_abortCtl?.signal,taskKey:'chapterState'}));
+    const j=parseJson(raw)||{};
+    const obs={time:String(j.time||'').trim(),location:String(j.location||'').trim(),characters:j.characters&&typeof j.characters==='object'&&!Array.isArray(j.characters)?j.characters:{},endingState:String(j.endingState||'').trim(),openThreads:Array.isArray(j.openThreads)?j.openThreads.map(x=>String(x||'').trim()).filter(Boolean).slice(0,12):[],newFacts:Array.isArray(j.newFacts)?j.newFacts.map(x=>String(x||'').trim()).filter(Boolean).slice(0,12):[],source:'observed',ts:Date.now()};
+    ss.chapters[i]=ss.chapters[i]||{}; ss.chapters[i].observed=obs; ss.chapters[i].observedAt=Date.now();
+    ss.current={chapter:i,time:obs.time,location:obs.location,characters:obs.characters,endingState:obs.endingState,openThreads:obs.openThreads};
+    o._factCard=o._factCard||{}; o._factCard.storyStateLast=obs; persist(); return obs;
+  }catch(e){ return null; }
+}
+
 
 let charFilters = {q:'', idents:[], gender:'', ageMin:'', ageMax:''};
 let charTS = [];
@@ -1302,7 +1421,7 @@ L3 · 微观物理层 · 上一章末尾接力：开笔绝对物理起点（文�
 8. 正文长度严格以【篇幅体量】块为准，必须在第一次生成时即写足该块硬下限（v1.0.165：取消"不设上限"宽松口径，禁止写成未达下限的梗概式短场景）。
 9. 场景与节拍的自然衔接铁律：全章必须是一条连续流动的叙事线——每个节拍事件的结尾自然引出下一个节拍的开头；时间/地点/视点的切换必须给出过渡（时间词、空间移动、镜头焦点转移或因果钩子），禁止节拍间硬跳切、禁止把每个节拍写成孤立片段。节拍之外的衔接与过渡文字（非情节推进的铺垫/转场内容）同样是正文的组成部分，不是多余的填充。
 9b. 事件可达性/因果闭环锁（硬规则）：教案写了某个结果，不代表结果天然获得发生资格。任何重大事件在正文落地前，都必须能回答：①为什么现在发生；②为什么在这里发生；③为什么由这个人物经历/触发；④人物凭什么知道或注意到；⑤人物凭什么做到（能力、资源、工具、体力、权限等）；⑥前面哪一件已发生的事把它推到了这里。若六问中存在明显断点，不得直接跳到结果；优先沿教案允许的空间补出必要的线索、观察、行动与中间步骤，或调整事件达成方式。不得凭空新增关键人物、关键情报、关键道具、关键能力、关键地点或关键关系来填因果缺口。偶然事件可以使用，但必须有场景触发、概率依据或事后可理解的因果解释，不能把“巧合”当作万能补丁。
-10. 时间锚铁律（若标注了时间）：每段节拍标注的【时间】是本章时间承接的硬基准——正文各段落在哪个时点、就写那一时段的场景（光线/天色/动静/人物状态），上一章末尾落到哪个时点，本章开头就从那个时点或其自然延续接入，禁止时间跳跃开场、禁止把本章剧情安排到上一章主线的更早时点（同主线时点禁止倒退）。但时间一律靠场景细节自然体现，严禁出现在段首报时（"现在是/此刻是/此时是/当下是"）、严禁把时间锚或"第X天"字样原样照抄进正文；仅当时间确实跳跃时才用"翌日""三日后的黄昏"等自然过渡语融入叙述、不作注释式开场。跨支线（回忆/梦境/穿越）须按支线标签处理，并在文中显式体现进入与回归，不扰乱主线时间顺序。
+10. 时间合同铁律（若提供【本章时间合同】）：时间首先是内部状态，不是文学任务。必须以合同中的计划起点/终点为唯一主线时间真相；上一章计划终点是本章开场硬边界。若没有真实时间跳跃，严禁重新写“夜幕降临/黄昏到来/天刚蒙蒙亮/晨光初现”等把已经结束的时段重新开启的开场句。尤其上一章已经睡觉、休息、结束当日后，本章不能再次从“入夜/夜幕降临”开始。只有合同明确跨时跳跃时，才用最小必要的自然过桥表现流逝；时间默认隐性化，优先通过人物状态、行动节律、环境活动、声音与光线体现，不要为了证明时间正确而反复点名时段。时间词不得机械充当段落/章节开头；同一时间状态不要重复命名。跨支线（回忆/梦境/穿越）须显式标明进入与回归，但不得改变主线时间合同。
 11. 视角与上帝视角铁律（v1.0.180）：默认采用"受限视角"叙述——把"摄影机"约 90% 的时间锁在主角身上，只以主角能看到/听到/摸到/感知到的信息推进叙述；想表现他人内心，一律改从主角的观察与推断出发，禁止直接钻进路人/配角/反派的内心"读心"。仅在下列"合法时机"才允许切到"上帝/他人视角"：(a) 章/节/空行分隔之后（有明确视角分界可用）；(b) 与主角核心目标同场产生重大利益冲突的关键时刻（全章最多一两处，用完立即回到主角）；(c) 只"展示而不解释"的客观信息（写他人"做了什么/什么神态/什么动作"，而不是"心里想什么"）；(d) 背景/世界观/前史等设定信息必须"寄生"在角色的即时感官里（经耳朵听到、鼻子闻到、手触及）传达，禁止作者跳出来大段广播；(e) 悬念揭晓的时刻（对前期已埋设的不确定性的兑现）。禁止项：同一场景内多个角色的内心随意跳切（禁止"跳切"）；禁止用上帝视角提前揭示主角与读者尚不该知道的答案（禁止剥夺"侦探权"）；禁止借上帝视角长篇灌输背景设定（禁止"死神"式信息倾泻）；禁止让配角甚至路人获得与主角同等的心理戏、使情感焦点涣散（禁止稀释"主角感"）。【例外】仅当本章写作风格/配方中明确采用了「多视角群像」等视角切换类叙事技法时，才允许受控视角切换；此时仍须每个视角边界清晰、各视角有辨识度、切换有明确分界（章节/空行）、整体仍以主角视角为主轴。未明确选用该类技法时，上述限定视角保持硬性，禁止以"多视角/群像"为借口放松。
 
 【写作任务流程（v1.0.271 · 执行骨架：按此编号依次完成，前一阶段做完才进入下一阶段）】
@@ -3020,6 +3139,19 @@ function scState(){
 function scRetry(key){ return scState().retries[key] || 0; }
 function setScRetry(key, n){ scState().retries[key] = Math.max(0, Math.min(SCHOOL_RETRY_MAX, n||0)); persist(); }
 function scDone(key){ const sc = scState(); return !!(sc && sc.finished && sc.finished[key]); }
+function invalidateSchoolDownstream(from){
+  const sc=scState();
+  const order=['dictMaster','dictEnrich','principal'];
+  const idx=order.indexOf(from);
+  const reset=[];
+  if(from==='dictMaster') reset.push('dictEnrich','principal');
+  else if(from==='dictEnrich') reset.push('principal');
+  if(from==='dictMaster'||from==='dictEnrich'||from==='principal'){
+    const groups=schoolStageGroups(); groups.forEach((g,i)=>reset.push('t'+i));
+  }
+  reset.forEach(k=>{ delete sc.finished[k]; delete sc.failed[k]; delete sc.retries[k]; });
+  persist();
+}
 function scFailed(key){ const sc = scState(); return !scDone(key) && !!(sc && sc.failed && sc.failed[key]); }
 function scSetFailed(key, val){
   const sc = scState();
@@ -3384,7 +3516,7 @@ const PRINCIPAL_FOLDED_SYS = `你是一位身兼「校长」与「任课教师�
    直接为每一章备出标准化教案，一章不少！每章严格遵循六栏（冒号紧跟）：
    - 本章风格施工指令：把已裁决的【风格融合总纲】【风格施工规则】翻译为本章具体执行命令；明确场景/人物/节拍中的风格主次与表达方式，不得重新裁决风格冲突。
    - 功能与位置：本章在全书结构中的定位与必须完成的核心事件。
-   - 剧情时间落点：具体时间范围与起止时点（时/日/旬/月/季/年，非机械编号；跨章时间不回退，时长随剧情，不机械排满一天）。
+   - 剧情时间落点：具体时间范围与起止时点（时/日/旬/月/季/年，非机械编号；跨章时间不回退，时长随剧情，不机械排满一天）。**统一优先输出“起点=…；终点=…”作为机器可读锚点，再附一句自然语言解释；正文生成器以该起止状态为真相，不把时间标签当文学段落模板。**
    - 本章推进骨架：按所选【章节微拍】节奏，逐拍写清场景地点、在场人物、具体冲突与事件动作（建议5-8环节，密而留白，不套字数）。
    - 情绪走向与突出点：情绪弧度与章内高光张力点（示例锚点一两句话点到为止，禁代写成品段）。
    - 连续性：承上（接上一章末尾动作/定格）、启下（章末留钩子给下一章）。首章承上按【开篇引擎】执行。
@@ -3430,6 +3562,7 @@ function buildPrincipalUser(groups){
   let cand = null; try{ cand = selectedPolishCandidate && selectedPolishCandidate(); }catch(e){}
   if(cand && cand.name) lines.push(`【优化构想·所选方案】${String(cand.name).trim()}${cand.brief?('\n'+String(cand.brief).trim()):''}`);
   lines.push(`【全校章节数】${(o.chapters||[]).length || chapterCountVal() || '未知'} 章`);
+  lines.push(storyStateCanonBlock());
   const _opening = openingStrategyBrief(); if(_opening) lines.push(_opening);
   const _openingTask = openingStrategyExecutionCard(0); if(_openingTask) lines.push(_openingTask);
   const bc = currentBeatCfg ? currentBeatCfg() : null;
@@ -3462,6 +3595,8 @@ ${beatDetail}
 async function genPrincipal(btn, opts){
   if(!isLong()){ toast('仅长篇小说模式支持校长统筹'); return false; }
   const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能分组'); return false; }
+  if(!scDone('dictEnrich')){ toast('校长必须接收完整词典后再统筹，请先完成“词典充实”'); return false; }
+  invalidateSchoolDownstream('principal');
   scState();
   const folded = isSchoolFolded();
   const sys = folded ? PRINCIPAL_FOLDED_SYS : PRINCIPAL_SYS;
@@ -3480,6 +3615,7 @@ async function genPrincipal(btn, opts){
         }
         if(folded){
           const lessonRaw = extractSection(txt, '# 逐章教案', '') || extractSection(txt, '逐章教案', '') || txt;
+          storyState().canon.principalAt=Date.now();
           sc.principal = { ts:Date.now(), folded:true, groups: [{ gi:0, stage: groups[0].stage, first: groups[0].first, last: groups[0].last }], raw:String(txt), titles };
           sc.teachers = [{ gi:0, ts:Date.now(), raw:String(lessonRaw) }];
           scMark('principal', true);
@@ -3489,6 +3625,7 @@ async function genPrincipal(btn, opts){
           render();
           toast(`校长兼老师备课完成：守则 + ${titles.length||groups[0].last}章标题（已自动定稿）+ 逐章教案就绪！`);
         } else {
+          storyState().canon.principalAt=Date.now();
           sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles };
           scMark('principal', true);
           markAIDone('principal');
@@ -3516,7 +3653,7 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 【教学观·必须贯穿始终】
 你是老师，给的是"怎么教"的写作指令，不是"代写答案"。你立好本章的框架骨架——它告诉学生"这一章从哪里写到哪里、期间要走完哪些环节、每环节的落点是什么"，把框架缝隙铺得密一点、好带学生走完一整章；但你要给学生留出充分的创作空间，绝不要替学生把正文写出来，也不要给一整段成品范文让他照抄。示例只允许"点到为止"：一句话的情绪基调、一个代表性动作或氛围点，作示范方向即可，严禁成段示范散文、严禁把某段正文替你写掉。框架是用来"引学生写长、写完整"，不是"紧箍咒"——禁止强制字数配比或逐句规定把学生框死。
 【单源真理·微拍深度融合】：教案与微拍深度合一！请直接将【章节微拍】的节奏走向与高低起伏融入「本章推进骨架」各环节中，不再作为割裂体系，使教案成为正文 AI 执笔时的唯一航海图。
-【词典作为原材料备选库·按章需选用】：全量万物词典与词典充实设定是全书的「原材料资源池（Resource Pool）」。你在为本组各章备课时，应结合各章的具体推进骨架与场景冲突，自然调配适用的主要人物、次要配角、路人龙套、地名与专名，严禁在一章中机械遍历或为了“用完词典”而生硬塞入无关角色/设定。有戏份才出场，无戏份不强入。
+【词典作为原材料资源池·允许创造】：全量万物词典是全书已经批准的世界资源池。你应主动从中选择合适人物、地点、道具、规则来组织章节；当现有资源无法支撑一个自然的中间过程时，你可以在本章教案层创造新的中间事件、行动方式、场景细节或临时辅助人物，但不得偷偷改写既有核心事实。若一个新角色/新地点/新专名将持续出现、承担剧情功能或改变世界规则，应明确列入教案供后续阶段知道，而不是只在正文临时脑补。
 【骨架首拍预留接引弹性】：你备课时并未看到上一章落地后的字面正文细节。因此，每章教案「本章推进骨架」的第 ① 环节必须兼备"承上启下"的弹性——它既能吸纳上一章正文末尾可能遗留的短暂动作/对话余波，又能给出通向本章新事件的平滑过渡方向，绝不要把第 ① 环节写成突兀割裂的硬跳切。
 
 【首章开篇执行锁】如果本组包含第1章，必须把输入中的【第一章开篇任务卡】直接落实为第1章教案的第一环节；不得只写“按开篇引擎执行”。教案必须明确：首拍发生什么、读者先看到什么、前800字应建立什么、哪些内容不得提前倾倒。
@@ -3528,7 +3665,7 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 ① 对组内每一章产出一份教案，逐章齐全直到本组最后一章。每份教案固定字段（一个不少）：
 - 本章风格施工指令：严格继承校长已经裁决好的【风格融合总纲】【风格施工规则】；按本章场景/人物/节拍逐项翻译成可执行的表达指令。只负责‘怎么写’，不得改写本章剧情教案，也不得重新裁决风格冲突。
 - 功能与位置：本章在本组 / 全书中的角色
-- 剧情时间落点：给出本章正文发生的时间范围（如"从 第X日·清晨 到 第X日·傍晚"，或口语化"第二日清晨到次日傍晚，即第三日傍晚"）。三条松守则——仅防"多章时间倒退/重叠/换算错位"，绝不限制创作自由：
+- 剧情时间落点：给出本章正文发生的时间范围（如"从 第X日·清晨 到 第X日·傍晚"，或口语化"第二日清晨到次日傍晚，即第三日傍晚"）。**优先写成可解析的“起点=…；终点=…”形式，再补自然语言说明**，让后续正文生成器把它当作状态数据而不是文学提示。三条松守则——仅防"多章时间倒退/重叠/换算错位"，绝不限制创作自由：
   (1) 落点让读者与正文不再错位即可：尽量给"第X日·时段"的绝对日序；若你想用"次日/翌日/次晨"等相对词，顺手换算一句（如"次日=第三日"）即可，不必硬性禁用。
   (2) 跨章时间不回退：本章时间范围的起点不早于上一章教案「剧情时间落点」的终点（可同时刻紧接、不可往回倒）；保证整个故事的时间线整体向前即可。
   (3) 别为"覆盖完整"牺牲节奏：一章可以只写一小时的关键场景，可以写满一整天，也可以跨数天跳跃。时间跨度长短由剧情决定。
@@ -3562,6 +3699,7 @@ function buildTeacherUser(g, gi){
   const pr = (state.school && state.school.principal) || {};
   const o = state.outline || {};
   const lines = [];
+  lines.push(storyStateCanonBlock());
   lines.push(`【全校写作守则】\n${(pr.raw && extractSection(pr.raw,'全校写作守则','各组组级框架')) || '（校长未产出守则）'}`);
   lines.push(`【校长已裁决的风格融合总纲】\n${principalStyleExecutionExcerpt()}`);
   lines.push(`【本组组级框架（组${gi+1}·老师${gi+1}，第${g.first}-${g.last}章）】\n${(pr.raw && extractSection(pr.raw,'各组组级框架','全书章节标题总表')) || (pr.raw || '（校长未产出组级框架）')}`);
@@ -3570,6 +3708,7 @@ function buildTeacherUser(g, gi){
   if(_bc && _bc.label) lines.push(`【章节微拍（单源真理·内嵌骨架）】名称=${_bc.label}${_bc.desc?('；说明='+_bc.desc):''}${_bc.types?('；拍=('+_bc.types.map(t=>t.label).join('，')+')'):''}\n要求：将此微拍节奏直接融铸在每章教案的「本章推进骨架」中，形成单一执行标准的超级教案。`);
   lines.push('【全量词典（共享不切片）】\n' + scGlossaryBrief(7000));
   lines.push(`【本组《全书节拍》节选】\n${scGroupBeats(g, 8000)}`);
+  lines.push(`【前序正文状态（若存在）】\n${g.first>1 ? (storyStateChapterBlock(g.first-1) || '（暂无结算状态）') : '（首组，无前序正文）'}`);
   const _opening = openingStrategyBrief(); if(_opening) lines.push(_opening);
   if(g && g.first===1){ const _openingTask = principalOpeningTaskExcerpt() || openingStrategyExecutionCard(0); if(_openingTask) lines.push(_openingTask); }
   lines.push(prevGroupTailState(gi, g));
@@ -3615,6 +3754,7 @@ async function genTeacher(btn, gi){
   if(!isLong()){ toast('仅长篇小说模式支持老师施教'); return false; }
   const groups = schoolStageGroups(); const g = groups[gi];
   if(!g){ toast('未找到该分组'); return false; }
+  if(!scDone('dictEnrich')){ toast('老师备课需要先接收完整词典，请先完成“词典充实”'); return false; }
   if(!scDone('principal')){ toast('请先生成校长（分组/守则/组级框架）'); return false; }
   const key = 't'+gi;
   scState();
@@ -3627,6 +3767,7 @@ async function genTeacher(btn, gi){
         const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:temp, maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry(key, attempt); scRefreshBadge(btn,key); throw new Error('老师返回空'); }
         const sc = scState(); sc.teachers[gi] = { gi, ts:Date.now(), raw:String(txt) };
+        const plans = Array.isArray(state.outline.chapterPlans)?state.outline.chapterPlans:[]; for(let ci=g.first-1; ci<g.last; ci++){ if(plans[ci]) commitPlannedChapterState(ci, plans[ci], 'teacher'); } storyState().canon.teacherAt[gi]=Date.now(); persist();
         scMark(key, true); markAIDone(key);
         render();
         toast(`老师${gi+1}备课完成：第 ${g.first}-${g.last} 章共 ${g.last-g.first+1} 份教案已就绪`);
@@ -5420,34 +5561,19 @@ async function autoUpdateTimeAnchors(){
   if(!_timeAnchorsAutoOn()) return;
   startBgTask();
   try{
-    const o = state.outline; if(!o || !o._factCard) return;
-    const fc = o._factCard;
-    fc.timeAnchors = fc.timeAnchors || [];
-    const todo = state.chapters.map((c,i)=> (c && c.content && String(c.content).trim()) ? i : -1)
-      .filter(i => i>=0 && !fc.timeAnchors.some(t => t.ch===i && t.src==='ai')).sort((a,b)=>a-b);
-    let updated = 0;
-    try{
-      for(const i of todo){
-        const c = state.chapters[i];
-        const ext = await extractChapterEndTime(i, c.content);
-        if(ext.time){
-          fc.timeAnchors = fc.timeAnchors.filter(x => x.ch !== i);
-          fc.timeAnchors.push({ ch: i, time: ext.time, src: 'ai' });
-          const _gt = o._globalTimeline;
-          if(_gt && Array.isArray(_gt.chapters)){
-            const _gc = _gt.chapters.find(x => Number(x.index) === i);
-            if(_gc && String(_gc.to||'').trim() !== String(ext.time||'').trim()){
-              if(!('planTo' in _gc)) _gc.planTo = String(_gc.to||'');
-              _gc.to = ext.time; _gc.realEnd = true;
-            }
-          }
-          updated++;
-        }
-      }
-      if(updated) persist();
-      if(updated) toast(`时间锚：${updated} 章已更新真实收尾时点`);
-    }catch(e){ /* 静默失败，不阻塞章节生成 */ }
-  }finally{ endBgTask(); }
+    const o=state.outline; if(!o||!o._factCard) return;
+    const fc=o._factCard; fc.timeAnchors=fc.timeAnchors||[]; fc.timeAudit=fc.timeAudit||{};
+    const todo=state.chapters.map((c,i)=>(c&&c.content&&String(c.content).trim())?i:-1).filter(i=>i>=0&&!fc.timeAnchors.some(t=>t.ch===i&&t.src==='ai')).sort((a,b)=>a-b);
+    let updated=0;
+    for(const i of todo){
+      const ext=await extractChapterEndTime(i,state.chapters[i].content);
+      if(ext.time){ fc.timeAnchors=fc.timeAnchors.filter(x=>x.ch!==i); fc.timeAnchors.push({ch:i,time:ext.time,src:'ai',observed:true}); updated++; }
+      fc.timeAudit[i]=auditTimePresentation(i,state.chapters[i].content);
+    }
+    if(updated||todo.length) persist();
+    if(updated) toast(`时间审计：已记录 ${updated} 章正文收尾观测；规划时间线保持不变`);
+  }catch(e){ /* 静默失败，不阻塞章节生成 */ }
+  finally{ endBgTask(); }
 }
 
 function openSubplotBoard(){
@@ -5563,13 +5689,16 @@ function chapterSysBase(){
     .split('setup/rise/climax/hook').join(beatTypeKeys().join('/'))
     .split('setup / rise / climax / hook').join(keys)
     .split('四个事件').join(cnt + ' 段节拍事件');
-  const closedGate = `【正文作家·纯双注入执行铁律（闭卷创作规范）】
-你是长篇小说的「正文作家（学生）」，只专注文学笔力、对白交锋与生动场面铺展。你的所有创作信息**严格且仅来自于两大唯一源泉**，绝无任何第三方夹带：
-· 【两大唯一输入源泉】：
-  1. 来源一【老师指令 · 本章教案（最高任务航海图）】：这是本章文学创作的唯一蓝图。本章剧情时间落点、推进骨架环节、情绪走向曲线、核心出场人物与关键设定均已由老师在备课阶段统领提炼，你必须严格依此教案逐拍写透写足，不漏环节、不擅改主线。
-  2. 来源二【上一章末尾 · 物理接力（开笔物理现实基准）】：若本章带有「上一章末尾·物理接力」文字，该段文字为开笔的【绝对物理起点】。第一段必须从其收尾处的景象、动作、未完对话、人物处境或即时情绪自然起笔接续，做到"伤口对缝"，严禁另起炉灶或空降新场景。若为全书第 1 章，则依教案【开篇引擎】策略起笔。
+  const closedGate = `【正文作家·多层执行链（闭卷创作规范）】
+你是长篇小说的「正文作家（学生）」，只专注文学笔力、对白交锋与生动场面铺展。你的输入不是互相竞争的几份提示词，而是一条有权限层级的创作链：
+· L1【世界事实层】：词典达人 + 词典充实已经批准的世界、人物、地点、专名、规则；这是“世界是什么”，不得私自改写。
+· L2【学校规划层】：校长的全书方向/阶段结构 + 老师本章教案；这是“本章写什么”。老师可以在世界允许范围内设计中间过程，正文必须完成其核心任务。
+· L3【动态状态层】：上一章正文结算状态、物理接力、时间合同；这是“故事现在实际在哪里”。它优先决定开笔的真实状态，不能为了迎合教案而篡改上一章已经写成的事实。
+· L4【文学表达层】：风格、语言、节奏与场景表现；这是“怎么写”。
+任何层级都不能反向覆盖更高权威层。允许你发挥的是文学表达，以及教案允许的中间动作/细节；不允许你凭空重定义世界事实、时间状态或主线结果。
+· 【上一章末尾·物理接力】若存在，它是开笔的绝对物理起点：第一段必须从其收尾景象/动作/未完对话/人物处境自然续写。若为首章，则执行第一章开篇任务卡。
 · 【转场过桥律】：若上一章末尾的物理状态与本章教案「剧情时间落点」或骨架第①拍存在时空跨度（如上章深夜结束、教案要求次日清晨赶路），必须在首段顺势用 1~2 句自然笔法交代时空流转或环境位移，平滑过桥，严禁生硬瞬移，也严禁原地打转死扣上章不往前走。
-· 【核心主线防发散律】：正文作家不直接读取全量词典（词典已作为原材料库由任课老师在备课阶段统筹按需选入教案）。正文作家必须严格以老师教案中的核心人物名单与剧情骨架为准，严禁自行脑补未登场的主线核心人物或全局外部设定，严防提前剧透。
+· 【核心主线防发散律】：正文作家不重新设计主线。词典资源由老师按章调配；正文只使用老师点名的核心人物/设定。对于不影响主线的现场动作、对话、环境和一次性过场人物，可以自然发挥，但不能创造会持续影响后文的新核心事实。
 · 【场景过场路人与临时龙套点缀权】：正文作家可根据具体场景的叙事与氛围需要，自然点缀店小二、摊贩、茶客、更夫、传令兵、前台侍者等过场闲人。
   - 授权纪律：允许现场自然拟定称谓或名字，写一两句动作或对话即止，只作环境气氛烘托；
   - 边界红线：此类路人龙套只在当前场景出现一次，绝不推动主线，后续剧情不会再次登场，亦不计入词典，点到即收；严禁喧宾夺主或抢占主角/教案核心人物戏份。
@@ -6470,6 +6599,14 @@ function consistencyReportHtml(){
     else if(totalN) rows.push(`<div class="chk-item ok">✓ 全局时间表每章均有落点（${anchors.length} 锚 / ${totalN} 章）</div>`);
   }
   if(!totalN) rows.push(`<div class="chk-item warn">△ 尚无章节，无法做节拍/时间线自检</div>`);
+  const timeAudit = (o && o._timeAudit) || {};
+  const timeWarn = Object.values(timeAudit).filter(x=>x&&x.status==='warn');
+  if(timeWarn.length){
+    const sample = timeWarn.slice(0,3).map(x=>`第${Number(x.chapter)+1}章时间开场${x.openerCount}次`).join('；');
+    rows.push(`<div class="chk-item warn">△ 时间文学表现需复核（${timeWarn.length}章）：${esc(sample)}。时间合同仍以规划时间线为准。</div>`);
+  } else if(totalN && Object.keys(timeAudit).length){
+    rows.push(`<div class="chk-item ok">✓ 已完成正文时间表现审计：未发现明显的时间开场模板化/重复问题</div>`);
+  }
   const hasDup = dupGroups.length>0, hasBeat = noBeat.length>0, hasMono = /✗ 时间锚/.test(rows.join(''));
   rows.push(`<div class="chk-summary">累计：${hasDup||hasBeat||hasMono ? '发现问题，请按提示修正后重跑。' : '各项通过 ✓'}</div>`);
   return `<div class="chk-wrap">${rows.join('')}</div>`;
@@ -7232,6 +7369,9 @@ function factCardHtml(){
       <span>${esc(t.event||'')}</span>
     </div>
   `).join('');
+  const ss = (state.outline && state.outline._storyState) || {};
+  const obs = ss.current || {};
+  const obsChars = obs.characters && Object.entries(obs.characters).length ? Object.entries(obs.characters).slice(0,8).map(([n,v])=>`${esc(n)}=${esc(v)}`).join('；') : '暂无';
 
   return `<div class="card fc-card${state.fcCollapsed?' fc-collapsed':''}">
     <div class="fc-head" data-fc-fold role="button" tabindex="0" title="展开/收起">
@@ -7246,6 +7386,12 @@ function factCardHtml(){
       <div class="fc-sec">
         <div class="fc-sec-head">最近时间线</div>
         ${timeline || '<span class="muted">暂无时间线</span>'}
+      </div>
+      <div class="fc-sec">
+        <div class="fc-sec-head">正文结算状态（只读）</div>
+        <div class="fc-meta">第${Number(obs.chapter)>=0?Number(obs.chapter)+1:'—'}章 · 时间：${esc(obs.time||'—')} · 地点：${esc(obs.location||'—')}</div>
+        <div class="fc-meta">章末：${esc(obs.endingState||'—')}</div>
+        <div class="fc-meta">人物：${obsChars}</div>
       </div>
       <label class="fc-field"><span>最新场景</span><input type="text" id="fcLastScene" value="${esc(fc.lastScene||'')}" placeholder="最后一章结束时的场景/环境"></label>
       <p class="muted" style="font-size:11px">看板内容可由正文 AI 生成后自动更新，也可手动修正。</p>
@@ -7294,6 +7440,7 @@ function updateFactCardFromChapter(i, text){
   if(paras.length) fc.lastScene = paras[paras.length-1].slice(0, 120);
   fc.timeAnchors = fc.timeAnchors || [];
   fc.timeAnchors = fc.timeAnchors.filter(x => x.ch !== i);
+  auditTimePresentation(i, text);
   persist();
 }
 
@@ -10762,7 +10909,7 @@ const DICTMASTER_SYS = `你是一位资深全题材长篇「词典达人」（�
 【输出格式】严格只输出如下 JSON（不要解释、不要 markdown 代码块）：
 {"characters":[{"name":"","identity":"","age":"","gender":"","appearance":"","hobby":"","relation":"","trait":"","catchphrase":"口头禅"}],"relationshipTable":[{"a":"名字","b":"名字","relation":"关系","note":"一句话"}],"places":[{"name":"","type":"","note":""}],"placeContacts":[{"from":"地名","to":"地名","relation":"联系","note":""}],"propernouns":[{"name":"","note":""}],"properContacts":[{"from":"专名","to":"专名","relation":"联系","note":""}],"worldRules":[{"cat":"规则类别","scope":"适用对象/范围","rule":"具体规则（写清运作法则与违反后果/代价）"}],"summary":"一句话词典架构亮点"}
 【要点】
-- characters 每位必须给满 9 维且非空（age/gender 无明确值填"未知"；relation 简明扼要≤20字；catchphrase 填反复挂在嘴边的口头语）。
+- characters 优先把人物设计完整，但不是为了填表而发明口头禅/爱好：identity、trait 应尽量明确；age/gender/appearance/hobby/relation/catchphrase 若对人物没有实际价值可写“未知/无”。relation 简明扼要≤20字。
 - places 必须含 type（类型）+ note（说明）。
 - propernouns 必须含 note（功能与限制）。
 - worldRules 必须含 cat（类别）+ scope（范围）+ rule（规则与代价），规则必须贴合题材社会性质，杜绝口号，可执行可校验。`;
@@ -10779,10 +10926,9 @@ function validateDictMasterOutput(j){
   if(!Array.isArray(j.characters) || !j.characters.length) return '人物卡 characters 为空（应至少 1 位）';
   for(const c of j.characters){
     if(!c || !String(c.name||'').trim()) return '存在人物缺少 name';
-    const dims = {identity:c.identity, appearance:c.appearance, hobby:c.hobby, relation:c.relation, trait:c.trait, catchphrase:c.catchphrase};
-    for(const [kk,vv] of Object.entries(dims)){ if(!String(vv||'').trim()) return `人物「${String(c.name).trim()||'?'}」缺字段 ${kk}（9 维须填满）`; }
-    if(!String(c.age||'').trim()) return `人物「${String(c.name).trim()||'?'}」缺字段 age（可写未知）`;
-    if(!String(c.gender||'').trim()) return `人物「${String(c.name).trim()||'?'}」缺字段 gender（可写未知）`;
+    const must = {identity:c.identity, trait:c.trait};
+    for(const [kk,vv] of Object.entries(must)){ if(!String(vv||'').trim()) return `人物「${String(c.name).trim()||'?'}」缺字段 ${kk}`; }
+    for(const kk of ['age','gender','appearance','hobby','relation','catchphrase']){ if(!String(c[kk]||'').trim()) c[kk]='未知'; }
     if(String(c.relation||'').trim().length > 40) return `人物「${String(c.name).trim()||'?'}」relation 超过 40 字，疑似把多组关系堆进摘要：只写 ≤20字 的一句话（如「主角的青梅」），多组关系的逐条明细放 relationshipTable`;
   }
   if(!Array.isArray(j.relationshipTable)) return '缺少 relationshipTable 数组';
@@ -10811,6 +10957,7 @@ async function genDictMaster(btn){
   const st = $('#dictmasterStatus');
   if(st){ st.className='status'; st.textContent=''; }
   if(!canRunAI('dictmaster')){ toast('请先完成上游：②优化构想并选中一个方案'); return false; }
+  invalidateSchoolDownstream('dictMaster');
   if(!selectedPolishCandidate()){ toast('先选择一个优化方案'); return false; }
   state.originalIdeaSnapshot = String(state.idea || '').trim() || state.originalIdeaSnapshot;
   markAIRunning('dictmaster');
@@ -10865,6 +11012,7 @@ async function genDictMaster(btn){
     state.dictmasterHistory.unshift(result);
     if(state.dictmasterHistory.length > 6) state.dictmasterHistory = state.dictmasterHistory.slice(0, 6);   // 第 7 次最旧被挤出
     state.dictmasterRan = true;
+    storyState().canon.dictmasterAt=Date.now();
     persist(); render();
     markAIDone('dictmaster');
     toast(`万物词典已生成：人物 ${result.nChar} 位 · 地名 ${result.nPlace} · 专名 ${result.nProp} · 关系表 ${result.nRel} 条 · 世界观规则 ${result.nWR} 条（已并入万物词典）`);
@@ -11054,10 +11202,11 @@ const DICT_ENRICH_SYS = `你是一位资深全题材小说「词典充实师」�
 你的任务是：**严格紧扣所选构想的题材类型与世界观基调，在现有词典骨架之上，主动提炼并增补更细腻生动的感官描写特征、场景氛围标签、使用禁忌/代价 以及 各行各业的鲜活环境氛围龙套**——为后续正文写作提供扎实具象的细节抓手，杜绝空洞干瘪与概念化堆砌。
 
 【四大产出分档与标准】
-1. 主要人物增补（0~2位）：仅当全书主线或核心阵营确有必要补充重量级枢纽人物时提出。必须提供：身份定位、外貌感官特征（视觉/声音/体貌标签）、性格要点、口癖习惯、核心动机。
-2. 次要配角增补（3~8位）：补充围绕主角或主线冲突展开的关键关联人物（如亲友、同事、下属、盟友、关键知情人、对手爪牙等，根据题材自洽）。提供：身份、关系、鲜明外貌/气场、性格要点、正文描写标签。
-3. 关键地名/专名增补：补充主线推进中必经的关键场景、重要道具/装备/技术/组织/概念等。提供：类型、感官氛围特征（光线/气味/声音/质感）、使用禁忌/生效限制/代价、正文描写词。
-4. 生活气路人/氛围龙套（建议≥全书章数的1/3）：根据小说时代背景与场景环境，补充具有生活真实感与环境特色的各色过场人物（如服务人员、前台、司机、巡查员、街头人员、哨兵、店员、技术员等）。提供：身份、登场场景、一句典型口头台词或职业动作习惯、正文点缀标签。必须严格吻合小说时代背景与世界观，严禁出现时代或题材穿帮。
+1. 核心人物扩建：当主线、核心阵营或人物关系网络存在真实缺口时，可主动创造主要人物/关键配角，数量不设硬指标，重点说明其存在价值、动机、关系与可持续特征。
+2. 次要配角扩建：可主动创造亲友、同事、下属、盟友、知情人、对手爪牙、行业人物等，数量不设硬指标，不为凑数造人。
+3. 关键地名/专名扩建：主动补足未来剧情可能需要的关键场景、道具、装备、技术、组织、制度、概念等，优先补足能支撑剧情、人物生活和世界运转的材料。
+4. 生活气路人/氛围龙套：可建立丰富的生活素材池，但不设置“每章必须多少人”的数量KPI；只有能增强时代感、职业感、地域感或场景真实度时才值得收录。
+5. **创作事实原则**：本阶段产生并正式并入词典的条目，就是已批准的小说创作事实。不是用户原文≠不可信；可以大胆想象，但必须自洽，且不得偷偷改写已定稿实体。
 
 【职责边界 / 硬性约束】
 1. 【题材与世界观深度契合】：必须严格遵从【优化构想】确立的时代背景、技术/魔法水平及社会形态，用词与语感必须完全契合该题材（如科幻小说体现科技感，现代题材体现当代生活气息，历史/幻想小说体现时代沉浸感）。
@@ -11080,6 +11229,7 @@ const DICT_ENRICH_SYS = `你是一位资深全题材小说「词典充实师」�
 function buildDictEnrichUser(){
   const o = state.outline || {};
   const parts = [];
+  parts.push(storyStateCanonBlock());
 
   // ==========================================
   // 1. 优化构想·用户所选方案完整内容
@@ -11669,6 +11819,7 @@ async function genDictEnrich(btn, opts){
     const n = mergeDictEnrich(parsed);
     state.outline._dictEnrichText = txt;   // 仅存档（导入/导出时仍保留原文兜底），UI 不再直接渲染
     state.outline._dictEnrichSummary = buildDictEnrichSummary(parsed);
+    storyState().canon.dictEnrichAt=Date.now();
     state.dictEnrichCounts = { c:n.c, w:n.w, p:n.p, k:n.k, main:n.main||0, support:n.support||0, ts:Date.now() };
     persist(); render(); markAIDone('dictEnrich');
     if(stream) stream.style.display='none';
@@ -12141,6 +12292,9 @@ ${_lesson}
 ——— 本章超级教案结束 ———`);
     parts.push(`【正文执行锁】风格冲突已在校长层解决、场景化施工已在老师层解决；正文阶段禁止再次进行风格方案选择。你只需把‘本章风格施工指令’稳定落实到教案规定的事件中：同一事件可以换不同文学写法，但不得改变事件本身、不得新增一套风格体系。`);
 
+    const _timeContract = _timeContractForChapter(i);
+    if(_timeContract) parts.push(_timeContract);
+
     const microParts = [];
     if(i > 0){
       const _tail = chapterTailExcerpt(i, 480);
@@ -12195,9 +12349,12 @@ ${_tail}
       if(rolling) parts.push(`【前文滚动摘要】\n${rolling}`);
     }
     const hasT = String(chap.title||'').trim();
+    const _timeContract = _timeContractForChapter(i);
+    if(_timeContract) parts.push(_timeContract);
     parts.push(`【本章任务】第 ${curN} 章${hasT ? `《${chap.title}》` : ''}`);
   }
 
+  if(isLong()){ commitPlannedChapterState(i, (state.outline&&state.outline.chapterPlans||[])[i]||{}, 'teacher-plan'); const _ssb=storyStateChapterBlock(i); if(_ssb) parts.push(`【小说状态链｜上一章实际结算 + 本章计划】\n${_ssb}`); }
   parts.push(`【事件可达性硬门】写每个重大事件前，内部快速核对：前置状态是否已成立？触发线索是否存在？人物为什么会采取这一步？信息/道具/能力从哪里来？地点与时间是否可达？本事件是否会让前后因果断裂？若任一关键项缺失，不得用“突然/恰好/偶然”直接补过去。`);
   parts.push(USER_PRIO_BILL);
   if(opt.advice) parts.push(`【人工干预要求（用户指定 · 第二优先）】\n${opt.advice}`);
@@ -12916,6 +13073,7 @@ function openComparePanel(i, a, b){
 function closeComparePanel(){ const p=$('#cmpPanel'); if(p) p.remove(); }
 
 async function genOneChapter(i, btn, opt={}){
+  if(isLong()){ const pp=(state.outline&&state.outline.chapterPlans||[])[i]||{}; const ps=commitPlannedChapterState(i,pp,'teacher-plan'); if(ps&&state.outline._storyState.chapters[i]&&state.outline._storyState.chapters[i].boundaryAudit?.rewind){ toast(state.outline._storyState.chapters[i].boundaryAudit.note+'；已阻止生成，请先修正教案时间。'); return false; } }
   chState[i] = 'generating'; state.generating = true; patchChapter(i);
   if(btn) busy(btn,true,'生成中…');
   const stopParent = btn && btn.closest('.btn-row') ? btn.closest('.btn-row') : null;
@@ -12956,6 +13114,7 @@ async function genOneChapter(i, btn, opt={}){
     snapshotChapterVersion(i);
     state.chapters[i].content = txt;
     updateFactCardFromChapter(i, txt);
+    if(isLong()) await commitChapterObservedState(i, txt);
     invalidateChapterMemory(i);
     chState[i] = 'done';
     if(!isLong()) state.chapters[i].confirmed = false;
@@ -12986,6 +13145,7 @@ async function genTwoChapters(pairStart){
     const txt = await writeOneChapterContent(idx, buildChapterUser(idx), null, onStream);
     snapshotChapterVersion(idx);
     state.chapters[idx].content = txt;
+    updateFactCardFromChapter(idx, txt); if(isLong()) await commitChapterObservedState(idx, txt);
     invalidateChapterMemory(idx);
   }
   generateRollingSummaries().catch(()=>{});
@@ -12997,6 +13157,7 @@ async function genNChapters(start, n){
   try{
   for(let k=0; k<n; k++){
     const idx = start + k;
+    if(isLong()){ const pp=(state.outline&&state.outline.chapterPlans||[])[idx]||{}; const ps=commitPlannedChapterState(idx,pp,'teacher-plan'); if(ps&&state.outline._storyState.chapters[idx]&&state.outline._storyState.chapters[idx].boundaryAudit?.rewind) throw new Error(state.outline._storyState.chapters[idx].boundaryAudit.note+'；请修正教案时间'); }
     if(!isLong() && state.chapters[idx] && state.chapters[idx].content && String(state.chapters[idx].content).trim() && state.chapters[idx].confirmed) continue;
     let attempt = 0;
     let txt = '', finishReason = '';
@@ -13041,6 +13202,7 @@ async function genNChapters(start, n){
         state._chapterRetryFix = '';
         persist();
         updateFactCardFromChapter(idx, content);
+        if(isLong()) await commitChapterObservedState(idx, content);
         invalidateChapterMemory(idx);
         chState[idx] = 'done';
         patchChapter(idx);
@@ -13096,6 +13258,7 @@ async function continueAndFinalizeChapter(i, sourceNote){
     snapshotChapterVersion(i);
     state.chapters[i].content = content;
     updateFactCardFromChapter(i, content);
+    if(isLong()) await commitChapterObservedState(i, content);
     invalidateChapterMemory(i);
     chState[i] = 'done';
     persist(); patchChapter(i); renderNarrativeEngineMenu();
