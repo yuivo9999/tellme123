@@ -3289,9 +3289,6 @@ function scHealState(){
   sc.stale = sc.stale || {};
   if(sc.principal && sc.principal.raw && String(sc.principal.raw).trim() && !sc.stale.principal){
     sc.finished.principal = true;
-    if(isSchoolFolded() || sc.principal.folded){
-      if(!sc.stale.t0){ sc.finished.t0 = true; sc.finished.teacher = true; }
-    }
   }
   if(Array.isArray(sc.teachers)){
     sc.teachers.forEach((t, i)=>{
@@ -3356,7 +3353,6 @@ function getSchoolStepStatus(key){
   const sc = scState();
   const run = state._schoolRunning;
   const groups = schoolStageGroups();
-  const folded = isSchoolFolded();
 
   let isDone = false;
   if(key === 'dictMaster') isDone = scDone('dictMaster');
@@ -3364,9 +3360,7 @@ function getSchoolStepStatus(key){
   else if(key === 'principal') isDone = scDone('principal');
   else if(key === 'teacher'){
     if(scDone('teacher')) isDone = true;
-    else if(folded){
-      isDone = !!(sc.teachers && sc.teachers[0] && sc.teachers[0].raw && String(sc.teachers[0].raw).trim());
-    } else {
+    else {
       isDone = groups.length > 0 && groups.every((g,i)=>scDone('t'+i));
     }
   }
@@ -3410,35 +3404,22 @@ function schoolStepBtn(key, icon, label, title){
   return `<button type="button" class="${cls}" data-scp-step="${key}" title="${esc(title||'')}">${icon}<span class="sc-lab">${esc(label)}</span><i class="sc-tick">${st.isDone?'✓':(st.isRunning?'⏳':(st.isFailed?'✕':''))}</i>${scBadge(key)}</button>`;
 }
 function schoolTeacherBtn(g, i){
-  const folded = isSchoolFolded();
+  const groups = schoolStageGroups();
+  const label = groups.length > 1 ? `老师${i+1}` : '老师';
   const key = 't'+i, done = scDone(key);
   const nCh = g.last - g.first + 1;
   const sc = g.stage || `第${i+1}组`;
   const range = `${g.first}-${g.last} 章`;
-  if(folded){
-    return `<div class="sc-teacher-card ${done?'done':'todo'} sc-teacher-folded">
-      <div class="sc-tc-h">
-        <span class="sc-tc-no">🎓 老师</span>
-        <span class="sc-tc-stage">${esc(sc)} <small class="muted">(1-20章·单老师负责制)</small></span>
-        <span class="sc-tc-ch">${esc(range)} (${nCh}章)</span>
-        <span class="sc-tc-st ${done?'done':'todo'}">${done?'✓ 逐章教案已备':'⏳ 待备课'}</span>
-      </div>
-      <div class="sc-tc-b">
-        <button type="button" class="sc-step sc-teacher ${done?'done':''}" data-scp-step="principal" title="全书≤20章：单老师负责制，直接出齐守则、标题与逐章教案">${done?'重新备课':'🎓 老师备课'}${scBadge('principal')}</button>
-        <button type="button" class="sc-plan-btn" data-scp-plan="0" title="${done?'查看逐章教案（六栏目预览 / 原始稿切换）':'尚未生成，请先点击备课'}">📖 读教案</button>
-      </div>
-    </div>`;
-  }
   return `<div class="sc-teacher-card ${done?'done':'todo'}">
     <div class="sc-tc-h">
-      <span class="sc-tc-no">🎓 老师${i+1}</span>
+      <span class="sc-tc-no">🎓 ${label}</span>
       <span class="sc-tc-stage">${esc(sc)}</span>
       <span class="sc-tc-ch">${esc(range)} (${nCh}章)</span>
       <span class="sc-tc-st ${done?'done':'todo'}">${done?'✓ 已备':'⏳ 未备'}</span>
     </div>
     <div class="sc-tc-b">
-      <button type="button" class="sc-step sc-teacher ${done?'done':''}" data-scp-step="teacher" data-scp-teacher="${i}" title="老师${i+1}：负责第 ${g.first}-${g.last} 章（${esc(g.stage||'')}），一次备完全组逐章教案">🎓 老师${i+1}备课${scBadge(key)}</button>
-      <button type="button" class="sc-plan-btn" data-scp-plan="${i}" title="${done?('查看老师'+ (i+1) +'本组教案（预览 / 原始稿切换）'):'该组教案尚未生成，先生成后才能阅读'}">📖 读教案</button>
+      <button type="button" class="sc-step sc-teacher ${done?'done':''}" data-scp-step="teacherSingle" data-scp-teacher="${i}" title="${label}：负责第 ${g.first}-${g.last} 章（${esc(g.stage||'')}），一次备完全组逐章教案">${done?'重新备课':`🎓 ${label}备课`}${scBadge(key)}</button>
+      <button type="button" class="sc-plan-btn" data-scp-plan="${i}" title="${done?('查看'+ label +'本组教案（预览 / 原始稿切换）'):'该组教案尚未生成，先生成后才能阅读'}">📖 读教案</button>
     </div>
   </div>`;
 }
@@ -3489,8 +3470,7 @@ function scAllGroupsBeats(groups, maxChar){
   return s;
 }
 function isSchoolFolded(){
-  const g = schoolStageGroups();
-  return g.length === 1;
+  return false;
 }
 function extractSection(txt, from, until){
   const s = String(txt||'');
@@ -3763,16 +3743,10 @@ ${beatDetail}
   }
   lines.push('【写作风格/配方】\n' + scStyleBrief());
   lines.push('【全量万物词典·共享不切片】\n' + scGlossaryBrief(7000));
-  if(isSchoolFolded()){
-    lines.push('【篇幅说明】当前全书篇幅 ≤20 章，三层架构折叠为单层：由校长兼任课教师一人直接持全部材料备齐全书每一章教案。');
-    lines.push('\n【对应的《全书节拍》】\n' + scAllGroupsBeats(groups, 10000));
-    lines.push('\n请按输出契约一次性出齐【全校写作守则】【全书章节标题总表】【逐章教案】三大成果（全书每一章教案均齐全），只给纯文本 Markdown。');
-  } else {
-    lines.push('【既有《全书节拍》· 阶段优先分组】');
-    groups.forEach((g,i)=>{ lines.push(`组${i+1}·老师${i+1}（第${g.first}-${g.last}章${g.stage?('·'+g.stage):''}）`); });
-    lines.push('\n【各组对应的《全书节拍》节选】\n' + scAllGroupsBeats(groups, 10000));
-    lines.push('\n请按输出契约产出【全校写作守则】【各组组级框架】【全书章节标题总表】三段（逐组齐全），只给纯文本 Markdown。');
-  }
+  lines.push('【既有《全书节拍》· 阶段优先分组】');
+  groups.forEach((g,i)=>{ lines.push(`组${i+1}·老师${i+1}（第${g.first}-${g.last}章${g.stage?('·'+g.stage):''}）`); });
+  lines.push('\n【各组对应的《全书节拍》节选】\n' + scAllGroupsBeats(groups, 10000));
+  lines.push('\n请按输出契约产出【全校写作守则】【各组组级框架】【全书章节标题总表】三段（逐组齐全），只给纯文本 Markdown。');
   return lines.join('\n\n');
 }
 async function genPrincipal(btn, opts){
@@ -3781,9 +3755,8 @@ async function genPrincipal(btn, opts){
   if(!scDone('dictEnrich')){ toast('校长必须接收完整词典后再统筹，请先完成“词典充实”'); return false; }
   invalidateSchoolDownstream('principal');
   scState();
-  const folded = isSchoolFolded();
-  const sys = folded ? PRINCIPAL_FOLDED_SYS : PRINCIPAL_SYS;
-  markAIRunning('principal'); if(btn) busy(btn, true, folded ? '校长兼任课教师备课中…' : '校长统筹中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
+  const sys = PRINCIPAL_SYS;
+  markAIRunning('principal'); if(btn) busy(btn, true, '校长统筹中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
   try{
     const spec = resolveActiveSpec('principal');
     const temp = (spec && spec.principalTemp != null) ? spec.principalTemp : 0.4;
@@ -3796,30 +3769,13 @@ async function genPrincipal(btn, opts){
         if(titles && titles.length){
           doApplyTitles(titles, { silent: true });
         }
-        if(folded){
-          const lessonRaw = extractSection(txt, '# 逐章教案', '') || extractSection(txt, '逐章教案', '') || txt;
-          storyState().canon.principalAt=Date.now(); storyState().versions.principal=Number(storyState().versions.principal||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1;
-          delete sc.stale.principal;
-          delete sc.stale.t0;
-          sc.principal = { ts:Date.now(), folded:true, groups: [{ gi:0, stage: groups[0].stage, first: groups[0].first, last: groups[0].last }], raw:String(txt), titles }; storyState().docs=storyState().docs||{}; storyState().docs.schoolPlan={version:storyState().versions.principal,source:'principal',ts:Date.now(),groups:sc.principal.groups,titles};
-          sc.teachers = [{ gi:0, ts:Date.now(), raw:String(lessonRaw) }];
-          // 折叠学校模式由校长兼任老师：必须在这里正式落库机器章节卡，否则正文会看到“没有当前版本机器教案卡”。
-          commitTeacherChapterCards(String(lessonRaw), groups[0], 0);
-          scMark('principal', true);
-          scMark('t0', true);
-          markAIDone('principal');
-          markAIDone('t0');
-          render();
-          toast(`校长兼老师备课完成：守则 + ${titles.length||groups[0].last}章标题（已自动定稿）+ 逐章教案就绪！`);
-        } else {
-          storyState().canon.principalAt=Date.now(); storyState().versions.principal=Number(storyState().versions.principal||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1;
-          delete sc.stale.principal;
-          sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles }; storyState().docs=storyState().docs||{}; storyState().docs.schoolPlan={version:storyState().versions.principal,source:'principal',ts:Date.now(),groups:sc.principal.groups,titles};
-          scMark('principal', true);
-          markAIDone('principal');
-          render();
-          toast(`校长统筹完成：${groups.length} 位老师分组 + 全校守则 + 组级框架 + ${titles.length}章标题已自动定稿应用！`);
-        }
+        storyState().canon.principalAt=Date.now(); storyState().versions.principal=Number(storyState().versions.principal||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1;
+        delete sc.stale.principal;
+        sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles }; storyState().docs=storyState().docs||{}; storyState().docs.schoolPlan={version:storyState().versions.principal,source:'principal',ts:Date.now(),groups:sc.principal.groups,titles};
+        scMark('principal', true);
+        markAIDone('principal');
+        render();
+        toast(`校长统筹完成：${groups.length} 位老师分组 + 全校守则 + 组级框架 + ${titles.length}章标题已自动定稿应用！`);
         playDoneSound('single');
         return true;
       }catch(e){
@@ -4063,7 +4019,6 @@ function refreshSchoolProgressUi(){
 async function genSchoolAll(btn){
   if(genBusy()){ toast('已有生成任务进行中，请稍候'); return; }
   const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能一键开学'); return; }
-  const folded = isSchoolFolded();
   const steps = [
     { key:'dictMaster', label:'词典达人', run:()=> genDictMaster(null) },
     { key:'dictEnrich', label:'词典充实', run:()=> genDictEnrich(null,{force:true}) },
@@ -4072,24 +4027,16 @@ async function genSchoolAll(btn){
       key:'teacher',
       label:'老师',
       run: async ()=>{
-        if(folded){
-          const sc = scState();
-          if(sc.teachers && sc.teachers[0] && sc.teachers[0].raw && String(sc.teachers[0].raw).trim()){
-            return true;
-          }
-          return await genPrincipal(null);
-        } else {
-          let allT = true;
-          for(let j=0; j<groups.length; j++){
-            if(scDone('t'+j)) continue;
-            state._schoolRunning = { activeKey:'teacher', teacherIndex:j, stepIndex:3, totalSteps:4, label:`老师${j+1}备课` };
-            refreshSchoolProgressUi();
-            const okT = await genTeacher(null, j);
-            if(!okT){ allT = false; break; }
-            scMark('t'+j, true);
-          }
-          return allT;
+        let allT = true;
+        for(let j=0; j<groups.length; j++){
+          if(scDone('t'+j)) continue;
+          state._schoolRunning = { activeKey:'teacher', teacherIndex:j, stepIndex:3, totalSteps:4, label: groups.length > 1 ? `老师${j+1}备课` : '老师备课' };
+          refreshSchoolProgressUi();
+          const okT = await genTeacher(null, j);
+          if(!okT){ allT = false; break; }
+          scMark('t'+j, true);
         }
+        return allT;
       }
     }
   ];
@@ -4215,25 +4162,18 @@ function bindSchoolSteps(){
       if(step === 'teacher' || step === 'teacherAll'){
         const groups = schoolStageGroups();
         if(!groups.length){ toast('请先填写章节数，才能备课'); return; }
-        const folded = isSchoolFolded();
         scSetFailed('teacher', false);
         state._schoolRunning = { activeKey:'teacher', stepIndex:3, totalSteps:4, label:'老师' };
         refreshSchoolProgressUi();
         try {
-          if(folded){
-            const ok = await nailRetry('principal', '老师备课', ()=> genPrincipal(null), btn);
-            if(ok){ scMark('teacher', true); playDoneSound('single'); }
-            else { scSetFailed('teacher', true); }
-          } else {
-            let allOk = true;
-            for(let i=0; i<groups.length; i++){
-              if(scDone('t'+i)) continue;
-              const ok = await genTeacher(null, i);
-              if(!ok){ allOk = false; scSetFailed('teacher', true); break; }
-              scMark('t'+i, true);
-            }
-            if(allOk){ scMark('teacher', true); playDoneSound('single'); }
+          let allOk = true;
+          for(let i=0; i<groups.length; i++){
+            if(scDone('t'+i)) continue;
+            const ok = await genTeacher(null, i);
+            if(!ok){ allOk = false; scSetFailed('teacher', true); break; }
+            scMark('t'+i, true);
           }
+          if(allOk){ scMark('teacher', true); playDoneSound('single'); }
         } catch(e){
           scSetFailed('teacher', true);
         } finally {
@@ -4329,10 +4269,11 @@ function openSchoolPlanReader(gi, jumpCh){
   _planCUR_GI = gi; _planCUR_VIEW = 'raw';
   const n = g.last - g.first + 1;
   const ov = document.createElement('div'); ov.className='gs-overlay';
-  const isFolded = isSchoolFolded();
-  const titleText = isFolded ? '🎓 老师 · 全书教案 (1-20章·单老师负责制)' : `🎓 老师${gi+1} · 本组教案`;
+  const groups = schoolStageGroups();
+  const label = groups.length > 1 ? `老师${gi+1}` : '老师';
+  const titleText = `🎓 ${label} · 本组教案`;
   ov.innerHTML = `<div class="gs-modal school-plan-modal">
-    <div class="gs-modal-head"><b>${titleText}</b><span class="sc-plan-meta muted">${isFolded ? '单老师负责制直出' : `段「${esc(g.stage||'')}」`} · 第 ${g.first}-${g.last} 章 · ${n} 章</span></div>
+    <div class="gs-modal-head"><b>${titleText}</b><span class="sc-plan-meta muted">${g.stage ? `段「${esc(g.stage)}」 · ` : ''}第 ${g.first}-${g.last} 章 · ${n} 章</span></div>
     <div class="sc-plan-tool">
       <span class="sc-plan-tgl" id="scPlanTgl">
         <span class="sp-tgl-itm on" data-v="raw">原稿纯文本</span><span class="sp-tgl-itm" data-v="card">栏目结构化</span>
@@ -4351,11 +4292,12 @@ function openSchoolPlanReader(gi, jumpCh){
   if(jumpCh){ setTimeout(()=>{ const el = ov.querySelector('#planCh-'+jumpCh); if(el){ el.style.transition='box-shadow .5s,background .5s'; el.style.boxShadow='0 0 0 2px var(--accent)'; el.style.background='color-mix(in srgb, var(--accent) 12%, transparent)'; setTimeout(()=>{ el.style.boxShadow=''; el.style.background=''; },1600); el.scrollIntoView({block:'center',behavior:'smooth'}); } },80); }
 }
 function renderSchoolPlanBody(ov, gi, jumpCh){
-  const g = schoolStageGroups()[gi];
+  const groups = schoolStageGroups();
+  const g = groups[gi];
   const sc = scState();
   const t = sc.teachers && sc.teachers[gi];
-  const isFolded = isSchoolFolded();
   const body = ov.querySelector('#scPlanBody'); if(!body || !g) return;
+  const label = groups.length > 1 ? `老师${gi+1}` : '老师';
 
   if(!t || !t.raw || !String(t.raw).trim()){
     body.innerHTML = `
@@ -4363,10 +4305,10 @@ function renderSchoolPlanBody(ov, gi, jumpCh){
         <span style="font-size:38px;opacity:0.85">📖</span>
         <h4 style="margin:0;font-size:16px;font-weight:750;color:var(--txt)">本组逐章教案尚未生成</h4>
         <p style="margin:0;font-size:13px;color:var(--muted);max-width:380px;line-height:1.6">
-          ${isFolded ? `全书共 ${g.last} 章（≤20章折叠模式）。校长兼任课教师可一次性统筹出齐守则、章节标题与逐章教案。` : `本组负责第 ${g.first} 至 ${g.last} 章（共 ${g.last - g.first + 1} 章${g.stage ? ' · ' + g.stage : ''}）。点击下方按钮开始备课。`}
+          本组负责第 ${g.first} 至 ${g.last} 章（共 ${g.last - g.first + 1} 章${g.stage ? ' · ' + g.stage : ''}）。点击下方按钮开始备课。
         </p>
         <button type="button" class="btn primary" id="scEmptyPlanStart" style="padding:9px 24px;border-radius:10px;font-size:13.5px;font-weight:750;margin-top:8px">
-          ${isFolded ? '🎓 立即备课' : `🎓 立即让老师${gi+1}备课`}
+          🎓 立即让${label}备课
         </button>
       </div>
     `;
@@ -4374,11 +4316,8 @@ function renderSchoolPlanBody(ov, gi, jumpCh){
     if(btn){
       btn.onclick = async ()=>{
         ov.remove();
-        if(isFolded){
-          await nailRetry('principal', '老师备课', ()=> genPrincipal(null), null);
-        } else {
-          await nailRetry('t'+gi, `老师${gi+1}备课`, ()=> genTeacher(null, gi), null);
-        }
+        const groups = schoolStageGroups();
+        await nailRetry('t'+gi, `老师${groups.length > 1 ? gi+1 : ''}备课`, ()=> genTeacher(null, gi), null);
         openSchoolPlanReader(gi, jumpCh);
       };
     }
@@ -4549,14 +4488,6 @@ function renderSchoolPrincipalBody(ov, raw){
       <div class="sc-pr-card-h"><span class="sc-pr-card-ic">🗺</span> <b>各组组级框架</b></div>
       <div class="sc-pr-card-b">
         <div class="sc-pr-rules-wrap">${esc(frameSec).replace(/\n/g, '<br>')}</div>
-      </div>
-    </div>`;
-  } else if(isSchoolFolded()){
-    html += `
-    <div class="sc-pr-card">
-      <div class="sc-pr-card-h"><span class="sc-pr-card-ic">⚡</span> <b>单组折叠架构（≤20章直通）</b></div>
-      <div class="sc-pr-card-b">
-        <div class="muted">当前篇幅 ≤20 章，三层折叠为单层：校长兼任课教师，免去组级框架中间传递损耗，直接出齐全校守则、章节标题与逐章教案。</div>
       </div>
     </div>`;
   }
@@ -6951,14 +6882,13 @@ function getDeckStepStatus(){
   const total = chs.length || chapterCountVal() || 0;
   const written = writtenChapterCount();
   const groups = schoolStageGroups();
-  const folded = isSchoolFolded();
 
   const s1_done = !!(state.chapterStyle && state.chapterStyle.tags && state.chapterStyle.tags.length);
   const s2_done = !!(state.polishAdopted || (state.idea && state.idea.trim()));
   const s3_done = !!(state.outlineConfirmed && o && chs.length > 0);
   const s4_done = !!(scDone('dictMaster') || state.dictmasterRan || (o && o.glossary && ((o.glossary.characters||[]).length > 0)));
   const s5_done = scDone('principal');
-  const s6_done = folded ? scDone('principal') : (groups.length > 0 && groups.every((g,i)=>scDone('t'+i)));
+  const s6_done = (groups.length > 0 && groups.every((g,i)=>scDone('t'+i)));
   const s7_done = (total > 0 && written >= total);
 
   const steps = [
@@ -6967,7 +6897,7 @@ function getDeckStepStatus(){
     { key:'outline',name:'大纲', done:s3_done, target: (o ? '[data-flow="2"]' : '#btnGenOutline'), desc: s3_done ? `已定稿 ${chs.length} 章分卷大纲` : '待生成全书大纲' },
     { key:'dict',  name:'词典', done:s4_done, target:'.card-theme-dictmaster', desc: s4_done ? '万物词典人物/地名已架构' : '待词典达人建立万物词典' },
     { key:'principal',name:'校长', done:s5_done, target:'.school-card', desc: s5_done ? '校长统筹守则与标题已定稿' : '待校长统筹全局' },
-    { key:'teacher',name:'老师', done:s6_done, target:'.school-teachers', desc: s6_done ? (folded ? '单老师教案已出齐' : `${groups.length} 位老师分段教案就绪`) : '待老师备课分段教案' },
+    { key:'teacher',name:'老师', done:s6_done, target:'.school-teachers', desc: s6_done ? (groups.length > 1 ? `${groups.length} 位老师分段教案就绪` : '老师教案就绪') : '待老师备课分段教案' },
     { key:'chapter',name:'正文', done:s7_done, target:'.chapter-card', desc: written ? `正文已落地 ${written}/${total||'?'} 章` : '待生成第 1 章正文' }
   ];
 
@@ -8697,7 +8627,6 @@ function schoolPipelineProgress(){
 
 function schoolZoneBlock(){
   const groups = schoolStageGroups();
-  const folded = isSchoolFolded();
   const pTitles = (state.school && state.school.principal && Array.isArray(state.school.principal.titles)) ? state.school.principal.titles : [];
   const titlesApplied = isPrincipalTitlesApplied();
   const tBody = groups.length
@@ -8722,8 +8651,8 @@ function schoolZoneBlock(){
     <div class="cp-body">
       <div class="school-zone">
         <div class="school-zone-head">
-          <span>${folded ? '👑 校长（总控） → 🎓 老师（备课） → ✍️ 正文作家' : '👑 校长（总控） → 🎓 老师（分段教案） → ✍️ 正文作家'}</span>
-          <em class="school-zone-tip">${groups.length ? (folded ? `全书共 ${groups[0].last} 章` : `${groups.length} 位老师分段`) : '待设定章节数'}</em>
+          <span>👑 校长（总控） → 🎓 老师（分段教案） → ✍️ 正文作家</span>
+          <em class="school-zone-tip">${groups.length ? (groups.length > 1 ? `${groups.length} 位老师分段` : `1 位老师全书教案`) : '待设定章节数'}</em>
         </div>
         ${schoolPipelineProgress()}
         <div class="school-steps">
