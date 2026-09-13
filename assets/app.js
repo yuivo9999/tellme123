@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.336';
+const APP_VERSION = '1.0.338';
 const KEY_CFG = nsKey('cfg');
 
 let _bgTaskCount = 0;
@@ -11043,17 +11043,20 @@ function cleanEntityName(raw){
   return [s, extra];
 }
 
-const DICT_ENRICH_SYS = `你是一位资深长篇「词典充实师」（设定细化与描写工坊专家）。你将拿到 ③万物词典（现有人/地/专名，只读参照，不得改动、不得重复新增同名）与章节大纲/时间线/节拍清单。
-你的任务：**在现有词典的硬核骨架之上，为正文写作主动补充更细腻生动的 感官描写特征、场景使用禁忌、正文特色标签 以及 鲜活生动的氛围龙套**——让正文作家在动笔时有取之不尽的具象抓手，彻底避免正文干瘪、抽象与同质化。
+const DICT_ENRICH_SYS = `你是一位资深长篇「词典充实师」（设定细化与描写工坊专家）。你将拿到两份核心素材：
+1. 【第一部分：优化构想·所选方案完整内容】（全书核心故事与设定蓝本）；
+2. 【第二部分：词典达人所生成的所有内容】（现有人物9维全貌、人物关系表、地名及关联、专名及关联、世界观运转规则等全部设定，作为只读基准）。
+
+你的任务：**在优化构想与现有词典的硬核骨架之上，为正文写作主动补充更细腻生动的 感官描写特征、场景使用禁忌、正文特色标签 以及 鲜活生动的氛围龙套**——让正文作家在动笔时有取之不尽的具象抓手，彻底避免正文干瘪、抽象与同质化。
 
 【四大产出分档与标准】
 1. 主要人物增补（0~2位）：仅当主线确实缺少重量级枢纽人物时补充。必须提供：身份定位、外貌感官特征（视觉/声音/体貌标签）、性格要点、口癖习惯、核心动机。
 2. 次要配角增补（3~8位）：主线涉及的亲友、同门、副手、耳目、宿敌手下。提供：身份、关系、鲜明外貌/气场、性格要点、正文描写标签。
 3. 关键地名/专名增补：主线必定经过但尚未入典的特定场景、关键法宝丹药、特产风物。提供：类型、感官氛围特征（光线/气味/声音）、使用禁忌/限制、正文描写词。
-4. 路人/龙套/生活气闲人（多多益善，建议≥全书章数的1/3）：只说一两句话、只露一面的市井闲人（更夫、茶博士、摊贩、哨兵、马夫等）。提供：身份、登场场景、一句典型口头台词或动作习惯、正文点缀标签。登场地点与时节必须严格吻合【小说简介】与【万物词典】，严禁自造虚空地名。
+4. 路人/龙套/生活气闲人（多多益善，建议≥全书章数的1/3）：只说一两句话、只露一面的市井闲人（更夫、茶博士、摊贩、哨兵、马夫等）。提供：身份、登场场景、一句典型口头台词或动作习惯、正文点缀标签。登场地点与时节必须严格吻合【优化构想】与【词典达人设定】，严禁自造虚空地名。
 
 【职责边界 / 硬性约束】
-1. 绝对依附已有大纲与世界观，严禁脱离主线过度发散，禁止脑补与世界观相悖的异类设定。
+1. 绝对依附已有构想方案与世界观，严禁脱离主线过度发散，禁止脑补与世界观相悖的异类设定。
 2. 现有词典已有的人/地/专名不得改动，不得重复新增同名。
 3. 专名与地名严禁收录“马车/街道/普通长剑”等日常泛词，必须具有故事专属性。
 4. 【极其重要·名称格式约束】：名字字段仅填写纯粹的人名/地名/专名（如"林月如"、"锁妖塔"、"七星剑"），绝对不要在名称中夹带括号或简介说明文字（如切勿写成"林月如（林家堡千金）"或"主要人物·林月如"），所有身份、关系、外貌等介绍必须严格写在后续的各个字段中。
@@ -11073,40 +11076,115 @@ const DICT_ENRICH_SYS = `你是一位资深长篇「词典充实师」（设定�
 function buildDictEnrichUser(){
   const o = state.outline || {};
   const parts = [];
-  const head = [];
-  if(o.title) head.push(`【小说标题】${o.title}`);
-  if(o.logline && String(o.logline).trim()) head.push(`【小说简介】${stripStructureFromIntro(o.logline)}`);
-  if(head.length) parts.push(head.join('\n'));
-  const titles = (o.chapters||[]).map((c,i)=>`第${i+1}章 ${cleanChapterTitle((c&&c.title)||'')}`).join('\n');
-  if(String(titles).trim()) parts.push(`【章节标题】\n${titles}`);
-  const tl = globalTimelineBlock(); if(tl) parts.push(tl);   // 含全局时间线 + 各章节拍要点（承接点/情境）
-  const entBlock = (o.chapterPlans||[]).map((p,i)=> (p && typeof p.tlEntities==='string' && String(p.tlEntities).trim()) ? `第${i+1}章：${String(p.tlEntities).trim()}` : null).filter(Boolean).join('\n');
-  if(String(entBlock).trim()) parts.push(`【节拍表实体清单（各章同源附带的全量新实体，只读参照；只根据这里补词典还没有的新名）】\n${entBlock}`);
-  const _tb = teamShapeBrief(); if(_tb) parts.push(_tb);
+
+  // ==========================================
+  // 1. 优化构想·用户所选方案完整内容
+  // ==========================================
+  let cand = null;
+  try{ cand = (typeof selectedPolishCandidate === 'function') ? selectedPolishCandidate() : null; }catch(e){}
+  const candName = (cand && cand.name) ? `【优化方案名】方案『${String(cand.name).trim()}』\n` : '';
+  const candFullText = String((cand && (cand.text || cand.raw || cand.brief)) || o.logline || '').trim();
+  const polishPart = `【第一部分：优化构想·所选方案完整内容（全书核心设定蓝本）】\n${candName}${candFullText || '（所选优化方案为空）'}`;
+  parts.push(polishPart);
+
+  // ==========================================
+  // 2. 词典达人所生成的所有内容
+  // ==========================================
   const g = (o && o.glossary) || {};
-  const vis = [];
-  (g.characters||[]).forEach(c=>{
-    const [cName] = cleanEntityName(c&&c.name);
-    if(!cName) return;
-    const tierTxt = (c&&c.tier==='support') ? '次要配角' : '主要人物';
-    vis.push(`- 【${tierTxt}】名称：${cName} | 身份：${String(c.identity||'').trim()} | 关系：${String(c.relation||'').trim()}`);
-  });
-  (g.walkons||[]).forEach(w=>{
-    const [wName] = cleanEntityName(w&&w.name);
-    if(!wName) return;
-    vis.push(`- 【路人龙套】名称：${wName} | 说明：${String(w.note||'').trim()}`);
-  });
-  (g.places||[]).forEach(p=>{
-    const [pName] = cleanEntityName(p&&p.name);
-    if(!pName) return;
-    vis.push(`- 【地名】名称：${pName} | 类型：${String(p.type||'').trim()} | 说明：${String(p.note||'').trim()}`);
-  });
-  (g.propernouns||[]).forEach(x=>{
-    const [xName] = cleanEntityName(x&&x.name);
-    if(!xName) return;
-    vis.push(`- 【专名】名称：${xName} | 说明：${String(x.note||'').trim()}`);
-  });
-  parts.push(`【万物词典（现有人/地/专名，只读参照：不得改动、不得重复新增同名）】\n${vis.join('\n')||'（无）'}`);
+  const dmSections = [];
+
+  // (1) 人物卡（主要人物与次要配角，9维全字段）
+  const charList = g.characters || [];
+  if(charList.length){
+    const charLines = charList.map(c => {
+      const [cName] = cleanEntityName(c && c.name);
+      if(!cName) return null;
+      const tierTxt = (c && c.tier === 'support') ? '次要配角' : '主要人物';
+      const fields = [
+        `【${tierTxt}】${cName}`,
+        c.identity ? `身份: ${String(c.identity).trim()}` : '',
+        (c.age && c.age !== '未知') ? `年龄: ${String(c.age).trim()}` : '',
+        (c.gender && c.gender !== '未知') ? `性别: ${String(c.gender).trim()}` : '',
+        c.appearance ? `外貌特征: ${String(c.appearance).trim()}` : '',
+        c.trait ? `性格特征: ${String(c.trait).trim()}` : '',
+        c.hobby ? `爱好癖好: ${String(c.hobby).trim()}` : '',
+        c.catchphrase ? `口头禅: ${String(c.catchphrase).trim()}` : '',
+        c.relation ? `关系定位: ${String(c.relation).trim()}` : ''
+      ].filter(Boolean);
+      return `- ` + fields.join(' | ');
+    }).filter(Boolean);
+    if(charLines.length) dmSections.push(`【1. 核心人物与重要配角卡（共 ${charLines.length} 位）】\n${charLines.join('\n')}`);
+  }
+
+  // (2) 人物关系表
+  const relArr = validAssoc(g._relationshipTable, 'a', 'b');
+  if(relArr.length){
+    const relLines = relArr.map(x => `- ${x.a} ↔ ${x.b} [${x.relation || '关联'}]${x.note ? `（${x.note}）` : ''}`);
+    dmSections.push(`【2. 人物关系拓扑表（共 ${relLines.length} 条）】\n${relLines.join('\n')}`);
+  }
+
+  // (3) 地名设定
+  const placeList = g.places || [];
+  if(placeList.length){
+    const placeLines = placeList.map(p => {
+      const [pName] = cleanEntityName(p && p.name);
+      if(!pName) return null;
+      return `- 【地名】${pName} | 类型: ${p.type || '地点'} | 说明/氛围: ${String(p.note || '').trim() || '无'}`;
+    }).filter(Boolean);
+    if(placeLines.length) dmSections.push(`【3. 关键地名与地理场景（共 ${placeLines.length} 处）】\n${placeLines.join('\n')}`);
+  }
+
+  // (4) 地名关联表
+  const pcArr = validAssoc(g._placeContacts, 'from', 'to');
+  if(pcArr.length){
+    const pcLines = pcArr.map(x => `- ${x.from} ↔ ${x.to} [${x.relation || '连通'}]${x.note ? `（${x.note}）` : ''}`);
+    dmSections.push(`【4. 地名关联通路表（共 ${pcLines.length} 条）】\n${pcLines.join('\n')}`);
+  }
+
+  // (5) 专名与核心设定
+  const propList = g.propernouns || [];
+  if(propList.length){
+    const propLines = propList.map(x => {
+      const [xName] = cleanEntityName(x && x.name);
+      if(!xName) return null;
+      return `- 【专名】${xName} | 功能/特效/使用限制: ${String(x.note || '').trim() || '无'}`;
+    }).filter(Boolean);
+    if(propLines.length) dmSections.push(`【5. 专名/法宝/功法/组织体系（共 ${propLines.length} 项）】\n${propLines.join('\n')}`);
+  }
+
+  // (6) 专名关联表
+  const prcArr = validAssoc(g._properContacts, 'from', 'to');
+  if(prcArr.length){
+    const prcLines = prcArr.map(x => `- ${x.from} ↔ ${x.to} [${x.relation || '关联'}]${x.note ? `（${x.note}）` : ''}`);
+    dmSections.push(`【6. 专名关联谱系表（共 ${prcLines.length} 条）】\n${prcLines.join('\n')}`);
+  }
+
+  // (7) 世界观运转规则系统
+  const wrArr = ((g && g._worldRules) || []).filter(x => x && String(x.rule || '').trim());
+  if(wrArr.length){
+    const wrLines = wrArr.map(x => `- 【${x.cat || '世界观法则'}】适用范围: ${x.scope || '全域'} | 运作法则与代价: ${x.rule}`);
+    dmSections.push(`【7. 世界观运转规则系统（共 ${wrLines.length} 条）】\n${wrLines.join('\n')}`);
+  }
+
+  // (8) 现有路人/龙套（若有）
+  const walkonList = g.walkons || [];
+  if(walkonList.length){
+    const walkonLines = walkonList.map(w => {
+      const [wName] = cleanEntityName(w && w.name);
+      if(!wName) return null;
+      return `- 【路人龙套】${wName} | 说明/登场: ${String(w.note || '').trim()}`;
+    }).filter(Boolean);
+    if(walkonLines.length) dmSections.push(`【8. 现有路人/龙套（共 ${walkonLines.length} 位）】\n${walkonLines.join('\n')}`);
+  }
+
+  // (9) 词典达人架构总结（若有）
+  if(state.dictmasterLatest && state.dictmasterLatest.summary){
+    dmSections.push(`【词典达人架构总结】${state.dictmasterLatest.summary}`);
+  }
+
+  const dictmasterPart = `【第二部分：词典达人所生成的所有内容（只读参照：不得改动、不得重复新增同名）】\n${dmSections.length ? dmSections.join('\n\n') : '（暂无词典达人生成数据）'}`;
+  parts.push(dictmasterPart);
+
   return parts.join('\n\n');
 }
 function parseDictEnrichText(txt){
