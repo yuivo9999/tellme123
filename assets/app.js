@@ -128,8 +128,8 @@ function _cnDayNum(n){ const t={'零':0,'一':1,'二':2,'三':3,'四':4,'五':5,
 function _timeOrdinal(s){
   s = String(s||'').trim(); if(!s) return null;
   let day = null;
-  const d1 = s.match(/第\s*(\d+)\s*天/); if(d1) day = +d1[1];
-  else { const d2 = s.match(/第\s*([一二三四五六七八九十]+)\s*天/); if(d2) day = _cnDayNum(d2[1]); }
+  const d1 = s.match(/第\s*(\d+)\s*(?:天|日)/); if(d1) day = +d1[1];
+  else { const d2 = s.match(/第\s*([一二三四五六七八九十]+)\s*(?:天|日)/); if(d2) day = _cnDayNum(d2[1]); }
   if(day==null && /次[日天]|翌[日天]/.test(s)) day = 2;
   else if(day==null && /当[日天]|本[日天]/.test(s)) day = 1;
   const hrWords=[['凌晨',3],['清晨',6],['早晨',7],['早上',8],['上午',9],['中午',12],['正午',12],['午后',14],['下午',15],['黄昏',18],['傍晚',18],['晚上',19],['夜晚',20],['夜里',20],['入夜',19],['深夜',23],['半夜',0],['子时',23],['卯时',5],['辰时',7],['巳时',9],['午时',12],['未时',13],['申时',15],['酉时',17],['戌时',19],['亥时',21]];
@@ -140,10 +140,17 @@ function _timeOrdinal(s){
 }
 function _timeRewind(a, b){
   if(!String(a||'').trim() || !String(b||'').trim()) return false;
-  if(_timeBranch(a) !== _timeBranch(b)) return false;
   const oa = _timeOrdinal(a), ob = _timeOrdinal(b);
   if(oa==null || ob==null) return false;
-  return oa > ob;
+  return ob < oa;
+}
+function _timeSpanHours(from,to){ const a=_timeOrdinal(from), b=_timeOrdinal(to); return (a==null||b==null)?null:Math.max(0,b-a); }
+function _timeDaySpan(from,to){ const a=_timeOrdinal(from), b=_timeOrdinal(to); if(a==null||b==null) return null; return Math.max(0,Math.floor(b/24)-Math.floor(a/24)+1); }
+function _timeCoveragePlan(from,to,explicit){
+  if(String(explicit||'').trim()) return String(explicit).trim();
+  const a=_timeOrdinal(from), b=_timeOrdinal(to); if(a==null||b==null||b<=a) return '单日连续推进';
+  const days=[]; for(let d=Math.floor(a/24)+1; d<=Math.floor(b/24)+1; d++) days.push(`第${d}日`);
+  return days.map((d,idx)=>idx===0?`${d}：承接并启动`:idx===days.length-1?`${d}：收束并抵达本章终点`:`${d}：完成至少一次可观察的剧情推进或自然时间流逝`).join('；');
 }
 
 // 时间系统 v2：时间先作为“状态合同”锁定，再交给正文 AI 做文学表达。
@@ -156,6 +163,9 @@ function _extractPlanTimeRange(plan){
   const raw = extractPlanField(plan, ['剧情时间落点']);
   if(!raw) return {raw:'',from:'',to:''};
   const t=String(raw).trim();
+  const sm=t.match(/起点\s*[=：:]\s*([^；;\n]+?)(?=\s*(?:[；;]|终点\s*[=：:]))/);
+  const em=t.match(/终点\s*[=：:]\s*([^；;\n]+?)(?:\s*[；;].*)?$/);
+  if(sm||em) return {raw:t,from:(sm?sm[1]:'').trim(),to:(em?em[1]:'').trim()};
   const m=t.match(/(?:从\s*)?(.+?)\s*(?:到|至|—|–|→|->)\s*(.+)$/);
   return m ? {raw:t,from:m[1].trim(),to:m[2].trim()} : {raw:t,from:t,to:t};
 }
@@ -164,10 +174,10 @@ function _globalTimeEntry(i){
   return gt&&Array.isArray(gt.chapters) ? (gt.chapters.find(x=>x&&Number(x.index)===i)||null) : null;
 }
 function _plannedTimeRange(i){
-  const o=state.outline||{}, ge=_globalTimeEntry(i);
-  const plan=Array.isArray(o.chapterPlans)?(o.chapterPlans[i]||{}):{};
-  const pr=_extractPlanTimeRange(plan);
-  return {source:ge?'globalTimeline':(pr.raw?'teacherPlan':''),from:ge&&String(ge.from||'').trim()?String(ge.from).trim():pr.from,to:ge&&String(ge.to||'').trim()?String(ge.to).trim():pr.to,jump:ge&&String(ge.jump||'').trim()?String(ge.jump).trim():''};
+  const o=state.outline||{}, ge=_globalTimeEntry(i), plan=Array.isArray(o.chapterPlans)?(o.chapterPlans[i]||{}):{}, pr=_extractPlanTimeRange(plan);
+  const from=ge&&String(ge.from||'').trim()?String(ge.from).trim():pr.from, to=ge&&String(ge.to||'').trim()?String(ge.to).trim():pr.to;
+  const explicit=ge&&String(ge.coverage||'').trim()?String(ge.coverage).trim():extractPlanField(plan,['时间推进安排','时间覆盖安排']);
+  return {source:ge?'globalTimeline':(pr.raw?'teacherPlan':''),from,to,jump:ge&&String(ge.jump||'').trim()?String(ge.jump).trim():'',coverage:_timeCoveragePlan(from,to,explicit)};
 }
 function _timeContractForChapter(i){
   if(!isLong()||!_timeAnchorOn()) return null;
@@ -182,6 +192,8 @@ function _timeContractForChapter(i){
   if(cur.from) lines.push(`- 本章计划起点：${cur.from}`);
   if(cur.to) lines.push(`- 本章计划终点：${cur.to}`);
   if(cur.jump) lines.push(`- 规划时间跳跃说明：${cur.jump}`);
+  if(cur.coverage) lines.push(`- 【时间覆盖计划】${cur.coverage}`);
+  const span=_timeDaySpan(cur.from,cur.to); if(span!=null && span>=1) lines.push(`- 【跨度硬要求】本章计划跨度约 ${span} 天，正文必须真正抵达计划终点；允许自然跳时/蒙太奇，但不得把多日压缩成同一两天内的连续场景。`);
   lines.push('- 状态规则：本章主线必须从上一章计划终点自然延续；若本章起点晚于上一章终点，只允许用真实时间/空间流逝过桥。');
   lines.push('- 绝对禁止：时间回到上一章已结束的更早时段；上一章已经入睡、休息或结束当日后，本章不得再次用“夜幕降临/黄昏到来/天刚蒙蒙亮”等把同一时段重新开启。');
   lines.push('- 第一场时间锁：第一场只能发生在本章计划起点或其自然延续，不得先写更早的时间氛围段再进入教案。');
@@ -263,13 +275,16 @@ function storyStateChapterBlock(i){
   if(cur&&cur.planned){
     const p=cur.planned;
     lines.push(`【本章计划状态｜老师已决定】${p.from||p.to?`时间=${p.from||''}${p.to?` → ${p.to}`:''}`:''}${p.location?`；地点=${p.location}`:''}`);
+    if(p.spanDays!=null && p.spanDays>=1) lines.push(`- 计划跨度：约${p.spanDays}天；必须在正文中真正走到终点，不得把多日压扁成一两天。`);
+    if(p.coverage) lines.push(`- 时间推进安排：${p.coverage}`);
     if(p.endState) lines.push(`- 计划结束状态：${p.endState}`);
   }
   return lines.join('\n');
 }
 function commitPlannedChapterState(i, plan, source){
   const ss=storyState(), p=ss.chapters[i]=ss.chapters[i]||{}, tr=_extractPlanTimeRange(plan);
-  p.planned={time:tr.raw||'',from:tr.from||'',to:tr.to||'',continuity:String(extractPlanField(plan,['连续性','承接'])||'').trim(),cast:String(extractPlanField(plan,['本章出场名单'])||'').trim(),location:String(extractPlanField(plan,['场景地点','主要地点','地点'])||'').trim(),endState:String(extractPlanField(plan,['收束状态','章末状态'])||'').trim()};
+  const coverage=String(extractPlanField(plan,['时间推进安排','时间覆盖安排'])||'').trim() || _timeCoveragePlan(tr.from,tr.to,'');
+  p.planned={time:tr.raw||'',from:tr.from||'',to:tr.to||'',coverage,spanDays:_timeDaySpan(tr.from,tr.to),continuity:String(extractPlanField(plan,['连续性','承接'])||'').trim(),cast:String(extractPlanField(plan,['本章出场名单'])||'').trim(),location:String(extractPlanField(plan,['场景地点','主要地点','地点'])||'').trim(),endState:String(extractPlanField(plan,['收束状态','章末状态'])||'').trim()};
   const prev=ss.chapters[i-1]&&ss.chapters[i-1].planned;
   p.boundaryAudit = { rewind:false, note:'' };
   if(prev && prev.to && p.from && _timeRewind(prev.to,p.from)){ p.boundaryAudit.rewind=true; p.boundaryAudit.note=`第${i}章计划起点「${p.from}」早于上一章计划终点「${prev.to}」`; }
@@ -337,7 +352,7 @@ function parseTeacherChapterCards(raw, g, gi){
     const title=(lines[a.line].match(/《([^》]+)》/)||[])[1]||`第${a.ch}章`;
     const beats=section('本章推进骨架');
     const cast=field(['本章出场名单']);
-    const card={chapter:a.ch,title,style:field(['本章风格施工指令']),function:field(['功能与位置']),time:field(['剧情时间落点']),location:field(['主要地点','场景地点','主要场景']),beats,emotion:field(['情绪走向与突出点']),continuity:section('连续性'),cast,raw:block,requiredEvents:[],forbiddenEvents:[],entryState:'',endingState:field(['章末状态','收束状态'])};
+    const card={chapter:a.ch,title,style:field(['本章风格施工指令']),function:field(['功能与位置']),time:field(['剧情时间落点']),timeCoverage:field(['时间推进安排','时间覆盖安排']),location:field(['主要地点','场景地点','主要场景']),beats,emotion:field(['情绪走向与突出点']),continuity:section('连续性'),cast,raw:block,requiredEvents:[],forbiddenEvents:[],entryState:'',endingState:field(['章末状态','收束状态'])};
     card.entryState=(card.continuity.match(/承接物理态[】）)）]?\s*[：:]?\s*([^\n]+)/)||[])[1]||'';
     card.endingState=field(['章末状态','收束状态']) || (card.continuity.match(/(?:章末|收束)[^：:]*[：:]\s*([^\n]+)/)||[])[1]||'';
     // 从骨架中提取“不得/禁止/严禁”作为机器禁项，避免把所有细节强行结构化。
@@ -350,6 +365,7 @@ function parseTeacherChapterCards(raw, g, gi){
 function validateChapterCard(card){
   if(!card) return '章节卡为空';
   const miss=[]; if(!card.title) miss.push('标题'); if(!card.beats) miss.push('推进骨架'); if(!card.continuity) miss.push('连续性'); if(!card.cast) miss.push('出场名单');
+  if(card.time && /起点\s*[=：:]\s*[^；;]+[；;]\s*终点\s*[=：:]/.test(String(card.time)) && !String(card.timeCoverage||'').trim()) miss.push('时间推进安排');
   if(miss.length) return '缺少：'+miss.join('、');
   return '';
 }
@@ -358,6 +374,13 @@ function commitTeacherChapterCards(raw,g,gi){
   for(let n=g.first;n<=g.last;n++){
     const c=cards.find(x=>x.chapter===n); const err=validateChapterCard(c);
     if(err) need.push(`第${n}章 ${err}`);
+    if(c && c.time && c.timeCoverage){
+      const tr=_extractPlanTimeRange({beatsText:'剧情时间落点：'+c.time}); const span=_timeDaySpan(tr.from,tr.to);
+      if(span!=null && span>=2){
+        const dayMarks=(String(c.beats||'').match(/第\s*(?:\d+|[一二三四五六七八九十]+)\s*(?:日|天)/g)||[]).length;
+        if(dayMarks<2) need.push(`第${n}章时间骨架不足：${span}日跨度却未在「本章推进骨架」中明确展开跨日推进`);
+      }
+    }
     if(c && stateBanEnabled()){
       const bad=(banListNames().concat(banListChars())).find(x=>x && ((c.cast||'').includes(x)||(c.title||'').includes(x)));
       if(bad) need.push(`第${n}章命中用户禁则「${bad}」`);
@@ -371,7 +394,7 @@ function commitTeacherChapterCards(raw,g,gi){
     ss.chapters[i].card=ssStamp(c,{teacherGi:gi,chapterVersion:ssNextVersion('chapterCard')});
     ss.chapters[i].planned=ssStamp({
       time:tr.raw||c.time||'', from:tr.from||'', to:tr.to||'', continuity:c.continuity||'', cast:c.cast||'',
-      location:c.location||'', endState:c.endingState||'', entryState:c.entryState||'',
+      location:c.location||'', endState:c.endingState||'', entryState:c.entryState||'', coverage:c.timeCoverage||_timeCoveragePlan(tr.from,tr.to,''), spanDays:_timeDaySpan(tr.from,tr.to),
       requiredEvents:Array.isArray(c.requiredEvents)?c.requiredEvents:[], forbiddenEvents:Array.isArray(c.forbiddenEvents)?c.forbiddenEvents:[]
     },{source:'teacherCard',teacherGi:gi});
   });
@@ -399,17 +422,21 @@ function ensureCurrentTeacherCards(i){
 }
 function chapterCard(i){ return ensureCurrentTeacherCards(i); }
 function chapterPlanAuthority(i){ return chapterCard(i)||null; }
-const CHAPTER_AUDIT_SYS=`你是长篇小说“状态审计AI”。你没有创作权，只负责判定正文是否忠实执行机器章节卡、上一章真实状态与世界词典。\n只检查可验证冲突：时间倒退/不可达、地点瞬移、人物生死与身体状态、关系变化、道具持有、世界规则、信息知情边界、章节必做事件缺失、禁项违规、凭空出现会持续存在的新核心实体。正常文学发挥不是错误。\n输出严格JSON：{"status":"PASS|WARN|FAIL","issues":[{"type":"time|location|character|relationship|object|rule|knowledge|event|entity|causal","severity":"warn|fail","evidence":"正文中的明确证据","expected":"应有状态","actual":"实际状态","repair":"最小修复方向"}],"summary":"一句话"}`;
+const CHAPTER_AUDIT_SYS=`你是长篇小说“状态审计AI”。你没有创作权，只负责判定正文是否忠实执行机器章节卡、上一章真实状态与世界词典。
+只检查可验证冲突：时间倒退/不可达、地点瞬移、人物生死与身体状态、关系变化、道具持有、世界规则、信息知情边界、章节必做事件缺失、禁项违规、凭空出现会持续存在的新核心实体。正常文学发挥不是错误。
+【特别时间审计】如果机器章节卡明确给出起点和终点跨越多日，必须检查正文是否真的抵达计划终点并对中间时间流逝有合理叙事承载；可以通过场景跳跃、生活节律、蒙太奇、阶段性事件等完成，不要求逐日流水账，但绝不能正文实际只发生在前一两天却声称本章覆盖五天。若正文明确落在比计划终点更早的日期，判FAIL；若无法确认抵达终点，至少WARN。
+输出严格JSON：{"status":"PASS|WARN|FAIL","issues":[{"type":"time|location|character|relationship|object|rule|knowledge|event|entity|causal","severity":"warn|fail","evidence":"正文中的明确证据","expected":"应有状态","actual":"实际状态","repair":"最小修复方向"}],"summary":"一句话"}`;
 async function auditChapterState(i,text){
   if(!isLong()) return null; const ss=storyState(), c=chapterPlanAuthority(i), prev=ss.chapters?.[i-1]?.observed||null, obs=ss.chapters?.[i]?.observed||null;
   if(!c||!obs) return null;
   const g=(state.outline&&state.outline.glossary)||{};
   const canon=`人物:${(g.characters||[]).map(x=>x.name).join('、')}\n地点:${(g.places||[]).map(x=>x.name).join('、')}\n专名:${(g.propernouns||[]).map(x=>x.name).join('、')}\n世界规则:${(g._worldRules||[]).map(x=>x.rule).join('；')}`;
   const banAudit = stateBanEnabled() ? `\n【用户全书禁则·必须审计】\n禁用姓名：${banListNames().join('、')}\n姓名禁用字：${banListChars().join('、')}\n禁用短语：${(Array.isArray(banListRaw().phrases)?banListRaw().phrases:[]).join('、')}` : '';
-  const user=`【机器章节卡】${JSON.stringify(c)}\n【上一章正文结算】${JSON.stringify(prev||{})}\n【本章正文结算】${JSON.stringify(obs)}\n【词典只读实体】${canon}${banAudit}\n【本章正文】\n${String(text||'').slice(0,50000)}`;
-  try{ const raw=unwrapAIResult(await callDeepSeek(CHAPTER_AUDIT_SYS,user,{maxTokens:2200,temperature:0.05,topP:0.1,signal:_abortCtl?.signal,taskKey:'chapterAudit'})); const j=parseJson(raw)||{}; const report={status:['PASS','WARN','FAIL'].includes(j.status)?j.status:'WARN',issues:Array.isArray(j.issues)?j.issues.slice(0,20):[],summary:String(j.summary||'').trim(),ts:Date.now(),chapter:i}; ss.chapters[i].audit=report; persist(); return report; }catch(e){ ss.chapters[i].audit={status:'WARN',issues:[{type:'audit',severity:'warn',evidence:'审计AI不可用',expected:'完成审计',actual:e.message,repair:'稍后重试'}],summary:'审计未完成',ts:Date.now(),chapter:i}; persist(); return ss.chapters[i].audit; }
+  const plannedTime=c.time||''; const tr=_extractPlanTimeRange({beatsText:'剧情时间落点：'+plannedTime});
+  const user=`【机器章节卡】${JSON.stringify(c)}\n【时间覆盖核验】起点=${tr.from||'未知'}；终点=${tr.to||'未知'}；跨度=${_timeDaySpan(tr.from,tr.to)==null?'未知':_timeDaySpan(tr.from,tr.to)+'天'}；时间推进安排=${c.timeCoverage||'无'}\n【上一章正文结算】${JSON.stringify(prev||{})}\n【本章正文结算】${JSON.stringify(obs)}\n【词典只读实体】${canon}${banAudit}\n【本章正文】\n${String(text||'').slice(0,50000)}`;
+  try{ const raw=unwrapAIResult(await callDeepSeek(CHAPTER_AUDIT_SYS,user,{maxTokens:2200,temperature:0.05,topP:0.1,signal:_abortCtl?.signal,taskKey:'chapterAudit'})); const j=parseJson(raw)||{}; const report={status:['PASS','WARN','FAIL'].includes(j.status)?j.status:'WARN',issues:Array.isArray(j.issues)?j.issues.slice(0,20):[],summary:String(j.summary||'').trim(),ts:Date.now(),chapter:i}; const p=ss.chapters[i]?.planned||{}; const pt=_timeOrdinal(p.to), ot=_timeOrdinal(obs.time); if(pt!=null && ot!=null && ot<pt){ report.status='FAIL'; report.issues.unshift({type:'time',severity:'fail',evidence:`正文状态结算时间：${obs.time}`,expected:`本章必须抵达计划终点：${p.to}`,actual:`正文结算仍早于计划终点约${Math.max(0,pt-ot)}小时`,repair:'补足计划终点前真实发生的时间流逝/阶段性事件，并让章末状态落到计划终点。'}); } else if(pt!=null && ot==null && (p.spanDays||0)>=1){ report.status=report.status==='FAIL'?'FAIL':'WARN'; report.issues.unshift({type:'time',severity:'warn',evidence:'正文状态结算器未能确认章末日期',expected:`抵达计划终点：${p.to}`,actual:'无法确认',repair:'复核正文是否真正走到计划终点；必要时补足自然时间过桥。'}); } if(report.issues.some(x=>x.severity==='fail')) report.status='FAIL'; ss.chapters[i].audit=report; persist(); return report; }catch(e){ ss.chapters[i].audit={status:'WARN',issues:[{type:'audit',severity:'warn',evidence:'审计AI不可用',expected:'完成审计',actual:e.message,repair:'稍后重试'}],summary:'审计未完成',ts:Date.now(),chapter:i}; persist(); return ss.chapters[i].audit; }
 }
-const CHAPTER_REPAIR_SYS=`你是长篇小说“局部修复AI”。你没有改写世界和剧情的权力，只能修复审计指出的最小冲突。\n规则：只处理FAIL问题；保持章节卡规定的事件、人物、时间、地点和文学风格；不得新增主线事件；不得整章重写。输出严格JSON：{"replacement":"要替换的最小原文片段","newText":"与原文长度大致相当的修复后片段","reason":"修复说明"}`;
+const CHAPTER_REPAIR_SYS=`你是长篇小说“局部修复AI”。你没有改写世界和剧情的权力，只能修复审计指出的最小冲突。\n规则：只处理FAIL问题；保持章节卡规定的事件、人物、时间、地点和文学风格；不得新增主线事件；不得整章重写。若FAIL属于多日时间跨度不足，允许在原有事件之间加入最小必要的时间过桥/阶段性推进，让正文自然抵达章节卡终点，但不得用一句“几天后”敷衍，也不得改变核心事件顺序。输出严格JSON：{"replacement":"要替换的最小原文片段","newText":"与原文长度大致相当的修复后片段","reason":"修复说明"}`;
 async function repairChapterByAudit(i,text,report){
   const fails=(report?.issues||[]).filter(x=>x&&x.severity==='fail'); if(!fails.length) return String(text||'');
   const banRepair = stateBanEnabled() ? `\n【用户全书禁则】禁用姓名：${banListNames().join('、')}；姓名禁用字：${banListChars().join('、')}；禁用短语：${(Array.isArray(banListRaw().phrases)?banListRaw().phrases:[]).join('、')}` : '';
@@ -3826,15 +3853,13 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 ① 对组内每一章产出一份教案，逐章齐全直到本组最后一章。每份教案固定字段（一个不少）：
 - 本章风格施工指令：严格继承校长已经裁决好的【风格融合总纲】【风格施工规则】；按本章场景/人物/节拍逐项翻译成可执行的表达指令。只负责‘怎么写’，不得改写本章剧情教案，也不得重新裁决风格冲突。
 - 功能与位置：本章在本组 / 全书中的角色
-- 剧情时间落点：给出本章正文发生的时间范围（如"从 第X日·清晨 到 第X日·傍晚"，或口语化"第二日清晨到次日傍晚，即第三日傍晚"）。**优先写成可解析的“起点=…；终点=…”形式，再补自然语言说明**，让后续正文生成器把它当作状态数据而不是文学提示。三条松守则——仅防"多章时间倒退/重叠/换算错位"，绝不限制创作自由：
-  (1) 落点让读者与正文不再错位即可：尽量给"第X日·时段"的绝对日序；若你想用"次日/翌日/次晨"等相对词，顺手换算一句（如"次日=第三日"）即可，不必硬性禁用。
-  (2) 跨章时间不回退：本章时间范围的起点不早于上一章教案「剧情时间落点」的终点（可同时刻紧接、不可往回倒）；保证整个故事的时间线整体向前即可。
-  (3) 别为"覆盖完整"牺牲节奏：一章可以只写一小时的关键场景，可以写满一整天，也可以跨数天跳跃。时间跨度长短由剧情决定。
-- 本章推进骨架（从哪写到哪）：把本章从开篇承接点到收尾的整条推进路线，拆成一连串更细的环节（建议 5-8 个推进环节，深度融合微拍节奏，覆盖 承接点→铺垫→第一次小冲突/变化→推进→转折/升温→高潮→余波→收束/钩子），按顺序逐个写出每个环节"这一环节要发生/要写到什么"（一两句话说明该环节的落点即可，点到即止）。环节之间要有先后与因果。
-- 事件因果施工：对本章每一个重大事件，在骨架中同时交代“发生前提→触发/线索→人物为什么采取行动→行动如何导致结果”。尤其是发现、获得、遇见、得知、抵达、突破、救援、反转等结果，不得只写结果。若某结果依赖前章信息或资源，必须在【连续性】或骨架中明确承接来源；若当前材料无法支撑，应先补铺垫或改写达成路径，不得让正文 AI 自行凭空补一个关键理由。
-  - 【随微拍调密·骨架环节数不等同微拍拍数】骨架始终拆满 5-8 个环节。双拍结构按"铺垫多环节 + 揭示少环节"排布。微三拍可压缩至 4-5 环节，微七拍可展开至 8 环节。
-- 情绪走向与突出点：推向什么情绪、突出什么（示例锚点一句话即可，禁止代写成段正文）
-- 连续性：上一章收尾到哪、本章从何承接。写明两项：①【承接物理态】（写明承接自第几章哪个具体人物处境、定格动作或未决悬念）；②【转场过桥建议】（若本章时间或场景有跨度，给出 1-2 句如何自然平滑过渡到本章骨架第①环节的笔法建议，防生硬跳切）。
+- 剧情时间落点：给出本章正文发生的时间范围。**必须优先写成可解析的“起点=…；终点=…”形式，再补自然语言说明。**起点和终点必须与本章真实剧情跨度一致，不能先定一个五日跨度，骨架却只安排两天内连续事件。
+  (1) 如果跨度≥2天，必须填写「时间推进安排」，按“第X日：……；第X+1日：……；……；终点日：……”写出各阶段至少一次可观察的推进。允许跳日、蒙太奇、换场或一句带过，但必须让正文有真实时间流逝承载。
+  (2) 时间推进安排必须进入「本章推进骨架」，骨架每个环节都注明所属日期/时间阶段；跨日时说明经过了什么时间。
+  (3) 不要求逐日流水账，也不要求每天都有大事件；中间日可以通过赶路、训练、调查、生活节律、关系变化、环境变化、阶段性结果或自然跳时承载。
+  (4) 跨章时间不回退。
+- 时间推进安排：这是本章推进骨架的时间骨架，必须和骨架环节一一对应；如果本章跨5日，5日不能只出现在“剧情时间落点”字段，骨架必须真正从第1日推进到第5日。
+- 本章推进骨架（从哪写到哪）：把本章从开篇承接点到收尾的整条推进路线拆成5-8个环节，深度融合微拍节奏；每个环节同时注明“日期/时间阶段 + 本环节发生什么 + 与上一环节经过多久”，确保整章的剧情事件和时间跨度同步推进，而不是时间写五天、剧情只写一两天。
 - 本章出场名单：本章推进骨架中涉及的全部有名角色（骨架与名单 100% 严格对齐，骨架有戏必有名单点名，无戏绝不混入；正文写作时主线核心角色严格以此名单为准，严禁私自越权引入未登场主线大人物；过场氛围闲人路人由正文作家按场景即兴点缀即可）。
 ② 【教师交接棒机制】：在本组全部章节备课完毕后，必须在最末尾附加输出【本阶段向下一阶段移交的 3 大关键悬念与阶段高潮成果】，为下一位老师立好交接棒！
 
@@ -12545,6 +12570,11 @@ ${_tail}
     const hasT = String(chap.title||'').trim();
     const _timeContract = _timeContractForChapter(i);
     if(_timeContract) parts.push(_timeContract);
+    const _ccTime = _card ? _extractPlanTimeRange({beatsText:'剧情时间落点：'+String(_card.time||'')}) : {from:'',to:''};
+    if(_card && _ccTime.from && _ccTime.to){
+      const _span=_timeDaySpan(_ccTime.from,_ccTime.to);
+      parts.push(`【章节时间覆盖执行令】本章必须从“${_ccTime.from}”真实推进到“${_ccTime.to}”。${_span!=null&&_span>=1?`这是约${_span}天的跨度；可以跳日、蒙太奇、赶路、训练、调查、生活过程或阶段性结果来承载，但不能把全部事件挤在前1-2天后仅在末尾口头说“过了几天”。`:''} ${_card.timeCoverage?`老师安排的时间推进：${_card.timeCoverage}`:''} 骨架每一环必须服从这个时间轴；相邻环节跨日时必须自然交代时间流逝。`);
+    }
     parts.push(`【本章任务】第 ${curN} 章${hasT ? `《${chap.title}》` : ''}`);
   }
 
