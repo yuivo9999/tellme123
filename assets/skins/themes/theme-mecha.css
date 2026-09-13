@@ -1,0 +1,2 @@
+/* Compatibility entrypoint: canonical theme remains in assets/theme-mecha.css for now. */
+@import url('../../theme-mecha.css');
