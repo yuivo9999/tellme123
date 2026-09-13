@@ -1,0 +1,13 @@
+{
+  "name": "novel-prompt-generator",
+  "version": "1.0.331",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "node -e \"console.log('Build completed')\""
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

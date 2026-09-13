@@ -2125,3 +2125,8 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 #app .de-card .de-chip{border:0;}
 #app .de-card .de-cloud-p{cursor:pointer;}
 #app .de-card .de-chip:focus-visible,#app .de-card .de-cloud-p:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+.ncd-view-progress{font-weight:600;display:inline-flex;align-items:center;gap:4px;border-color:color-mix(in srgb,var(--accent) 40%,var(--line));background:var(--panel);white-space:nowrap}
+.ncd-view-progress:hover{background:color-mix(in srgb,var(--accent) 15%,var(--panel))}
+.sc-step.running{position:relative;animation:pulse 1.4s ease infinite;border-color:var(--accent)!important;color:var(--txt)!important;font-weight:700}
+.sc-pipe-t b{color:var(--accent)}
+

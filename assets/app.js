@@ -413,10 +413,10 @@ let genBatchN = 2;
 function remainingEmptyChapters(){ return (state.chapters||[]).filter(c=> !(c.content && String(c.content).trim())).length; }
 function uid(p){ return (p||'id')+(++uidSeq)+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
 const TM_KEYS = ['idea',
-  'plannerTitles','planBeats','planTimeline','plannerAux',
-  'dictmaster','chapter',
-  'strip','subplot','glossary','rolling',
-  'contentAdvice','assets','recipe'];
+  'principal', 'teacher', 'dictmaster', 'dictEnrich',
+  'chapter',
+  'strip', 'subplot', 'glossary', 'rolling',
+  'contentAdvice', 'assets', 'recipe'];
 
 function glmModels(){ return [
   {name:'glm-4.5-air', label:'GLM-4.5-Air（智谱 · 高性价比，现用）', kind:'pro'},
@@ -510,20 +510,19 @@ function resolveActiveSpec(taskKey){
     model: model.name || 'deepseek-v4-pro',
     temperature: (cfg.temperature==null ? 0.6 : cfg.temperature),
     ideaTemp:    (cfg.ideaTemp==null ? 0.5 : cfg.ideaTemp),
-    dictmasterTemp: (cfg.dictmasterTemp==null ? 0.5 : cfg.dictmasterTemp),
+    principalTemp:(cfg.principalTemp==null ? 0.4 : cfg.principalTemp),
+    teacherTemp: (cfg.teacherTemp==null ? 0.4 : cfg.teacherTemp),
+    dictmasterTemp: (cfg.dictmasterTemp==null ? 0.4 : cfg.dictmasterTemp),
+    dictEnrichTemp: (cfg.dictEnrichTemp==null ? 0.4 : cfg.dictEnrichTemp),
     assetsTemp:  (cfg.assetsTemp==null ? 0.7 : cfg.assetsTemp),
     titleTemp:   (cfg.titleTemp==null ? 0.5 : cfg.titleTemp),
     chapterTemp: (cfg.chapterTemp==null ? 0.5 : cfg.chapterTemp),
     qcTemp:      (cfg.qcTemp==null ? 0.2 : cfg.qcTemp),              // 分任务温度：词库提取（严谨低温）
-    planTemp:    (cfg.planTemp==null ? 0.4 : cfg.planTemp),
-    planBeatsTemp:(cfg.planBeatsTemp==null ? 0.4 : cfg.planBeatsTemp),
-    planTimelineTemp:(cfg.planTimelineTemp==null ? 0.4 : cfg.planTimelineTemp),
-    plannerTitlesTemp:(cfg.plannerTitlesTemp==null ? 0.4 : cfg.plannerTitlesTemp),// v1.0.219 规划师·标题定稿 独立温度
-    plannerAuxTemp:(cfg.plannerAuxTemp==null ? 0.4 : cfg.plannerAuxTemp),
     stripTemp:   (cfg.stripTemp==null ? 1.0 : cfg.stripTemp),
     subplotTemp: (cfg.subplotTemp==null ? 0.25 : cfg.subplotTemp),    // 分任务温度：支线进度更新（契约类窄采样）
     rollingTemp: (cfg.rollingTemp==null ? 0.3 : cfg.rollingTemp),    // 分任务温度：滚动摘要（忠实压缩）
-    contentAdviseTemp: (cfg.contentAdviseTemp==null ? 0.6 : cfg.contentAdviseTemp)  // 分任务温度：内容建议（建议类）
+    contentAdviseTemp: (cfg.contentAdviseTemp==null ? 0.6 : cfg.contentAdviseTemp),  // 分任务温度：内容建议（建议类）
+    aiRecipeTemp:(cfg.aiRecipeTemp==null ? 0.9 : cfg.aiRecipeTemp)
   };
 }
 function currentSpecLabel(){
@@ -2218,6 +2217,10 @@ const AI_RECIPE_SYS_PRO = `你是一位资深长篇小说「风格工程师」�
     "why": "为何这样选（中文引用词条 name，1-2句）",
     "scenario": "适用场景（题材/章节阶段/文风匹配度，1-2句）",
     "gap": null
+    // 或 gap（一次可给多条，务必给全所有缺口）：[
+    //   {"name":"...","cat":"语言质感","id":"...","note":"...","tips":["..."],"avoid":["..."],"check":["..."],"demo":"...","reasons":"..."},
+    //   {"name":"...","cat":"叙事技法","id":"...","note":"...","tips":["..."],"avoid":["..."],"check":["..."],"demo":"...","reasons":"..."}
+    // ]
   }
 ]
 
@@ -2809,7 +2812,10 @@ function chapterMaxTokens(){
 function clampMaxTokens(task){
   const limits = {
     chapter: 7000,      // 正文最大单次输出（目标 3000—3600 字，留约 2 倍缓冲；上限过高会放任模型把单章拖成 1.6w）
-    chapterPlan: 32000, // 全书规划师单批(25章完整节拍表)输出，避免批次 JSON 超出 4096 被截断
+    principal: 16384,   // 校长统筹总控
+    teacher: 16384,     // 老师分批教案
+    dictmaster: 16384,  // 万物词典生成
+    dictEnrich: 8192,   // 词典充实与收编
     glossary: 9216,
     json: 4096,         // JSON 类契约输出
     recipe: 8192,
@@ -3168,7 +3174,8 @@ function applyPrincipalTitles(){
   return doApplyTitles(titles);
 }
 
-function doApplyTitles(titles){
+function doApplyTitles(titles, opts){
+  opts = opts || {};
   if(!state.outline) state.outline = { chapters: [] };
   if(!Array.isArray(state.outline.chapters)) state.outline.chapters = [];
   const maxNum = Math.max(...titles.map(t=>t.num), state.outline.chapters.length);
@@ -3191,7 +3198,7 @@ function doApplyTitles(titles){
   });
   persist();
   render();
-  toast(`已成功将校长拟定的 ${titles.length} 章标题应用到全书大纲与章节！`);
+  if(!opts.silent) toast(`已成功将校长拟定的 ${titles.length} 章标题应用到全书大纲与章节！`);
   return true;
 }
 
@@ -3399,12 +3406,17 @@ async function genPrincipal(btn, opts){
   const sys = folded ? PRINCIPAL_FOLDED_SYS : PRINCIPAL_SYS;
   markAIRunning('principal'); if(btn) busy(btn, true, folded ? '校长兼任课教师备课中…' : '校长统筹中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
   try{
+    const spec = resolveActiveSpec('principal');
+    const temp = (spec && spec.principalTemp != null) ? spec.principalTemp : 0.4;
     for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
       try{
-        const txt = await callAIGuarded('principal', sys, buildPrincipalUser(groups), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
+        const txt = await callAIGuarded('principal', sys, buildPrincipalUser(groups), {}, { temperature:temp, maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry('principal', attempt); scRefreshBadge(btn,'principal'); throw new Error('校长返回空'); }
         const sc = scState();
         const titles = parsePrincipalTitles(txt);
+        if(titles && titles.length){
+          doApplyTitles(titles, { silent: true });
+        }
         if(folded){
           const lessonRaw = extractSection(txt, '# 逐章教案', '') || extractSection(txt, '逐章教案', '') || txt;
           sc.principal = { ts:Date.now(), folded:true, groups: [{ gi:0, stage: groups[0].stage, first: groups[0].first, last: groups[0].last }], raw:String(txt), titles };
@@ -3414,13 +3426,13 @@ async function genPrincipal(btn, opts){
           markAIDone('principal');
           markAIDone('t0');
           render();
-          toast(`校长兼老师备课完成：守则 + ${titles.length||groups[0].last}章标题 + 逐章教案已一步到位就绪！`);
+          toast(`校长兼老师备课完成：守则 + ${titles.length||groups[0].last}章标题（已自动定稿）+ 逐章教案就绪！`);
         } else {
           sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles };
           scMark('principal', true);
           markAIDone('principal');
           render();
-          toast(`校长统筹完成：${groups.length} 位老师分组 + 全校守则 + 组级框架 + ${titles.length}章标题总表已就绪`);
+          toast(`校长统筹完成：${groups.length} 位老师分组 + 全校守则 + 组级框架 + ${titles.length}章标题已自动定稿应用！`);
         }
         playDoneSound('single');
         return true;
@@ -3546,9 +3558,11 @@ async function genTeacher(btn, gi){
   scState();
   markAIRunning(key); if(btn) busy(btn, true, '备课中…'); if(btn && btn.parentNode) showStopBtn(btn.parentNode);
   try{
+    const spec = resolveActiveSpec('teacher');
+    const temp = (spec && spec.teacherTemp != null) ? spec.teacherTemp : 0.4;
     for(let attempt=1; attempt<=SCHOOL_RETRY_MAX; attempt++){
       try{
-        const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:0.5, maxTokens:16384, signal:_abortCtl?.signal });
+        const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:temp, maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry(key, attempt); scRefreshBadge(btn,key); throw new Error('老师返回空'); }
         const sc = scState(); sc.teachers[gi] = { gi, ts:Date.now(), raw:String(txt) };
         scMark(key, true); markAIDone(key);
@@ -3582,6 +3596,48 @@ async function nailRetry(key, label, run, btn){
   return false;
 }
 
+function refreshSchoolProgressUi(){
+  const topText = document.querySelector('.sc-pipe-t');
+  const pipeIn = document.querySelector('.sc-pipe-in');
+  const pipeMeta = document.querySelector('.sc-pipe-m');
+  const allBtn = document.querySelector('[data-scp-all]');
+  const subtag = document.querySelector('.ch-subtag-school');
+  const groups = schoolStageGroups();
+  const folded = isSchoolFolded();
+  const totalSteps = folded ? 3 : (3 + groups.length);
+  const keys = folded ? ['dictMaster','dictEnrich','principal'] : ['dictMaster','dictEnrich','principal', ...groups.map((g,i)=>'t'+i)];
+  const doneSteps = keys.filter(scDone).length;
+  const pct = totalSteps ? Math.round(doneSteps/totalSteps*100) : 0;
+  if(pipeIn) pipeIn.style.width = pct + '%';
+  if(pipeMeta) pipeMeta.textContent = `${doneSteps}/${totalSteps} 步就绪 · ${pct}%`;
+  if(subtag) subtag.textContent = `${doneSteps}/${totalSteps} 步就绪 · ${pct}%`;
+  if(state._schoolRunning){
+    const run = state._schoolRunning;
+    if(topText) topText.innerHTML = `⚡ <b>一键开学进行中</b>（${run.stepIndex+1}/${run.totalSteps} · ${esc(run.label)}）…`;
+    if(allBtn){
+      allBtn.classList.add('running');
+      allBtn.innerHTML = `⚡ 一键开学中（${run.stepIndex+1}/${run.totalSteps} · ${esc(run.label)}）…`;
+    }
+  } else {
+    if(topText) topText.textContent = folded ? `⏳ 设定就绪 → 学校开学（1-${groups.length?groups[0].last:20}章·单老师负责制）` : '⏳ 设定就绪 → 学校开学';
+    if(allBtn){
+      allBtn.classList.remove('running');
+      allBtn.innerHTML = '⚡ 一键开学（全链路备课）';
+    }
+  }
+  keys.forEach(k=>{
+    const el = document.querySelector(`[data-scp-step="${k}"]`);
+    if(el){
+      el.classList.toggle('done', scDone(k));
+      if(state._schoolRunning && state._schoolRunning.activeKey === k){
+        el.classList.add('running');
+      } else {
+        el.classList.remove('running');
+      }
+    }
+  });
+}
+
 async function genSchoolAll(btn){
   if(genBusy()){ toast('已有生成任务进行中，请稍候'); return; }
   const groups = schoolStageGroups(); if(!groups.length){ toast('请先填写章节数，才能一键开学'); return; }
@@ -3599,17 +3655,26 @@ async function genSchoolAll(btn){
   const allBtn = ()=> document.querySelector('[data-scp-all]');
   const presetTitles = ()=>{
     const titles = (state.school && state.school.principal && Array.isArray(state.school.principal.titles)) ? state.school.principal.titles : [];
-    if(titles.length && !isPrincipalTitlesApplied()) doApplyTitles(titles);
+    if(titles.length && !isPrincipalTitlesApplied()) doApplyTitles(titles, { silent:true });
   };
   if(scDone('principal')) presetTitles();
-  const setTxt = t=>{ const b=allBtn(); if(b){ if(b._txt === undefined) b._txt = b.innerHTML; b.textContent = t; } };
-  const finish = ()=>{ const b=allBtn(); if(b){ if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; } b.classList.remove('running'); } };
-  if(btn){ btn.classList.add('running'); setTxt(`学校一键（0/${steps.length}）…`); }
+  const finish = ()=>{
+    state._schoolRunning = null;
+    const b = allBtn();
+    if(b){
+      if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; }
+      b.classList.remove('running');
+    }
+    refreshSchoolProgressUi();
+  };
+  const b0 = allBtn();
+  if(b0 && b0._txt === undefined) b0._txt = b0.innerHTML;
   try{
-    for(let i=0;i<steps.length;i++){
+    for(let i=0; i<steps.length; i++){
       const st = steps[i];
       if(scDone && scDone(st.key)) continue;
-      setTxt(`学校一键（${i+1}/${steps.length}·${st.label}）…`);
+      state._schoolRunning = { activeKey:st.key, stepIndex:i, totalSteps:steps.length, label:st.label };
+      refreshSchoolProgressUi();
       const zone = document.querySelector('.school-zone');
       let stopped = false;
       if(zone){ showStopBtn(zone); zone.classList.add('cp-stopping'); if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true}); }
@@ -3618,15 +3683,19 @@ async function genSchoolAll(btn){
       if(ok && st.key==='principal'){
         const titles = (state.school && state.school.principal && Array.isArray(state.school.principal.titles)) ? state.school.principal.titles : [];
         if(titles.length && !isPrincipalTitlesApplied()){
-          doApplyTitles(titles);
+          doApplyTitles(titles, { silent:true });
         }
       }
       if(ok && scMark){ scMark(st.key, true); }
-      if(!ok){ toast(stopped ? `已停止学校一键（停在「${st.label}」）` : `学校一键中断于「${st.label}」，可单独点该步骤重试`); return; }
+      refreshSchoolProgressUi();
+      if(!ok){
+        toast(stopped ? `已停止学校一键（停在「${st.label}」）` : `学校一键中断于「${st.label}」，可单独点该步骤重试`);
+        return;
+      }
     }
-    toast(folded ? '学校一键完成：达人→充实→校长兼老师→标题已自动应用→正文就绪！' : '学校一键全部完成：达人→充实→校长→标题已自动应用→全部老师备课就绪！');
+    toast(folded ? '学校一键完成：达人→充实→校长兼老师→标题已自动应用定稿→正文就绪！' : '学校一键全部完成：达人→充实→校长→标题已自动应用定稿→全部老师备课就绪！');
     playDoneSound('all');
-  }finally{ finish(); }
+  }finally{ finish(); render(); }
 }
 
 function bindSchoolSteps(){
@@ -4182,46 +4251,6 @@ function beatCnt(){ return beatTypesDefs().length; }
 function beatLabelFor(key){ return BEAT_LABEL_ALL[key] || BEAT_LEGACY_LABEL[key] || (()=>{ const t=beatTypesDefs().find(x=>x.key===key); return t?t.label:key; })(); }
 function beatNoteFor(key){ return BEAT_HINT_ALL[key] || ''; }
 function isClimaxType(key){ return /高潮|高点/.test(BEAT_LABEL_ALL[key] || key); }
-function buildBeatsSys(){
-  const cfg = currentBeatCfg(), defs = cfg.types;
-  const rhythm = defs.map((t,i)=>`${i+1}. ${t.label}（type=${t.key}）：${t.note}`).join('\n');
-  const selectRule = cfg.id===3 ? '读者偏好短促密集的节奏（新媒体型）' : (cfg.id===5 ? '读者偏好情绪起伏张弛有度（传统标准）' : (cfg.id===2 ? '读者偏好前段积累、后段集中揭示的结构（悬疑惊悚）' : '读者偏好细腻温和的情感递进（慢热细腻型）'));
-  const shape = shapeKind()==='team' ? `本作采用团队群像：每章须让核心团队在场并让每位成员有“存在反应”，对话要有多声口对手戏，不得整章只写主角独角戏、配角当背景板。` : (shapeKind()==='dual' ? `本作采用双主角：两条主线都要拿到实质推进与镜头，交汇/对照/张力拍是本书记忆点，不得只写一方晾另一方。` : `本作采用主角线单人叙事，专注单主角的行为与心理。`);
-  return `你是一位资深长篇「章节编排师」。请为指定批次的章节，基于【全书章节标题】【全书节拍阶段】【设定词典】【前文骨架】，为每一章各输出一份「章节编排」纯文本。**你的职责是排「节拍」——这一章由哪几个节拍、按什么顺序推进，每个节拍具体发生什么——而不是写正文散文。**正文散文由正文 AI 负责；你只产出每一章的节拍蓝图：每个节拍一段微剧情梗概，让正文 AI 拿着它就能按图索骥展开成扎实生动的正文，且不机械重复。
-【当章微拍节奏（${cfg.label}）——${selectRule}】
-${rhythm}
-${shape}
-【每章编排要素（一律用独立小节标题顶格起行，冒号紧跟；节拍表按这些小节清晰展示，不是散文）】
-1. 承接点：本章从上一章哪个动作/对话/悬念自然续上（第1章则写登场切入点）。
-2. 场景链与切换：本章依剧情推进依次经过哪些场景/地点，用「→」连成一条场景链，并在节点括号注明该场景在此发生什么；刻意让场景与地点错落变化，严禁连续多章默认落在同一场景里原地打转；确需重复地点时，也要换人物组合/新冲突/新信息切进这一地点的不同侧面。
-3. 逐拍推进（核心·要密实）：必须严格按上方【当章微拍节奏】的每一拍，**逐拍单独成行**输出，格式为「拍名：该拍具体发生什么」。**严禁把任何一拍写成一句话概括**：每一拍都必须写成一段"微剧情"（至少 2~4 句、约 60~120 字），写清——该拍发生在何地/何时、在场有谁、主角在此拍的动作与交锋、遇到的冲突或阻碍、以及这拍结束时人物/局势的状态变化或新信息；不要用"他遇到了困难"这类空洞概括，要给出能直接落成画面、动作、对话、心理活动的具体素材，让正文 AI 拿它就能独自把这一拍铺展成细节饱满的正文。禁止把各拍合并成整段散文、禁止省略或合并任何一拍、禁止只留一句骨架。
-4. 情绪弧：本章情绪从什么到什么，一句话概括。
-5. 出场实体：本章要落到文中的人名/地名/专名（优先取自设定词典；确需新增的配角/路人/地名/专名一并纳入，并在底部【本章实体清单】统一登记）。
-6. 埋设伏笔：本章要在文中悄悄埋下什么线索（可留空，有则写，措辞直白不绕弯）。
-7. 收束设计：本章以何种落地/悬置方式收尾并指向下一章。
-【输出格式（严格纯文本，不是 JSON）】
-对输入中的每一章各输出一个章节块，格式严格为（前后各空一行）；块内各小节标题（承接点 / 场景链与切换 / 逐拍推进 / 情绪弧 / 出场实体 / 埋设伏笔 / 收束设计）一律**顶格、以冒号紧跟**，便于程序按小节识别展示。逐拍推进下，每个节拍一行：
-===== 第N章 =====
-承接点：……
-场景链与切换：青石村（林小满的家）→ 村口（……）→ 田地（……）
-逐拍推进：
-开篇铺垫：……
-冲突推进：……
-（其余每拍按【当章微拍节奏】继续，“拍名：内容”各占一行，拍数与节拍一一对应）
-情绪弧：……
-出场实体：……
-埋设伏笔：……
-收束设计：……
-【时间线要点】（独占一行，紧接收束设计之后）——用一两句话浓缩【全书时间线】判时所需的时间精华：支线 + 本章起止时点 + 时间跨度 + 关键的承接与收束（如「现实·第2天清晨→第4天傍晚（约3日）：承接上章追杀突围后逃离，收束抵达边境镇入夜」）。只写与"时间如何流动"直接相关的内容，不含无关情节细节；无明确时间则写实际在场时刻/跨度。
-【本章实体清单】（独占一行，紧接【时间线要点】之后，**仅确有新实体才写此行**，无则省略）——格式示例：「人物｜张三｜；人物｜李四｜；地名｜边境镇｜；专名｜玄铁剑｜」，每个实体用「类别｜名称｜」分隔，「类别」固定为「人物/地名/专名」，末尾加分号。不输出多余文字。
-章节块之间空一行；“第N章”的 N 必须用输入中该章的绝对章号。章节块之外不要输出任何解释、前后缀或 markdown 代码块。
-【硬约束】
-1. 每章编排须落在其所属「全书节拍的阶段」内、服务该阶段走向，不得越过当前阶段提前兑现后续阶段剧情；相邻章连续递进。
-2. 事件描述必须具体、无歧义、给正文留演绎空间：写清谁、做了什么、结果/冲突是什么，可直白、不要反义/潜台词式的绕弯表达（正文会误读）。
-3. 出场实体可取自设定词典；确需引入词典外的下位配角/路人/地名/专名以丰满本章时，允许适度新增（主角/核心反派/核心地域的绝对核心名仍禁止乱加），所增新名一律登记到本块【本章实体清单】供词典充实收编。
-4. 每章编排要足够密实——自我判定：只看「逐拍推进」下每一拍的描述，若某一拍一两句就能读完、正文 AI 拿它无米可下锅，就判为"一句话骨架"并重写；全章所有拍的描述合起来，须让正文 AI 有充足的场景、地点、动作、人物互动、冲突与结果可铺。按教案按图索骥，有多少料写多少正文。不要流水账、不要多章雷同、不要总分总套话。
-5. 只输出上述章节编排纯文本。
-`;}
 
 const STRIP_READ_SYS_LEGACY = `你是一名长篇章节「速读梗概」撰写助手。本章梗概的最大来源是本章正文，其余（词典）仅作参考；你要做的是把本章正文压缩到约 1/3 的字数，让没耐心读完全文的读者能省时读完，却基本不失信息。
 要求：
@@ -6279,17 +6308,237 @@ function longNovelHealthHtml(){
   const scores={连续性:Math.max(55,100-Math.min(35,noDigest*4)),因果:Math.max(55,100-Math.min(35,noPlan*3)),伏笔:open?Math.max(60,96-Math.min(30,open*2)):96,记忆:written?Math.max(65,100-Math.min(30,noDigest*5)):60};
   return `<div class="lm-health-grid">${Object.entries(scores).map(([k,v])=>`<div class="lm-score"><b>${k}</b><strong>${v}</strong><span>/100</span></div>`).join('')}</div><div class="lm-health-notes"><span>已写 ${written}/${total||'?'} 章</span><span>缺教案 ${noPlan}</span><span>缺细摘要 ${noDigest}</span><span>未确认回收伏笔 ${open}</span></div>`;
 }
+function getDeckStepStatus(){
+  const o = state.outline;
+  const chs = (o && Array.isArray(o.chapters)) ? o.chapters : [];
+  const total = chs.length || chapterCountVal() || 0;
+  const written = writtenChapterCount();
+  const groups = schoolStageGroups();
+  const folded = isSchoolFolded();
+
+  const s1_done = !!(state.chapterStyle && state.chapterStyle.tags && state.chapterStyle.tags.length);
+  const s2_done = !!(state.polishAdopted || (state.idea && state.idea.trim()));
+  const s3_done = !!(state.outlineConfirmed && o && chs.length > 0);
+  const s4_done = !!(scDone('dictMaster') || state.dictmasterRan || (o && o.glossary && ((o.glossary.characters||[]).length > 0)));
+  const s5_done = scDone('principal');
+  const s6_done = folded ? scDone('principal') : (groups.length > 0 && groups.every((g,i)=>scDone('t'+i)));
+  const s7_done = (total > 0 && written >= total);
+
+  const steps = [
+    { key:'style', name:'风格', done:s1_done, target:'[data-flow="1"]', desc: s1_done ? '已选定小说文风倾向' : '待设定小说文风' },
+    { key:'idea',  name:'构想', done:s2_done, target:'[data-flow="2"]', desc: s2_done ? '核心故事构想已就绪' : '待输入核心构想' },
+    { key:'outline',name:'大纲', done:s3_done, target: (o ? '[data-flow="2"]' : '#btnGenOutline'), desc: s3_done ? `已定稿 ${chs.length} 章分卷大纲` : '待生成全书大纲' },
+    { key:'dict',  name:'词典', done:s4_done, target:'.card-theme-dictmaster', desc: s4_done ? '万物词典人物/地名已架构' : '待词典达人建立万物词典' },
+    { key:'principal',name:'校长', done:s5_done, target:'.school-card', desc: s5_done ? '校长统筹守则与标题已定稿' : '待校长统筹全局' },
+    { key:'teacher',name:'老师', done:s6_done, target:'.school-teachers', desc: s6_done ? (folded ? '单老师教案已出齐' : `${groups.length} 位老师分段教案就绪`) : '待老师备课分段教案' },
+    { key:'chapter',name:'正文', done:s7_done, target:'.chapter-card', desc: written ? `正文已落地 ${written}/${total||'?'} 章` : '待生成第 1 章正文' }
+  ];
+
+  let foundActive = false;
+  steps.forEach(st => {
+    if(!st.done && !foundActive){
+      st.active = true;
+      foundActive = true;
+    } else {
+      st.active = false;
+    }
+  });
+  return steps;
+}
+
+function openCreationProgressModal(){
+  const o = state.outline;
+  const chs = (o && Array.isArray(o.chapters)) ? o.chapters : [];
+  const total = chs.length || chapterCountVal() || 0;
+  const written = writtenChapterCount();
+  const pct = total ? Math.round(written/total*100) : 0;
+  const steps = getDeckStepStatus();
+
+  let totalChars = 0;
+  const chRows = [];
+  for(let i=0; i<total; i++){
+    const ch = chs[i] || {};
+    const title = String(ch.title || (state.school && state.school.principal && state.school.principal.titles && state.school.principal.titles[i]) || `第 ${i+1} 章`).trim();
+    const body = String(ch.body || ch.content || '').trim();
+    const len = body.length;
+    if(len > 0) totalChars += len;
+    const hasPlan = Array.isArray(o.chapterPlans) && !!o.chapterPlans[i];
+    chRows.push({
+      idx: i + 1,
+      title,
+      len,
+      done: len > 0,
+      hasPlan
+    });
+  }
+
+  const g = (o && o.glossary) || {};
+  const charCount = (g.characters||[]).length;
+  const placeCount = (g.places||[]).length;
+  const propCount = (g.propernouns||[]).length;
+  const ruleCount = (g.rules||[]).length;
+
+  const fo = refreshForeshadowBank();
+  const foOpen = fo.filter(x=>x.status==='open').length;
+  const foDone = fo.filter(x=>x.status==='done'||x.status==='resolved').length;
+
+  const bodyHtml = `
+    <div class="cp-modal-view">
+      <!-- 汇总大卡片 -->
+      <div class="cp-summary-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+        <div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px">
+          <div style="font-size:11px;color:var(--dim)">章节落地率</div>
+          <div style="font-size:20px;font-weight:700;color:var(--pri);margin-top:2px">${written} / ${total||'?'} <span style="font-size:12px;font-weight:400;color:var(--sub)">(${pct}%)</span></div>
+          <div style="height:4px;background:var(--line);border-radius:2px;margin-top:6px;overflow:hidden">
+            <div style="height:100%;background:var(--pri);width:${pct}%"></div>
+          </div>
+        </div>
+        <div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px">
+          <div style="font-size:11px;color:var(--dim)">正文总字数</div>
+          <div style="font-size:20px;font-weight:700;color:var(--txt);margin-top:2px">${totalChars.toLocaleString()} <span style="font-size:12px;font-weight:400;color:var(--sub)">字</span></div>
+          <div style="font-size:11px;color:var(--dim);margin-top:6px">${written ? `均章 ${Math.round(totalChars/written)} 字` : '首章待生成'}</div>
+        </div>
+        <div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px">
+          <div style="font-size:11px;color:var(--dim)">万物词典资产</div>
+          <div style="font-size:18px;font-weight:700;color:var(--txt);margin-top:2px">${charCount} 人物 · ${placeCount} 地名</div>
+          <div style="font-size:11px;color:var(--dim);margin-top:6px">${propCount} 专名 · ${ruleCount} 规则</div>
+        </div>
+        <div style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px">
+          <div style="font-size:11px;color:var(--dim)">伏笔与因果</div>
+          <div style="font-size:18px;font-weight:700;color:var(--txt);margin-top:2px">${foOpen} <span style="font-size:12px;font-weight:400;color:var(--sub)">待回收</span></div>
+          <div style="font-size:11px;color:var(--dim);margin-top:6px">${foDone} 条已确认回收</div>
+        </div>
+      </div>
+
+      <!-- 7 大创作工序全景健康体检 -->
+      <div style="margin-bottom:14px">
+        <div style="font-weight:600;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px">
+          <span>🎯 长篇创作工序全景状态</span>
+          <span style="font-size:11px;color:var(--dim);font-weight:400">（点击工序可直接跳转到对应卡片）</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          ${steps.map(st=>`
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:6px;gap:8px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span class="pill ${st.done ? 'tag-ok' : (st.active ? 'tag-warn' : '')}" style="font-size:11px;padding:2px 6px">
+                  ${st.done ? '✓ 已就绪' : (st.active ? '⏳ 进行中' : '⚪ 待推进')}
+                </span>
+                <b style="font-size:13px">${esc(st.name)}</b>
+                <span style="font-size:12px;color:var(--sub)">${esc(st.desc)}</span>
+              </div>
+              <button type="button" class="btn small ghost" data-modal-jump="${st.target}" style="padding:2px 8px;font-size:11px">定位</button>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <!-- 逐章落地进度明细表 -->
+      ${chRows.length ? `
+        <div>
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px">📖 逐章落地明细表（共 ${chRows.length} 章）</div>
+          <div style="max-height:240px;overflow-y:auto;border:1px solid var(--line);border-radius:6px">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;text-align:left">
+              <thead>
+                <tr style="background:var(--panel2);border-bottom:1px solid var(--line);color:var(--dim)">
+                  <th style="padding:6px 10px;width:60px">章号</th>
+                  <th style="padding:6px 10px">标题</th>
+                  <th style="padding:6px 10px;width:90px">正文字数</th>
+                  <th style="padding:6px 10px;width:90px">状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${chRows.map(r=>`
+                  <tr style="border-bottom:1px solid var(--line)">
+                    <td style="padding:6px 10px;font-weight:600">第 ${r.idx} 章</td>
+                    <td style="padding:6px 10px">${esc(r.title)}</td>
+                    <td style="padding:6px 10px;color:${r.done?'var(--pri)':'var(--dim)'}">${r.done ? `${r.len.toLocaleString()} 字` : '—'}</td>
+                    <td style="padding:6px 10px">
+                      <span class="pill ${r.done ? 'tag-ok' : (r.hasPlan ? 'tag-warn' : '')}" style="font-size:10px;padding:1px 5px">
+                        ${r.done ? '✓ 正文就绪' : (r.hasPlan ? '教案已备' : '待推进')}
+                      </span>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  const actsHtml = `
+    <button type="button" class="btn ghost small" data-modal-open-repo>🧠 展开长篇体检仓</button>
+    <button type="button" class="btn primary small" data-modal-close>关闭</button>
+  `;
+
+  openNeModal('📊 长篇创作全景进度与健康体检', bodyHtml, actsHtml);
+
+  // 绑定弹窗内事件
+  const m = $('#neModal');
+  if(m){
+    m.querySelectorAll('[data-modal-jump]').forEach(b=>{
+      b.onclick = ()=>{
+        const target = document.querySelector(b.dataset.modalJump);
+        closeNeModal();
+        if(target){
+          setTimeout(()=>{
+            target.scrollIntoView({ behavior:'smooth', block:'center' });
+            target.classList.add('gs-flash');
+            setTimeout(()=> target.classList.remove('gs-flash'), 1600);
+          }, 150);
+        }
+      };
+    });
+    const repoBtn = m.querySelector('[data-modal-open-repo]');
+    if(repoBtn){
+      repoBtn.onclick = ()=>{
+        closeNeModal();
+        const d = document.querySelector('.long-memory-repo details');
+        if(d){
+          d.open = true;
+          ensureLongMemory().uiOpen = true;
+          persist();
+          setTimeout(()=> d.scrollIntoView({ behavior:'smooth', block:'start' }), 150);
+        }
+      };
+    }
+    const closeBtn = m.querySelector('[data-modal-close]');
+    if(closeBtn) closeBtn.onclick = ()=> closeNeModal();
+  }
+}
+
 function longNovelControlDeckHtml(){
   if(!isLong()) return '';
   const d=longNovelMemoryData(); const total=(state.outline&&state.outline.chapters||[]).length||chapterCountVal()||0, written=writtenChapterCount();
   const current=written?written:0; const pct=total?Math.round(written/total*100):0;
+  const steps = getDeckStepStatus();
+  const stepsHtml = steps.map(st=>{
+    const cls = st.done ? 'done' : (st.active ? 'active' : '');
+    return `<span class="${cls}" data-deck-jump="${st.target}" title="点击定位到「${st.name}」环节" style="cursor:pointer">${esc(st.name)}</span>`;
+  }).join('<b>→</b>');
+
   return `<section class="novel-control-deck" data-novel-deck>
-    <div class="ncd-head"><div><span class="ncd-kicker">🎬 LONGFORM CONTROL DESK</span><h2>长篇导演台</h2><p>只显示“现在最重要的状态与动作”；详细资料收进下方资料仓。</p></div><div class="ncd-progress"><b>${current}/${total||'?'}</b><span>章节落地</span><i><em style="width:${pct}%"></em></i></div></div>
-    <div class="ncd-steps"><span class="done">风格</span><b>→</b><span class="done">构想</span><b>→</b><span class="done">大纲</span><b>→</b><span class="done">节拍</span><b>→</b><span class="done">词典</span><b>→</b><span class="done">校长</span><b>→</b><span class="active">老师</span><b>→</b><span>正文</span></div>
+    <div class="ncd-head">
+      <div>
+        <span class="ncd-kicker">🎬 LONGFORM CONTROL DESK</span>
+        <h2>长篇导演台</h2>
+        <p>只显示“现在最重要的状态与动作”；详细资料收进下方资料仓。</p>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button type="button" class="btn small ghost ncd-view-progress" data-ncd-progress title="点击打开长篇全景创作进度与健康体检">📊 创作进度查看</button>
+        <div class="ncd-progress" data-ncd-progress style="cursor:pointer" title="点击查看创作全景进度">
+          <b>${current}/${total||'?'}</b>
+          <span>章节落地 · ${pct}%</span>
+          <i><em style="width:${pct}%"></em></i>
+        </div>
+      </div>
+    </div>
+    <div class="ncd-steps">${stepsHtml}</div>
     <div class="ncd-grid">
       <div class="ncd-card"><small>当前小说状态</small><b>${written?`第 ${written} 章已落地`:'尚未落地正文'}</b><span>${esc(d.fc.lastScene||'等待第一章形成真实世界状态')}</span></div>
       <div class="ncd-card"><small>下一关键动作</small><b>${written<total?'继续生成下一章':'检查全书收束'}</b><span>${written<total?'正文将从上一章真实状态继续，不另起炉灶。':'全书已达到计划章节数，可进入体检与收束检查。'}</span></div>
-      <div class="ncd-card"><small>长篇健康</small><b>${written?'记忆链已启用':'等待首章'}</b><span>状态账本 · 因果地图 · 伏笔银行 · 章间接缝</span></div>
+      <div class="ncd-card" data-ncd-progress style="cursor:pointer"><small>长篇健康</small><b>${written?'记忆链已启用':'等待首章'}</b><span>状态账本 · 因果地图 · 伏笔银行 · 章间接缝</span></div>
     </div>
   </section>`;
 }
@@ -6307,6 +6556,23 @@ function longNovelMemoryRepoHtml(){
 function bindLongNovelMemoryRepo(){
   const d=document.querySelector('.long-memory-repo details'); if(!d) return;
   d.addEventListener('toggle',()=>{ ensureLongMemory().uiOpen=d.open; persist(); });
+}
+function bindLongNovelControlDeck(){
+  $$('[data-ncd-progress]').forEach(btn=>{
+    btn.onclick = ()=> openCreationProgressModal();
+  });
+  $$('[data-deck-jump]').forEach(el=>{
+    el.onclick = ()=>{
+      const sel = el.dataset.deckJump;
+      if(!sel) return;
+      const target = document.querySelector(sel);
+      if(target){
+        target.scrollIntoView({ behavior:'smooth', block:'center' });
+        target.classList.add('gs-flash');
+        setTimeout(()=> target.classList.remove('gs-flash'), 1600);
+      }
+    };
+  });
 }
 
 function viewStory(){
@@ -7757,17 +8023,19 @@ function microBeatBlock(){
 function schoolPipelineProgress(){
   const groups = schoolStageGroups();
   const folded = isSchoolFolded();
+  const run = state._schoolRunning;
   if(folded){
     const keys = ['dictMaster','dictEnrich','principal'];
     const done = keys.filter(scDone).length;
     const pct = Math.round(done / 3 * 100);
+    const topMsg = run ? `⚡ <b>一键开学进行中</b>（${run.stepIndex+1}/${run.totalSteps} · ${esc(run.label)}）…` : `⏳ 设定就绪 → 学校开学（1-${groups.length?groups[0].last:20}章·单老师负责制）`;
     return `<div class="sc-pipeline">
-      <div class="sc-pipe-top"><span class="sc-pipe-t">⏳ 设定就绪 → 学校开学（1-20章·单老师负责制）</span><span class="sc-pipe-m">${done}/3 步就绪 · ${pct}%</span></div>
+      <div class="sc-pipe-top"><span class="sc-pipe-t">${topMsg}</span><span class="sc-pipe-m">${done}/3 步就绪 · ${pct}%</span></div>
       <div class="sc-pipe-bar"><span class="sc-pipe-in" style="width:${pct}%"></span></div>
       <div class="sc-pipe-steps">
-        <button type="button" class="sc-step ${scDone('dictMaster')?'done':''}" data-scp-step="dictMaster" title="词典达人：设定架构。中断后点此单独重跑">📖 词典达人${scBadge('dictMaster')}</button>
-        <button type="button" class="sc-step ${scDone('dictEnrich')?'done':''}" data-scp-step="dictEnrich" title="词典充实：细化与描写工坊。中断后点此单独重跑">🗂 词典充实${scBadge('dictEnrich')}</button>
-        <button type="button" class="sc-step ${scDone('principal')?'done':''}" data-scp-step="principal" title="老师备课：一次性出齐守则、章节标题总表与逐章教案">🎓 老师备课${scBadge('principal')}</button>
+        <button type="button" class="sc-step ${scDone('dictMaster')?'done':''} ${run&&run.activeKey==='dictMaster'?'running':''}" data-scp-step="dictMaster" title="词典达人：设定架构。中断后点此单独重跑">📖 词典达人${scBadge('dictMaster')}</button>
+        <button type="button" class="sc-step ${scDone('dictEnrich')?'done':''} ${run&&run.activeKey==='dictEnrich'?'running':''}" data-scp-step="dictEnrich" title="词典充实：细化与描写工坊。中断后点此单独重跑">🗂 词典充实${scBadge('dictEnrich')}</button>
+        <button type="button" class="sc-step ${scDone('principal')?'done':''} ${run&&run.activeKey==='principal'?'running':''}" data-scp-step="principal" title="老师备课：一次性出齐守则、章节标题总表与逐章教案">🎓 老师备课${scBadge('principal')}</button>
       </div>
     </div>`;
   }
@@ -7776,14 +8044,15 @@ function schoolPipelineProgress(){
   const done = keys.filter(scDone).length;
   const pct = total ? Math.round(done/total*100) : 0;
   const teacherAllDone = groups.length>0 && groups.every((g,i)=>scDone('t'+i));
+  const topMsg = run ? `⚡ <b>一键开学进行中</b>（${run.stepIndex+1}/${run.totalSteps} · ${esc(run.label)}）…` : '⏳ 设定就绪 → 学校开学';
   return `<div class="sc-pipeline">
-    <div class="sc-pipe-top"><span class="sc-pipe-t">⏳ 设定就绪 → 学校开学</span><span class="sc-pipe-m">${done}/${total} 步就绪 · ${pct}%</span></div>
+    <div class="sc-pipe-top"><span class="sc-pipe-t">${topMsg}</span><span class="sc-pipe-m">${done}/${total} 步就绪 · ${pct}%</span></div>
     <div class="sc-pipe-bar"><span class="sc-pipe-in" style="width:${pct}%"></span></div>
     <div class="sc-pipe-steps">
-      <button type="button" class="sc-step ${scDone('dictMaster')?'done':''}" data-scp-step="dictMaster" title="词典达人：全局设定架构。中断后点此单独重跑">📖 词典达人${scBadge('dictMaster')}</button>
-      <button type="button" class="sc-step ${scDone('dictEnrich')?'done':''}" data-scp-step="dictEnrich" title="词典充实：设定细化与描写工坊。中断后点此单独重跑">🗂 词典充实${scBadge('dictEnrich')}</button>
-      <button type="button" class="sc-step ${scDone('principal')?'done':''}" data-scp-step="principal" title="校长：统筹全局守则、组级框架与标题总表。中断后点此单独重跑">👑 校长总控${scBadge('principal')}</button>
-      <button type="button" class="sc-step ${teacherAllDone?'done':''}" data-scp-step="teacherAll" title="全部老师（${groups.length} 位）：逐位一次备完全组教案。中断后点此从第 1 位补到末位">🎓 全部老师备课</button>
+      <button type="button" class="sc-step ${scDone('dictMaster')?'done':''} ${run&&run.activeKey==='dictMaster'?'running':''}" data-scp-step="dictMaster" title="词典达人：全局设定架构。中断后点此单独重跑">📖 词典达人${scBadge('dictMaster')}</button>
+      <button type="button" class="sc-step ${scDone('dictEnrich')?'done':''} ${run&&run.activeKey==='dictEnrich'?'running':''}" data-scp-step="dictEnrich" title="词典充实：设定细化与描写工坊。中断后点此单独重跑">🗂 词典充实${scBadge('dictEnrich')}</button>
+      <button type="button" class="sc-step ${scDone('principal')?'done':''} ${run&&run.activeKey==='principal'?'running':''}" data-scp-step="principal" title="校长：统筹全局守则、组级框架与标题总表。中断后点此单独重跑">👑 校长总控${scBadge('principal')}</button>
+      <button type="button" class="sc-step ${teacherAllDone?'done':''} ${run&&run.activeKey.startsWith('t')?'running':''}" data-scp-step="teacherAll" title="全部老师（${groups.length} 位）：逐位一次备完全组教案。中断后点此从第 1 位补到末位">🎓 全部老师备课</button>
     </div>
   </div>`;
 }
@@ -7800,6 +8069,7 @@ function schoolZoneBlock(){
   const keys = folded ? ['dictMaster','dictEnrich','principal'] : ['dictMaster','dictEnrich','principal', ...groups.map((g,i)=>'t'+i)];
   const doneSteps = keys.filter(scDone).length;
   const pct = totalSteps ? Math.round(doneSteps/totalSteps*100) : 0;
+  const run = state._schoolRunning;
   return `<div class="card cp-card school-card card-theme-school">
     <div class="cp-head card-head-bar">
       <div class="ch-left">
@@ -7808,7 +8078,7 @@ function schoolZoneBlock(){
         <span class="ch-subtag ch-subtag-school">${doneSteps}/${totalSteps} 步就绪 · ${pct}%</span>
       </div>
       <div class="ch-right">
-        ${pTitles.length ? `<button type="button" class="sc-plan-btn sc-plan-apply-t ${titlesApplied?'applied':''}" data-scp-apply-titles title="应用拟定标题">${titlesApplied ? '✓ 标题已选用' : `✨ 选用拟定标题 (${pTitles.length}章)`}</button>` : ''}
+        ${pTitles.length ? `<button type="button" class="sc-plan-btn sc-plan-apply-t ${titlesApplied?'applied':''}" data-scp-apply-titles title="${titlesApplied ? '校长已自动选用拟定标题至全书章节；点击可再次全量覆盖同步' : '一键选用校长拟定标题至全书章节'}">${titlesApplied ? `✓ 校长标题已选用 (${pTitles.length}章)` : `✨ 选用拟定标题 (${pTitles.length}章)`}</button>` : ''}
         <button type="button" class="sc-plan-btn sc-plan-pr" data-scp-plan-pr title="查看写作守则与章节总表">📋 读校长成果</button>
       </div>
     </div>
@@ -7821,7 +8091,7 @@ function schoolZoneBlock(){
         ${schoolPipelineProgress()}
         <div class="school-steps">
           <div class="school-steps-main">
-            <button type="button" class="sc-step sc-runall" data-scp-all title="一键运行词典达人、词典充实、校长统筹与老师备课">⚡ 一键开学（全链路备课）</button>
+            <button type="button" class="sc-step sc-runall ${run?'running':''}" data-scp-all title="一键按序运行词典达人、词典充实、校长统筹与老师备课，标题自动定稿">${run ? `⚡ 一键开学中（${run.stepIndex+1}/${run.totalSteps} · ${esc(run.label)}）…` : '⚡ 一键开学（全链路备课）'}</button>
           </div>
         </div>
         <div class="school-teachers">
@@ -7856,28 +8126,7 @@ function bindChapterPlanFold(){
   };
 }
 function bindChapterPlan(){
-  const all = $('[data-cp-all]');
-  if(all) all.onclick = ()=> genPlannerAll(all);
-  $$('[data-cp-stage]').forEach(btn=>{
-    btn.onclick = ()=>{
-      const stage = btn.dataset.cpStage;
-      if(plannerStageDone(stage) && !confirm(`将重新生成「${stageLabel(stage)}」，覆盖现有内容，继续？`)) return;
-      genPlannerStage(btn, stage);
-    };
-  });
-  const setBeat = id=>{
-    state.outline = state.outline || {};
-    state.outline.beatCount = +id;
-    persist();
-    toast(`已切换为「${currentBeatCfg().label}」微拍（${beatCnt()} 段）；重新生成①节拍表即可生效。`);
-    render();
-  };
-  $$('[data-micropick]').forEach(li=>{
-    li.addEventListener('click', e=>{ if(e.target.closest('.stop-btn')) return; setBeat(li.dataset.micropick); });
-  });
-  const rawBtn = $('[data-cp-raw]');
-  if(rawBtn) rawBtn.onclick = ()=> openCpRawPanel();
-  bindSchoolSteps();   // 学校模式：校长/老师/一键 按钮绑定
+  bindSchoolSteps();   // 学校模式：校长/老师/一键开学 按钮绑定
 }
 
 function bindBeatSheet(){
@@ -9791,6 +10040,7 @@ function bindView(){
   bindDictMaster();
   bindDictEnrich();
   bindLongNovelMemoryRepo();
+  bindLongNovelControlDeck();
   $$('[data-rec-fold]').forEach(h=> h.onclick = ()=>{
     const key = h.dataset.recFold;
     state.recipeSet = state.recipeSet || {};
@@ -10291,7 +10541,9 @@ async function genDictMaster(btn){
   if(btn) busy(btn,true,'生成万物词典中…');
   if(btn && btn.parentNode) showStopBtn(btn.parentNode);
   try{
-    const txt = await callAIGuarded('dictmaster', {}, {temperature: resolveActiveSpec().dictmasterTemp, maxTokens: 16384, signal: _abortCtl?.signal});
+    const spec = resolveActiveSpec('dictmaster');
+    const temp = (spec && spec.dictmasterTemp != null) ? spec.dictmasterTemp : 0.4;
+    const txt = await callAIGuarded('dictmaster', {}, {temperature: temp, maxTokens: 16384, signal: _abortCtl?.signal});
     const j = extractJsonObject(txt);
     if(!j){ throw new Error('AI 未返回可用的词典 JSON'); }
     const v = validateDictMasterOutput(j);
@@ -10714,10 +10966,12 @@ async function genDictHarvest(btn, opts){
   const stream = $('#dictEnrichStream');
   if(stream){ stream.style.display='block'; stream.textContent='正在扫描正文反复出现实体并收编进词典…'; }
   try{
+    const spec = resolveActiveSpec('dictEnrich');
+    const temp = (spec && spec.dictEnrichTemp != null) ? spec.dictEnrichTemp : 0.4;
     const user = buildDictHarvestUser();
     const onStream = delta => { if(stream){ stream.textContent += String(delta||''); stream.scrollTop = stream.scrollHeight; } };
     const res = await callAIWithContract(
-      callDeepSeek(DICT_HARVEST_SYS, user, { temperature: resolveActiveSpec().plannerAuxTemp, topP: 0.6, maxTokens: clampMaxTokens('plannerAux'), onStream, signal:_abortCtl?.signal, taskKey:'dictHarvest' }),
+      callDeepSeek(DICT_HARVEST_SYS, user, { temperature: temp, topP: 0.6, maxTokens: clampMaxTokens('dictEnrich'), onStream, signal:_abortCtl?.signal, taskKey:'dictHarvest' }),
       { needJson:false, taskName:'正文收编' }
     );
     if(!res.ok) throw new Error(res.error || '生成失败');
@@ -10787,10 +11041,12 @@ async function genDictEnrich(btn, opts){
   const stream = $('#dictEnrichStream');
   if(stream){ stream.style.display='block'; stream.textContent='正在生成词典充实内容…'; }
   try{
+    const spec = resolveActiveSpec('dictEnrich');
+    const temp = (spec && spec.dictEnrichTemp != null) ? spec.dictEnrichTemp : 0.4;
     const user = buildDictEnrichUser();
     const onStream = delta => { if(stream){ stream.textContent += String(delta||''); stream.scrollTop = stream.scrollHeight; } };
     const res = await callAIWithContract(
-      callDeepSeek(DICT_ENRICH_SYS, user, { temperature: resolveActiveSpec().plannerAuxTemp, topP: 0.6, maxTokens: clampMaxTokens('plannerAux'), onStream, signal:_abortCtl?.signal, taskKey:'dictEnrich' }),
+      callDeepSeek(DICT_ENRICH_SYS, user, { temperature: temp, topP: 0.6, maxTokens: clampMaxTokens('dictEnrich'), onStream, signal:_abortCtl?.signal, taskKey:'dictEnrich' }),
       { needJson:false, taskName:'词典充实' }
     );
     if(!res.ok) throw new Error(res.error || '生成失败');
@@ -10916,776 +11172,6 @@ function bindDictEnrich(){
     dh.onkeydown = (e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); toggleDe(); } };
   }
 }
-
-const PLAN_BATCH_SIZE = 25;
-
-const PLANNER_STAGES = [
-  { id:'titles',     num:'①', label:'章节标题' },
-  { id:'beats',      num:'②', label:'节拍表'   },
-  { id:'timeline',   num:'③', label:'全局时间线' },
-  { id:'dictEnrich', num:'④', label:'词典充实' }
-];
-function stageLabel(id){ const s=PLANNER_STAGES.find(x=>x.id===id); return s ? s.num+s.label : id; }
-const PLANNER_RETRY_MAX = 16;
-function plannerRetryOf(stage){
-  const o = state.outline; if(!o) return 0;
-  return (o._plannerRetries && o._plannerRetries[stage]) || 0;
-}
-function setPlannerRetry(stage, n){
-  const o = state.outline; if(!o) return;
-  o._plannerRetries = o._plannerRetries || {};
-  o._plannerRetries[stage] = Math.max(0, Math.min(n, PLANNER_RETRY_MAX * 6));   // 累计显示，仅作上限保护
-  refreshPlannerStageBadge(stage);
-}
-function refreshPlannerStageBadge(stage){
-  if(stage !== 'beats' && stage !== 'timeline') return;
-  const b = document.querySelector(`.cp-stagebar [data-cp-stage="${stage}"]`);
-  if(!b) return;
-  const old = b.querySelector('.cp-retry-badge'); if(old) old.remove();
-  const rc = plannerRetryOf(stage);
-  if(rc > 0) b.insertAdjacentHTML('beforeend', `<b class="cp-retry-badge" title="${stage==='beats'?'节拍表':'全局时间线'}本环节已自动重试 ${rc} 次（每次失败后最多自动重试 ${PLANNER_RETRY_MAX-1} 次）">↻${rc}</b>`);
-}
-function plannerStageDone(stage){
-  const o = state.outline; if(!o) return false;
-  const totalN = (o.chapters||[]).length;
-  const plans = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
-  const everyPlan = pred => totalN > 0 && plans.length >= totalN && plans.every(p => p && typeof p==='object' && pred(p));
-  switch(stage){
-    case 'titles':     return totalN > 0 && (o.chapters||[]).every(c => String(c&&c.title||'').trim());
-    case 'beats':      return everyPlan(p => String(p.beatsText||'').trim());
-    case 'timeline':   return !!o._globalTimeline && ( (String(o._globalTimeline.text||'').trim()) || (Array.isArray(o._globalTimeline.chapters) && o._globalTimeline.chapters.length === totalN) );
-    case 'dictEnrich': return !!String(o._dictEnrichText||'').trim();
-  }
-  return false;
-}
-function refreshPlannerStageBar(running, failed){
-  const bar = $('.cp-stagebar'); if(!bar) return;
-  const o = state.outline || {};
-  PLANNER_STAGES.forEach(st=>{
-    const b = bar.querySelector(`[data-cp-stage="${st.id}"]`); if(!b) return;
-    const dot = b.querySelector('.cp-dot'); if(!dot) return;
-    b.classList.remove('done','undone','running','fail','partial');
-    if(st.id === running){ b.classList.add('running'); dot.innerHTML = '<span class="spinner"></span>'; b.disabled = true; }
-    else { b.disabled = false;
-      if(st.id === failed){ b.classList.add('fail'); dot.textContent = '✕'; }
-      else if(plannerStageDone(st.id)){ b.classList.add('done'); dot.textContent = '✓'; }
-      else if((o._plannerProgress||{})[st.id] && o._plannerProgress[st.id].done > 0 && o._plannerProgress[st.id].done < o._plannerProgress[st.id].total){
-        b.classList.add('partial'); dot.textContent = `${o._plannerProgress[st.id].done}/${o._plannerProgress[st.id].total}`;
-      }
-      else { b.classList.add('undone'); dot.textContent = '·'; }
-    }
-    refreshPlannerStageBadge(st.id);
-  });
-  const all = bar.querySelector('[data-cp-all]');
-  if(all) all.classList.toggle('running', !!running);
-  if(running !== 'timeline'){
-    if(o._plannerProgress && o._plannerProgress.timeline) delete o._plannerProgress.timeline;
-    hideTimelineTrack();
-  }
-}
-function ensureChaptersPlaceholder(){
-  const o = state.outline; if(!o) return false;
-  const n = Math.floor(Number(chapterCountVal())||0);
-  if(n < 1 || n > 200) return false;
-  if(!Array.isArray(o.chapters)) o.chapters = [];
-  if(o.chapters.length === n) return true;          // 幂等：每次过闸都调也不重复建
-  if(o.chapters.length === 0){
-    o.chapters = Array.from({length:n}, ()=>({title:'', summary:''}));
-    persist(); return true;
-  }
-  return false;   // 已有内容且数量不符：不动，交给既有覆盖/重生成流程
-}
-function plannerGate(opts){
-  if(!isLong() || !state.outline) return false;
-  if(!(opts && opts.force) && genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
-  ensureChaptersPlaceholder();
-  return true;
-}
-function plannerBatchContext(b, opts){
-  opts = opts || {};
-  const o = state.outline || {};
-  const n = b.end - b.start;
-  const parts = [];
-  if(opts.withStyle !== false){ const ws = writeStyleNamesBlock(); if(ws.trim()) parts.push(ws.trim()); }
-  const _cand = selectedPolishCandidate();
-  const _candTxt = String((_cand && _cand.text) || '').trim();
-  if(_candTxt){
-    parts.push(`【蓝本：②优化构想所选方案】${(_cand && _cand.name) ? ('方案『' + _cand.name + '』') : '（所选方案）'}`);
-    parts.push(`【所选方案完整原文（作为本章节拍编排的唯一核心蓝本，其中信息不可违背、须落地到节拍事件）】\n${_candTxt}`);
-  }
-  const _stg = chapterPlanStages(o);
-  const _opening = openingStrategyBrief(); if(_opening) parts.push(_opening);
-  if(_stg.length){
-    const _stgTxt = _stg.map(s=>`第 ${s.first}—${s.last} 章「${s.name}」`).join('；');
-    parts.push(`【全书节拍】全书按本节拍阶段推进：${_stgTxt}。每章必须落在其所属阶段内、服务该阶段走向，不得越过当前阶段提前兑现后续阶段内容。`);
-  }
-  const _tb = teamShapeBrief();
-  if(_tb) parts.push(_tb);
-  parts.push(`【本批次】第 ${b.start+1}—${b.end} 章，共 ${n} 章`);
-  const prev = b.start > 0 ? buildPrevSkeleton(b.start) : '';
-  if(prev) parts.push(prev);
-  if(opts.withGlossary !== false){ const g = chapterGlossaryBlock(undefined, {lean:true}); if(g.trim()) parts.push(g.trim()); }
-  const iron = narrativeIronBlock('planner', {lean:true});
-  if(iron) parts.push(iron);
-  return parts.join('\n\n');
-}
-function plannerPreview(btn, tip){
-  if(!currentIsDeepSeek()) return null;
-  const cpBody = btn && btn.closest('.cp-card') && btn.closest('.cp-card').querySelector('.cp-body');
-  if(!cpBody) return null;
-  const preview = document.createElement('pre');
-  preview.className = 'cp-stream-preview'; preview.textContent = tip;
-  cpBody.insertBefore(preview, cpBody.firstChild);
-  return preview;
-}
-function plannerRunBtn(btn, on){
-  if(!btn) return;
-  if(on){ btn.classList.add('cp-gen-btn-loading'); busy(btn,true,'生成中…'); }
-  else { btn.classList.remove('cp-gen-btn-loading'); busy(btn,false); }
-}
-
-function parseTitlesText(txt, n){
-  const out = [];
-  const lines = String(txt||'').split(/\r?\n/);
-  for(const raw of lines){
-    if(out.length >= n) break;
-    let line = String(raw||'').trim();
-    if(!line) continue;
-    line = line.replace(/^```/,'').replace(/```$/,'').trim();   // 去代码块围栏
-    if(!line) continue;
-    if(/^[·•●*\-–—_]{3,}$/.test(line)) continue;                 // 纯分隔行跳过
-    if(/^[#*>-]+\s*/.test(line)) line = line.replace(/^[#*>-]+\s*/,'').trim();  // 去 markdown 无序/引用符与井号
-    line = line.replace(/^(第\s*\d+\s*章[·、：:．.，,、\-–—]*\s*|[0-9．.、]\s*)/,'').trim();  // 去可能重复的章号前缀/数字序号
-    const c = cleanChapterTitle(line).trim();                     // 统一净化标题名
-    if(c) out.push(`第${out.length+1}章 ${c}`);
-  }
-  while(out.length < n) out.push(`第${out.length+1}章 `);        // 不足补齐占位
-  return out;
-}
-
-async function genPlannerTitles(btn, opts){
-  opts = opts || {};
-  if(!plannerGate(opts)) return false;
-  markAIRunning('chapterPlan');
-  refreshPlannerStageBar('titles', null);
-  let preview = plannerPreview(btn, '正在生成章节标题…'), _streamBuf = '';
-  plannerRunBtn(btn, true);
-  const o = state.outline;
-  const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
-  if(stopParent) showStopBtn(stopParent);
-  try{
-    const n = (o.chapters||[]).length;
-    if(!n){ if(!opts.silent) toast('请先设置章节数并生成大纲'); return false; }
-    const user = titlesGenUser({ req:'' });
-    const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-    const res = await callAIWithContract(
-      callDeepSeek(REGEN_TITLES_SYS, user, {temperature:resolveActiveSpec().plannerTitlesTemp, topP:0.5, onStream, signal:_abortCtl?.signal, taskKey:'plannerTitles'}),
-      { needJson:false, taskName:'规划师-标题-A' }
-    );
-    if(!res.ok) throw new Error(res.error || '标题生成失败');
-    const titles = parseTitlesText(res.text || '', n);   // 纯文本 → n 个「第N章 标题」自动填充
-    if(!bindPlannerTitles(titles)) throw new Error('标题数量与章节数不一致，未应用');
-    state.plannerFinalized = true;
-    persist(); render(); markAIDone('chapterPlan'); refreshPlannerStageBar(null, null);
-    if(!opts.silent) toast(`章节标题已定稿：${n} 章`);
-    return true;
-  }catch(e){
-    if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'标题：'+e.message});
-    if(!opts.silent) toast(e.name==='AbortError' ? '已停止生成章节标题' : '章节标题生成失败：'+e.message);
-    refreshPlannerStageBar(null, 'titles');
-    return false;
-  }finally{
-    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='chapterPlan');
-    hideStopBtn(); if(preview) preview.remove(); plannerRunBtn(btn, false);
-  }
-}
-
-function beatChunkRanges(o){
-  const totalN = (o.chapters||[]).length;
-  if(!totalN) return [];
-  const stages = chapterPlanStages(o);
-  const base = [];
-  if(stages && stages.length){ stages.forEach(s=>{ base.push({start: s.first-1, end: s.last}); }); }
-  else base.push({start:0, end: totalN});
-  const MAX = 12;   // 单次调用不超过 12 章，避免超长输出力竭变薄/被截断
-  const out = [];
-  base.forEach(r=>{ for(let s=r.start; s<r.end; s+=MAX){ out.push({start:s, end: Math.min(s+MAX, r.end)}); } });
-  return out;
-}
-function cleanBeatDividerTrailer(txt){
-  return String(txt||'').split(/\r?\n/).filter(ln=>!/^\s*={5}\s*第\s*\d+\s*章\s*={5}\s*$/.test(ln)).join('\n').replace(/\n{3,}/g,'\n\n').trim();
-}
-function splitBeatsTextBlocks(txt){
-  const blocks = [], re = /^={5}\s*第(\d+)章\s*={5}\s*$/gm;
-  const starts = []; let m;
-  while((m=re.exec(txt))) starts.push({ n: +m[1], start: m.index, end: m.index + m[0].length });
-  for(let i=0;i<starts.length;i++){
-    const end = (i+1<starts.length) ? starts[i+1].start : txt.length;
-    const text = cleanBeatDividerTrailer(txt.slice(starts[i].end, end));
-    if(text){ const _s = splitBeatsEssence(text); blocks.push({ n: starts[i].n, text: _s.body, essence: _s.essence, entities: _s.entities }); }
-  }
-  return blocks;
-}
-function splitBeatsEssence(blockTxt){
-  const lines = String(blockTxt||'').split(/\r?\n/);
-  const essRe = /^[ \t]*【\s*时间线(?:要点)?\s*】\s*[:：]?\s*([\s\S]*)$/;
-  const entRe = /^[ \t]*【\s*本章实体清单\s*】\s*[:：]?\s*([\s\S]*)$/;
-  let essence = '', entities = '', bodyLines = [];
-  for(const ln of lines){
-    let mk = ln.match(essRe);
-    if(mk){ const t = String(mk[1]||'').trim(); if(t) essence = t; continue; }
-    mk = ln.match(entRe);
-    if(mk){ const t = String(mk[1]||'').trim(); if(t) entities = t; continue; }
-    bodyLines.push(ln);
-  }
-  return { body: bodyLines.join('\n').replace(/\s+$/,'').trim(), essence, entities };
-}
-function plannerBeatsUser(b){
-  const o = state.outline || {};
-  const allTitles = (o.chapters||[]).map((c,i)=>`第${i+1}章《${c&&c.title||'（标题待定）'}》`).join('；');
-  const globalTitles = `【全书章节标题（全局视野，各批次共用，据此编排全局推进）】\n${allTitles}`;
-  const ctx = plannerBatchContext(b);
-  return globalTitles + '\n\n' + ctx;
-}
-async function genPlannerBeats(btn, opts){
-  opts = opts || {};
-  if(!plannerGate(opts)) return false;
-  markAIRunning('chapterPlan');
-  refreshPlannerStageBar('beats', null);
-  let preview = plannerPreview(btn, '正在生成章节编排（纯文本）…'), _streamBuf = '';
-  plannerRunBtn(btn, true);
-  const o = state.outline;
-  const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
-  if(stopParent) showStopBtn(stopParent);
-  try{
-    const totalN = (o.chapters||[]).length;
-    if(!totalN){ if(!opts.silent) toast('请先设置全书章节数'); return false; }
-    if(!Array.isArray(o.chapterPlans)) o.chapterPlans = new Array(totalN).fill(null);
-    let pending = beatChunkRanges(o);
-    if(!pending.length) pending = [{start:0, end:totalN}];
-    let wrote = 0, _doneN = 0, beatsRetries = 0;
-    setPlannerRetry('beats', 0);
-    while(pending.length){
-      const b = pending[0]; _doneN++;
-      const user = plannerBeatsUser(b);
-      const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = `（片段 ${_doneN}/${_doneN + pending.length - 1}）\n` + _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-      let outTxt = '', lastErr = '', truncSplit = false;
-      for(let attempt=0; attempt<PLANNER_RETRY_MAX; attempt++){
-        if(_abortCtl && _abortCtl.signal.aborted) throw {name:'AbortError'};
-        if(attempt > 0){ beatsRetries++; setPlannerRetry('beats', beatsRetries); }
-        _streamBuf=''; if(preview){ preview.textContent = `（片段 ${_doneN}/${_doneN + pending.length - 1}，自动重试 ${attempt}/${PLANNER_RETRY_MAX-1}）`; }
-        const usr = attempt>0 ? (user + `\n\n【重试提示】上一轮第 ${_doneN} 段输出不完整/被截断。请重新输出，并确保：每一章都以「===== 第N章 =====」行开头（N=该章绝对章号）、内容足够密实、不得省略任何一章。原因：${lastErr}`) : user;
-        const res = await callAIWithContract(callDeepSeek(buildBeatsSys(), usr, {temperature:resolveActiveSpec().planBeatsTemp, topP:0.8, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planBeats'}), {needJson:false, taskName:`章节编排片段 ${_doneN}${attempt>0?'-重试'+attempt:'A'}`});
-        if(res.ok && String(res.text||'').trim()){ outTxt = String(res.text||'').trim(); break; }
-        lastErr = res.error || '输出为空';
-        const truncated = /截断|truncat|finishReason/i.test(lastErr);
-        if(truncated && (b.end - b.start) > 2){
-          const mid = b.start + Math.ceil((b.end - b.start)/2);
-          pending.shift();
-          pending.unshift({start:b.start, end:mid}, {start:mid, end:b.end});
-          truncSplit = true;
-          if(!opts.silent) toast('章节编排片段过长被截断，已自动拆小重跑…');
-          break;
-        }
-        if(attempt < PLANNER_RETRY_MAX-1) await new Promise(r=>setTimeout(r, 1200));
-      }
-      if(truncSplit) continue;
-      if(!outTxt) throw new Error(`片段 ${_doneN} 失败：${lastErr || '所有候选均无效'}`);
-      pending.shift();
-      const blocks = splitBeatsTextBlocks(outTxt);
-      let got = 0;
-      blocks.forEach(blk=>{
-        const idx = blk.n - 1;
-        if(idx >= b.start && idx < b.end){
-          const cur = (o.chapterPlans[idx] && typeof o.chapterPlans[idx]==='object') ? o.chapterPlans[idx] : {};
-          o.chapterPlans[idx] = Object.assign({}, cur, { beatsText: blk.text, tlEssence: (blk.essence||''), tlEntities: (blk.entities||'') });
-          if(blk.text) got++;
-        }
-      });
-      if(got > 0) wrote += got;
-      o._plannerProgress = o._plannerProgress || {};
-      o._plannerProgress.beats = { done: _doneN, total: _doneN + pending.length, ts: Date.now() };
-      persist();
-    }
-    render();
-    markAIDone('chapterPlan');
-    o._plannerProgress = o._plannerProgress || {};
-    o._plannerProgress.beats = { done: _doneN, total: _doneN, ts: Date.now() };
-    refreshPlannerStageBar(null, null);
-    if(!opts.silent) toast(`章节编排已生成：${wrote} 章（纯文本，${currentBeatCfg().label}）`);
-    playDoneSound('single');   // 节拍表（规划步之一）完成 → 单个完成音
-    return true;
-  }catch(e){
-    if(e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'节拍表：'+e.message});
-    if(!opts.silent) toast(e.name==='AbortError' ? '已停止生成章节编排' : '章节编排生成失败：'+e.message);
-    refreshPlannerStageBar(null, 'beats');
-    return false;
-  }finally{
-    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='chapterPlan');
-    hideStopBtn(); if(preview) preview.remove(); plannerRunBtn(btn, false);
-  }
-}
-
-const PLANNER_TIMELINE_SYS = `你是一位资深长篇「全局时间统筹师」，负责为全书安排**唯一、连贯、可信**的时间线。你不是重排别人已定的时间，而是从**每一章的剧情事件**判断每章落在什么时间、章节之间时间如何流动。
-【事件驱动】：给出的素材是每章标题 + 每章章节编排（节拍表已为你提炼时间线索）。你要从事件看时间——赶路/养伤/修炼/等待/远行/多日布局让时间向前跳跃；同一场戏内的多拍落在同一时刻/同一日；追杀/夺宝/对决/宫斗等紧迫戏压缩到数小时内。严禁"第N章=第N天"这种机械等差排期。
-【时间单位解绑】：时点是开放的——可以是 时刻(清晨/夜)/日(第2天)/旬/月/季/年，按剧情需要选择，绝不要把所有章都锁死在"第N天"。全书可有跨旬/跨月/跨年的大跨度（如闭关数年、远行数月、季节更迭），只要剧情事件支持即可；同一天内又可有多章连续推进。跨度由事件真实耗时决定。
-【输出格式】严格只输出**全书时间线的纯文本**（不要 JSON、不要解释、不要 markdown 代码块）。先写一段【全书时间轴】总览，再逐章给出该章落在什么时点。每章一行，格式为：
-第N章《标题》：起始时点 → 章末时点（若与前章自然顺延续写，只写时点，别标"跳跃"；确有大跨度/切支线才在括号里注明，如 数日后 / 三日后 / 翌月 / 半年后 / 入冬 / 闭关三月 / 回忆·第1天）。
-结尾用一行【节奏】概括全书时间跨度与节奏安排（用了哪些时间单位）。
-【硬性规则】
-0. 先全局、后局部：动手排每章之前，先依据全部章节标题/章节编排，判断整部小说的现实时间轴跨度（数小时/数日/数月/数年/数十年/跨越数代/千年仙途），把它作为全书的"总时间轴"；然后把每章落在这一条总轴上——首章起始到末章章末的总跨度必须与判断一致，全书整体单调推进。严禁无依据地"一章一天"机械递进，也不许把跨度算错（如数年的故事排成数日、数日的连环事件排成数年）。
-1. 每一章都必须出现一行"第N章"，N 为全书绝对章号，一章不多一章不少。
-2. 全书现实主线时间必须单调不倒退：后一章起始不得早于前一章章末；回忆/梦境/穿越等非主线支线各自独立计时、互不干扰，切换须由剧情出入点解释（时点前加支线名，如「回忆·第1天」）。
-3. 时间节奏要有起伏：有的章时间基本不流动（同日内推进），有的章跨数天/旬/月/季/年，绝不均匀；确需大跨度跳跃的章在括号中标出跳变。
-4. 时点写法直白可读："支线名 + 一个时点"（如 现实·第2天·清晨 / 现实·第3天 / 三日后 / 入冬 / 思念·深夜）；不要含糊（"若干时间后"），要让正文能据此安心承接。
-5. 只输出上述时间线纯文本。`;
-
-function timelineTextHealth(txt, totalN){
-  if(!String(txt||'').trim()) return '输出为空';
-  const re = /第(\d+)章/g; let m; const found = []; const seen = {};
-  while((m = re.exec(txt))){
-    const n = +m[1];
-    if(n >= 1 && n <= 10000 && !seen[n]){ seen[n] = true; found.push(n); }
-  }
-  if(!found.length) return '输出中没有任何「第N章」行';
-  for(let n=1; n<=totalN; n++){ if(!seen[n]) return `缺少第 ${n} 章的时点行`; }
-  return '';
-}
-
-
-function beatsTextSection(btTxt, ...names){
-  btTxt = String(btTxt||'').trim();
-  if(!btTxt) return null;
-  let maxLen = 200;
-  if(names.length && typeof names[names.length-1] === 'number') maxLen = names.pop();
-  names = names.filter(Boolean);
-  if(!names.length) return null;
-  const SEC_NAMES = ['承接点','承接','场景链与切换','场景链','逐拍推进','情绪弧','心情弧','情绪基调','必须使用实体','必须实体','出场实体','埋设伏笔','收束设计','收束','设定'];
-  const lines = btTxt.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  const re = new RegExp('^(?:'+names.join('|')+')[：:\\s]*(.*)$');
-  for(let i=0;i<lines.length;i++){
-    const m = lines[i].match(re);
-    if(!m) continue;
-    const buf = [(m[1]||'').trim()].filter(Boolean);
-    for(let j=i+1;j<lines.length;j++){
-      if(SEC_NAMES.some(n=>new RegExp('^(?:'+n+')[：:\\s]').test(lines[j]))) break;   // 下一小节标题即止
-      buf.push(lines[j]);
-    }
-    const v = buf.join('；').replace(/\s+/g,' ').trim();
-    if(v) return v.slice(0, maxLen || 200);
-  }
-  return null;
-}
-function beatsTextSceneSnippet(btTxt, maxLen){
-  btTxt = String(btTxt||'').trim();
-  if(!btTxt) return '';
-  const lines = btTxt.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
-  for(let i=0;i<lines.length;i++){
-    const m = lines[i].match(/^(?:承接点|承接)[：:\s]*(.*)$/);
-    if(m){
-      const v = (m[1]||'').trim() || (i+1<lines.length ? lines[i+1] : '');
-      if(v) return String(v).replace(/\s+/g,'').slice(0, maxLen||46);
-    }
-  }
-  for(let i=0;i<lines.length;i++){
-    const v = lines[i].replace(/^(?:承接点|承接|场景链与切换|场景链|逐拍推进|情绪弧|心情弧|情绪基调|必须使用实体|必须实体|出场实体|埋设伏笔|收束设计|收束|设定)[：:]\s*/,'').trim();
-    if(v) return String(v).replace(/\s+/g,'').slice(0, maxLen||46);
-  }
-  return '';
-}
-
-function _timelineEssenceOf(p){
-  if(p && typeof p.tlEssence==='string' && String(p.tlEssence).trim()) return String(p.tlEssence).trim();
-  const bt = (p && typeof p.beatsText==='string') ? p.beatsText.trim() : '';
-  if(!bt) return '';
-  const _cj = beatsTextSection(bt, '承接点', '承接', 180) || '';
-  if(_cj) return _cj;
-  const _ss = beatsTextSection(bt, '收束设计', '收束', 120) || '';
-  if(_ss) return _ss;
-  const _sn = beatsTextSceneSnippet(bt, 60) || '';
-  return _sn;
-}
-function buildTimelineSegUser(){
-  const o=state.outline||{};
-  const totalN=(o.chapters||[]).length;
-  const parts=[`【全书章节数】${totalN} 章`];
-  const rows=[];
-  for(let i=0;i<totalN;i++){
-    const c=o.chapters[i]||{};
-    const p=Array.isArray(o.chapterPlans)?o.chapterPlans[i]:null;
-    const t=String((c.title||'').trim());
-    const _te = _timelineEssenceOf(p);
-    rows.push(`第${i+1}章《${t}》\n${_te ? `   [时间线要点] ${_te}` : '  （无节拍）'}`);
-  }
-  parts.push(`【每章标题与该章时间精华（据此规划时间，事件驱动：赶路/养伤/等待/远行→时间跳跃；同一场戏多拍→同时刻）】\n${rows.join('\n')}`);
-  {
-    const c0=o.chapters[0]||{}, cL=o.chapters[totalN-1]||{};
-    const p0=Array.isArray(o.chapterPlans)?o.chapterPlans[0]:null;
-    const pL=Array.isArray(o.chapterPlans)?o.chapterPlans[totalN-1]:null;
-    const t0 = _timelineEssenceOf(p0);
-    const tL = _timelineEssenceOf(pL);
-    if(t0 || tL) parts.push(`【全书时间跨度推断依据（先定全局，再落局部）】开篇·第1章《${String(c0.title||'').trim()}》起始事件：${t0||'（缺）'}；结局·第${totalN}章《${String(cL.title||'').trim()}》收束事件：${tL||'（缺）'}。纵览这两端点与全书标题/事件序列，判断整部小说的现实时间轴跨度（数小时/数日/数月/数年/数十年/跨越数代/千年仙途），并把全部章节落在这条总时间轴上：首章 from 到末章 to 的总跨度必须与该判断一致，严禁无依据地"一章一天"机械递进。`);
-  }
-  const _tb=teamShapeBrief();
-  if(_tb) parts.push(_tb+'\n（时间侧留意：除非剧情明确拆线，各核心主角/成员的时间应落在同一主线支线的同一时点，团队因"分工拆成两路"而分处不同时点、双主角因"各自独立场景"而位于同一时点不同现场——都要在节拍/正文给出进入与回收说明，别拆到互相矛盾的时点）');
-  return parts.join('\n\n');
-}
-
-function hideTimelineTrack(){ const el=$('.cp-tl-track'); if(el) el.remove(); }
-
-function clipText(str, max){
-  str = String(str||'').trim();
-  if(str.length <= max) return str;
-  const cut = str.slice(0, max);
-  const m = cut.match(/[\s\S]*[，。；：、！？,.!?:;…]/);
-  return ((m && m[0].length > Math.ceil(max*0.4)) ? m[0] : cut) + '…';
-}
-function globalTimelineBlock(){
-  const o = state.outline || {};
-  const totalN = (o.chapters||[]).length;
-  if(!totalN) return '';
-  const parts = [];
-  const gt = o._globalTimeline;
-  const tlText = gt && String(gt.text||'').trim();
-  if(tlText){
-    parts.push(`【全局时间线】（全书时间跨度 起 → 止）\n${tlText}`);
-  } else if(gt && Array.isArray(gt.chapters) && gt.chapters.length){
-    const rows = gt.chapters.map(c=>{
-      const t = cleanChapterTitle((o.chapters[c.index]&&o.chapters[c.index].title)||'');
-      const jt = String(c.jump||'').trim();
-      return `第${c.index+1}章 ${t||'?'}：${String(c.from||'?').trim()} → ${String(c.to||'?').trim()}${jt?`（跳跃：${jt}）`:''}`;
-    });
-    parts.push(`【全局时间线】（全书各章时间跨度 起 → 止）\n${rows.join('\n')}`);
-    if(gt.notes) parts.push(`【全局节奏】${gt.notes}`);
-  }
-  const evRows = [];
-  for(let i=0;i<totalN;i++){
-    const p = Array.isArray(o.chapterPlans)?o.chapterPlans[i]:null;
-    if(p && String(p.beatsText||'').trim()){
-      const _btS = String(p.beatsText||'').replace(/\s+/g,'').replace(/承接点[:：]/,'情境：').slice(0,120);
-      evRows.push(`第${i+1}章：${clipText(_btS || '', 80)}`);
-    }
-  }
-  if(evRows.length) parts.push(`【各章节拍要点】（每章情境）\n${evRows.join('\n')}`);
-  return parts.join('\n\n');
-}
-function timelineChapterBlock(i){
-  const o = state.outline || {};
-  const gt = o._globalTimeline;
-  if(!gt) return '';
-  const tlText = String(gt.text||'').trim();
-  if(!tlText) return '';
-  const n = i + 1;
-  let cur = '', prev = '';
-  (tlText.split('\n')).forEach(ln=>{
-    const m = ln.match(/^\s*第\s*(\d+)\s*章/);
-    if(!m) return;
-    const k = +m[1];
-    const body = ln.replace(/^\s*第\s*\d+\s*章(?:《[^》]*》)?\s*[:：]?\s*/, '');
-    if(k === n) cur = body;
-    else if(k === n-1) prev = body;
-  });
-  if(!cur) return '';
-  const lines = [`本章（第 ${n} 章）时点：${cur}`];
-  if(prev) lines.unshift(`上一章（第 ${n-1} 章）时点：${prev}`);
-  return `【本章时间（全局时间线）】\n${lines.join('\n')}`;
-}
-
-async function genPlannerTimeline(btn, opts){
-  opts = opts || {};
-  if(!plannerGate(opts)) return false;
-  const o = state.outline;
-  const totalN = (o.chapters||[]).length;
-  if(!totalN){ if(!opts.silent) toast('请先设置全书章节数'); return false; }
-  const _pl = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
-  if(_pl.length < totalN || !_pl.every(p=>p && String(p&&p.beatsText||'').trim())){
-    if(!opts.silent) toast('请先完成 ③ 节拍表，再规划全局时间线');
-    refreshPlannerStageBar(null, 'timeline'); return false;
-  }
-  markAIRunning('chapterPlan');
-  refreshPlannerStageBar('timeline', null);
-  let preview = plannerPreview(btn, '正在生成全书时间线（纯文本）…'), _streamBuf = '';
-  plannerRunBtn(btn, true);
-  const stopParent = btn && btn.closest('.cp-head-top') ? btn.closest('.cp-head-top') : (btn && btn.parentNode);
-  if(stopParent) showStopBtn(stopParent);
-  let tlRetries = 0;
-  setPlannerRetry('timeline', 0);
-  try{
-    let timelineText = '', lastErr = '';
-    const user = buildTimelineSegUser();
-    let ok = false;
-    for(let attempt=0; attempt<PLANNER_RETRY_MAX; attempt++){
-      if(_abortCtl && _abortCtl.signal.aborted) throw {name:'AbortError'};
-      if(attempt > 0){ tlRetries++; setPlannerRetry('timeline', tlRetries); }   // 红色角标实时递增
-      if(_streamBuf){ _streamBuf=''; if(preview) preview.textContent=''; }
-      if(attempt>0 && preview){ preview.textContent = `全书时间线输出无效，正在自动重试 ${attempt}/${PLANNER_RETRY_MAX-1}：${lastErr}`; }
-      const usr = user + (attempt>0 ? `\n【重试提示】上一轮全书时间线输出不完整/健康校验不通过，请严格按格式重新输出：每章一行「第N章《标题》：起始时点 → 章末时点」，一章不少。原因：${lastErr}` : '');
-      const onStream = delta => { _streamBuf += String(delta||''); if(preview){ preview.textContent = _streamBuf; preview.scrollTop = preview.scrollHeight; } };
-      const res = await callAIWithContract(
-        callDeepSeek(PLANNER_TIMELINE_SYS, usr, {temperature:resolveActiveSpec().planTimelineTemp, topP:0.7, maxTokens:clampMaxTokens('chapterPlan'), onStream, signal:_abortCtl?.signal, taskKey:'planTimeline'}),
-        {needJson:false, taskName:`全局时间线${attempt>0?'-重试'+attempt:'A'}`}
-      );
-      if(res.ok && String(res.text||'').trim()){
-        timelineText = String(res.text||'').trim();
-        lastErr = timelineTextHealth(timelineText, totalN);
-        if(!lastErr){ ok = true; break; }
-      } else {
-        lastErr = res.error || '输出为空';
-      }
-      if(attempt < PLANNER_RETRY_MAX-1) await new Promise(r=>setTimeout(r, 1500));   // 自动重试间隔
-    }
-    if(!ok){
-      addToFixQueue({kind:'chapterPlan', error:'全局时间线生成：'+lastErr});
-      refreshPlannerStageBar(null, 'timeline');
-      if(!opts.silent) toast(`全局时间线生成失败（已自动重试 ${PLANNER_RETRY_MAX-1} 次）：${lastErr}`);
-      return false;
-    }
-    o._globalTimeline = { text: timelineText, ts: Date.now() };
-    if(o._plannerProgress) delete o._plannerProgress.timeline;   // 整段生成无半程态，顺带清旧值
-    persist();
-    render();
-    markAIDone('chapterPlan');
-    refreshPlannerStageBar(null, null);
-    hideTimelineTrack();
-    if(!opts.silent) toast('全书时间线完成（纯文本）：'+timelineText.split('\n')[0].replace(/^【[^】]*】/,'').slice(0,28));
-    return true;
-  }catch(e){
-    if(e && e.name !== 'AbortError') addToFixQueue({kind:'chapterPlan', error:'全局时间线：'+(e&&e.message)});
-    if(!opts.silent) toast((e && e.name==='AbortError') ? '已停止全局时间线' : '全局时间线失败：'+(e&&e.message));
-    refreshPlannerStageBar(null, 'timeline');
-    return false;
-  }finally{
-    state.aiNetwork.running = (state.aiNetwork.running||[]).filter(k=>k!=='chapterPlan');
-    hideStopBtn(); if(preview) preview.remove(); plannerRunBtn(btn, false);
-  }
-}
-
-const PLANNER_GEN = {
-  beats: genPlannerBeats,
-  timeline: genPlannerTimeline,
-  titles: genPlannerTitles,
-  dictEnrich: genDictEnrich
-};
-async function genPlannerStage(btn, stage){
-  const fn = PLANNER_GEN[stage]; if(!fn) return false;
-  return await fn(btn, {});
-}
-async function genPlannerAll(btn){
-  const o = state.outline; if(!isLong() || !o) return;
-  if(genBusy()){ toast('已有生成任务进行中，请稍候'); return; }
-  const doneList = PLANNER_STAGES.filter(s=>plannerStageDone(s.id)).map(s=>stageLabel(s.id));
-  let skipDone = true;
-  if(doneList.length){
-    skipDone = confirm(
-      `已完成：${doneList.join('、')}\n\n` +
-      `【确定】智能执行：跳过已完成，只跑 ${PLANNER_STAGES.filter(s=>!plannerStageDone(s.id)).map(s=>stageLabel(s.id)).join('、') || '（全部已完成，无事可做）'}\n` +
-      `【取消】全部重跑：四步按顺序覆盖生成（直接覆盖现有内容）`
-    );
-    if(!skipDone){
-      if(!confirm(`全部重跑将按顺序生成：①章节标题→②节拍表（${currentBeatCfg().label}）→③全局时间线→④词典充实，会覆盖现有规划内容，继续？`)) return;
-    }
-  }
-  const stages = skipDone ? PLANNER_STAGES.map(s=>s.id).filter(id=>!plannerStageDone(id)) : PLANNER_STAGES.map(s=>s.id);
-  if(!stages.length){ toast('四步均已完成，无需生成；如需重做请点击对应步骤按钮'); return; }
-  const allBtn = ()=> document.querySelector('[data-cp-all]');
-  const setTxt = t=>{ const b = allBtn(); if(b){ if(b._txt === undefined) b._txt = b.innerHTML; b.textContent = t; } };
-  const finish = ()=>{
-    const b = allBtn();
-    if(b){ if(b._txt !== undefined){ b.innerHTML = b._txt; delete b._txt; } b.classList.remove('running'); }
-  };
-  if(btn){ btn.classList.add('running'); setTxt(`四步生成中（0/${stages.length}）…`); }
-  try{
-    for(let si=0; si<stages.length; si++){
-      const st = stages[si];
-      setTxt(`四步生成中（${si+1}/${stages.length}）…`);
-      refreshPlannerStageBar(st, null);
-      const _allNow = allBtn();
-      const stopParent = _allNow ? (_allNow.closest('.cp-micropick-actions') || _allNow.parentNode)
-                                 : document.querySelector('.cp-card .cp-micropick-actions');
-      let stopped = false;
-      if(stopParent){
-        showStopBtn(stopParent);
-        stopParent.classList.add('cp-stopping');
-        if(_abortCtl) _abortCtl.signal.addEventListener('abort', ()=>{ stopped = true; }, {once:true});
-      }
-      const ok = await PLANNER_GEN[st](null, {silent:true, force:true});
-      hideStopBtn();
-      if(stopParent) stopParent.classList.remove('cp-stopping');
-      if(!ok){
-        refreshPlannerStageBar(null, st);
-        toast(stopped ? `已停止一键四步（停在「${stageLabel(st)}」）` : `一键生成中断于「${stageLabel(st)}」，可单独点击该步骤按钮重试`);
-        return;
-      }
-      refreshPlannerStageBar(null, null);
-    }
-    toast(skipDone ? `智能四步完成（${stages.length} 步）` : '规划师四步全部完成');
-    playDoneSound('all');   // 全部完成（学校一键全跑完）响快速两声
-  }finally{
-    finish();
-    hideStopBtn();
-    $$('.cp-stopping').forEach(el=>el.classList.remove('cp-stopping'));
-  }
-}
-
-function buildPrevSkeleton(endIdx){
-  const o = state.outline;
-  const ch = (o.chapters||[]).slice(0, endIdx);
-  if(!ch.length) return '';
-  const plans = Array.isArray(o.chapterPlans) ? o.chapterPlans : [];
-  const KEEP = 6;
-  const keep = ch.slice(Math.max(0, ch.length - KEEP));
-  const lines = [];
-  keep.forEach((c,i)=>{
-    const abs = ch.length - keep.length + i;
-    const t = String((c&&c.title)||'').trim();
-    let line = `第${abs+1}章${t?`《${t}》`:'（标题未定）'}`;
-    const p = plans[abs];
-    if(p && String(p.beatsText||'').trim()){
-      const _sn = beatsTextSceneSnippet(String(p.beatsText||''), 60);
-      if(_sn) line += `（${_sn}）`;
-    }
-    lines.push(line);
-  });
-  const head = ch.length > KEEP
-    ? `【已定稿的前文骨架（第 1—${ch.length - KEEP} 章已定稿；承接最近 ${KEEP} 章态势）】\n`
-    : `【已定稿的前文骨架】\n`;
-  return head + (lines.join('\n') || '（无）');
-}
-
-
-
-function openCpRawPanel(){
-  closeCpRawPanel();
-  const o = state.outline;
-  let raw = state._lastCpRaw || '';
-  if(!raw && aiLog.length){
-    const match = [...aiLog].reverse().find(r => r.task && r.task.includes('节拍表'));
-    if(match && match.respLen > 0){ raw = match.resp || ''; }
-  }
-  const hasRaw = !!raw;
-  const escRaw = esc(raw);
-  const ov = document.createElement('div'); ov.id='cpRawPanel'; ov.className='gs-overlay';
-  ov.innerHTML = `
-    <div class="gs-modal" style="max-width:780px">
-      <div class="gs-modal-head"><b>🔧 原始 AI 响应 — 节拍表</b>
-        <span style="display:flex;gap:6px">
-          <button class="btn small ghost" data-cpraw-searchlog>📋 搜索最近日志</button>
-          <button class="btn small ghost" data-cpraw-import>📂 导入文本</button>
-          <button class="btn small ghost" data-cpraw-export ${hasRaw?'':'disabled'}>💾 导出文本</button>
-          <button class="btn small ghost" data-cpraw-copy ${hasRaw?'':'disabled'}>📋 复制全部</button>
-          <input type="file" id="cprawImportFile" accept=".txt,.json,text/plain,application/json" hidden />
-          <button class="gs-x" data-cpraw-close>✕</button>
-        </span></div>
-      <div class="cv-body">
-        <div class="cv-div">这里是最近一次生成节拍表时 AI 返回的原始 JSON 响应。如果自动更新失败，可手动点击下方按钮来提取数据。</div>
-        <div class="cpraw-actions">
-          <button type="button" class="btn primary" data-cpraw-apply ${hasRaw?'':'disabled'}>解析并应用到节拍表</button>
-          <span style="font-size:12px;color:var(--sub);align-self:center">${hasRaw?`共 ${raw.length} 字`:'（暂无原始响应数据）'}</span>
-        </div>
-        <div class="cpraw-tools" style="display:${hasRaw?'flex':'none'};flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2);margin:6px 0">
-          <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--sub)">
-            <span>🔍 替换</span>
-            <span style="font-weight:400;font-size:11px;color:var(--dim)">在下方内容中查找并替换，替换结果立即生效，点击「解析并应用到节拍表」即可写入</span>
-          </div>
-          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-            <input type="text" class="cpraw-inp" id="cprawFind" placeholder="查找..." style="flex:1;min-width:80px">
-            <input type="text" class="cpraw-inp" id="cprawReplace" placeholder="替换为..." style="flex:1;min-width:80px">
-            <button type="button" class="btn small" data-cpraw-replaceall>🔄 替换全部</button>
-          </div>
-        </div>
-        <pre class="cpraw-pre">${hasRaw?escRaw:'(暂无原始响应数据。生成一次节拍表后，原始响应会自动保存至此。)'}</pre>
-        <p class="muted" style="margin:6px 0 0;font-size:11px">💡 提示：导入文本文件后自动解析并应用；替换后点「解析并应用到节拍表」写入。</p>
-      </div>
-    </div>`;
-  document.body.appendChild(ov);
-  ov.querySelector('[data-cpraw-close]').onclick = closeCpRawPanel;
-  ov.addEventListener('click', e=>{ if(e.target===ov) closeCpRawPanel(); });
-  ov.querySelector('[data-cpraw-apply]').onclick = ()=>{
-    const pre = ov.querySelector('.cpraw-pre');
-    applyCpRawResponse(pre ? pre.textContent : raw);
-  };
-  ov.querySelector('[data-cpraw-searchlog]').onclick = ()=>{
-    closeCpRawPanel(); openAiLogPanel();
-    setTimeout(()=>{
-      const rows = $$('[data-ailog-toggle]');
-      if(rows.length){
-        for(let i=rows.length-1; i>=0; i--){
-          const taskEl = rows[i].closest('.ailog-row') && rows[i].closest('.ailog-row').querySelector('.ailog-task');
-          if(taskEl && taskEl.textContent.includes('节拍表')){ rows[i].click(); break; }
-        }
-      }
-    }, 300);
-  };
-  const importBtn = ov.querySelector('[data-cpraw-import]');
-  const importFile = ov.querySelector('#cprawImportFile');
-  if(importBtn && importFile){
-    importBtn.onclick = ()=> importFile.click();
-    importFile.onchange = (e)=>{
-      const f = e.target.files && e.target.files[0];
-      if(f){
-        const r = new FileReader();
-        r.onload = ()=>{
-          applyCpRawResponse(r.result);
-          importFile.value = '';
-        };
-        r.readAsText(f);
-      }
-    };
-  }
-  ov.querySelector('[data-cpraw-export]').onclick = ()=>{
-    const txt = ov.querySelector('.cpraw-pre').textContent;
-    const blob = new Blob([txt], {type:'text/plain;charset=utf-8'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = '节拍表原始响应.txt';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(a.href); toast('✅ 已导出');
-  };
-  const copyBtn = ov.querySelector('[data-cpraw-copy]');
-  if(copyBtn) copyBtn.onclick = ()=>{
-    navigator.clipboard.writeText(ov.querySelector('.cpraw-pre').textContent)
-      .then(()=> toast('✅ 已复制原始响应')).catch(()=> toast('❌ 复制失败'));
-  };
-  ov.querySelector('[data-cpraw-replaceall]').onclick = ()=>{
-    const find = ov.querySelector('#cprawFind').value;
-    const repl = ov.querySelector('#cprawReplace').value;
-    if(!find) { toast('请输入查找内容'); return; }
-    const pre = ov.querySelector('.cpraw-pre');
-    const before = pre.textContent;
-    const after = before.replaceAll(find, repl);
-    if(before === after) { toast('未找到匹配内容'); return; }
-    pre.textContent = after;
-    toast('✅ 已替换 ' + (before.split(find).length - 1) + ' 处');
-  };
-}
-function closeCpRawPanel(){ const p=$('#cpRawPanel'); if(p) p.remove(); }
-function applyCpRawResponse(raw){
-  if(!raw){ toast('无原始响应数据'); return; }
-  const o = state.outline;
-  if(!o){ toast('无当前项目'); return; }
-  try{
-    const blocks = splitBeatsTextBlocks(String(raw||''));
-    if(!blocks.length){ toast('解析失败：未找到「===== 第N章 =====」章节块'); return; }
-    const n = (o.chapters||[]).length;
-    if(!n){ toast('请先设置全书章节数'); return; }
-    if(!Array.isArray(o.chapterPlans)) o.chapterPlans = new Array(n).fill(null);
-    let got = 0;
-    blocks.forEach(blk=>{
-      const idx = blk.n - 1;
-      if(idx >= 0 && idx < n){
-        const cur = (o.chapterPlans[idx] && typeof o.chapterPlans[idx]==='object') ? o.chapterPlans[idx] : {};
-        o.chapterPlans[idx] = Object.assign({}, cur, { beatsText: blk.text, tlEssence: (blk.essence||''), tlEntities: (blk.entities||'') });
-        got++;
-      }
-    });
-    persist();
-    closeCpRawPanel();
-    render();
-    toast(`✅ 已手动解析并应用 ${got} 章节拍编排`);
-  }catch(e){
-    toast('解析失败：'+e.message+'。请检查原始数据格式（应含「===== 第N章 =====」分隔）');
-  }
-}
-
 
 function closeChapterSummaryPanel(){ const p=document.getElementById('chSumPanel'); if(p) p.remove(); }
 
@@ -13863,7 +13349,7 @@ function saveTemps(){
   const rd = (id, def)=>{ const v=parseFloat($(id) && $(id).value); return isNaN(v)?def:v; };
   editCfg.temperature = rd('#cfgTemp', 0.7);
   const live = getCfg();
-  const TM_FIELDS = ['ideaTemp','dictmasterTemp','assetsTemp','titleTemp','planTemp','planBeatsTemp','planTimelineTemp','plannerTitlesTemp','plannerAuxTemp','stripTemp','chapterTemp','qcTemp','aiRecipeTemp','subplotTemp','rollingTemp','contentAdviseTemp'];
+  const TM_FIELDS = ['ideaTemp','principalTemp','teacherTemp','dictmasterTemp','dictEnrichTemp','assetsTemp','titleTemp','chapterTemp','qcTemp','stripTemp','subplotTemp','rollingTemp','contentAdviseTemp','aiRecipeTemp'];
   TM_FIELDS.forEach(f=>{ if(live && typeof live[f]==='number') editCfg[f]=live[f]; });
 }
 
@@ -13890,17 +13376,16 @@ function updateCfgBadge(){
 }
 
 const TM_GROUPS = [
-  { title:'🧠 前置 · 构想（项目起点，一次即可）', keys:[
-    ['idea','优化构想','对既有构想发散/收敛；创作第一步']
+  { title:'🧠 前置 · 构想（项目起点）', keys:[
+    ['idea','故事构想 / 优化构想','生成与优化故事点子、多方向方案比选']
   ]},
-  { title:'📐 规划师四步 · 章节规划（要质量，建议主力模型）', keys:[
-    ['plannerTitles','规划师 · 标题定稿','JSON，全书章节标题；短文本创意，中档够且省费'],
-    ['planBeats','规划师 · 节拍表','JSON，逐章情节节拍'],
-    ['planTimeline','规划师 · 时间线','JSON，全局章节时间线分段'],
-    ['plannerAux','词典充实 · 辅助','词典充实：为正文补充人物/地名/专名与路人龙套；JSON 严谨']
+  { title:'🏛️ 学校统筹与设定架构（核心大脑，建议主力模型）', keys:[
+    ['principal','👑 校长总控','长篇小说治学总舵手：统领全量材料，产出全校守则、组级框架与章节标题'],
+    ['teacher','🎓 老师备课','任课教师分段教案：逐章备好推进骨架、情境推进与微拍融合'],
+    ['dictmaster','📖 词典达人','全局设定架构师：AI 生成万物词典（人物十维+人物关系表+地名关联表+专名关联表+世界观规则）'],
+    ['dictEnrich','🗂 词典充实','设定细化工坊：为正文补充人物感官特征、地名场景禁忌与氛围路人龙套']
   ]},
-  { title:'✍️ 重创作（正文费用大头，建议主力模型）', keys:[
-    ['dictmaster','词典达人','AI 生成万物词典（人物十维+人物关系表+地名关联表+专名关联表+世界观规则），供正文一致消费'],
+  { title:'✍️ 正文重创作（费用大头，建议主力模型）', keys:[
     ['chapter','正文生成','全书正文质量与费用大头；所选模型须支持流式（stream）']
   ]},
   { title:'🔧 每章/每批 · 轻维护（高频小请求，建议 flash 省钱）', keys:[
@@ -13918,10 +13403,18 @@ const TM_GROUPS = [
 
 const TM_TEMP = {
   idea:['ideaTemp',0.5],
-  plannerTitles:['plannerTitlesTemp',0.4], planBeats:['planBeatsTemp',0.4], planTimeline:['planTimelineTemp',0.4], plannerAux:['plannerAuxTemp',0.4],
-  dictmaster:['dictmasterTemp',0.5], chapter:['chapterTemp',0.5],
-  strip:['stripTemp',1.0], subplot:['subplotTemp',0.25], glossary:['qcTemp',0.2], rolling:['rollingTemp',0.3],
-  contentAdvice:['contentAdviseTemp',0.6], assets:['assetsTemp',0.7], recipe:['aiRecipeTemp',0.9]
+  principal:['principalTemp',0.4],
+  teacher:['teacherTemp',0.4],
+  dictmaster:['dictmasterTemp',0.4],
+  dictEnrich:['dictEnrichTemp',0.4],
+  chapter:['chapterTemp',0.5],
+  strip:['stripTemp',1.0],
+  subplot:['subplotTemp',0.25],
+  glossary:['qcTemp',0.2],
+  rolling:['rollingTemp',0.3],
+  contentAdvice:['contentAdviseTemp',0.6],
+  assets:['assetsTemp',0.7],
+  recipe:['aiRecipeTemp',0.9]
 };
 let editTM = null;          // 面板暂存：保存前绝不落盘（对齐设置弹窗 editCfg 模式）
 let editTemps = {};
