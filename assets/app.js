@@ -355,14 +355,49 @@ function validateChapterCard(card){
 }
 function commitTeacherChapterCards(raw,g,gi){
   const ss=storyState(), cards=parseTeacherChapterCards(raw,g,gi), need=[];
-  for(let n=g.first;n<=g.last;n++){const c=cards.find(x=>x.chapter===n); const err=validateChapterCard(c); if(err) need.push(`第${n}章 ${err}`);}
+  for(let n=g.first;n<=g.last;n++){
+    const c=cards.find(x=>x.chapter===n); const err=validateChapterCard(c);
+    if(err) need.push(`第${n}章 ${err}`);
+    if(c && stateBanEnabled()){
+      const bad=(banListNames().concat(banListChars())).find(x=>x && ((c.cast||'').includes(x)||(c.title||'').includes(x)));
+      if(bad) need.push(`第${n}章命中用户禁则「${bad}」`);
+    }
+  }
   if(need.length) throw new Error(`老师教案未形成完整机器章节卡：${need.join('；')}`);
   ss.chapters=ss.chapters||{};
-  cards.forEach(c=>{const i=c.chapter-1; ss.chapters[i]=ss.chapters[i]||{}; ss.chapters[i].card=ssStamp(c,{teacherGi:gi,chapterVersion:ssNextVersion('chapterCard')}); ss.chapters[i].planned=ssStamp({time:c.time,from:_extractPlanTimeRange(c.time).from,to:_extractPlanTimeRange(c.time).to,continuity:c.continuity,cast:c.cast,location:'',endState:c.endingState,requiredEvents:c.requiredEvents,forbiddenEvents:c.forbiddenEvents},{source:'teacherCard'});});
-  ss.canon.teacherAt[gi]=ssStamp({teacherVersion:ss.versions.chapterCard||0},{versions:ssVersionSnapshot()});
+  cards.forEach(c=>{
+    const i=c.chapter-1, tr=_extractPlanTimeRange(c.time);
+    ss.chapters[i]=ss.chapters[i]||{};
+    ss.chapters[i].card=ssStamp(c,{teacherGi:gi,chapterVersion:ssNextVersion('chapterCard')});
+    ss.chapters[i].planned=ssStamp({
+      time:tr.raw||c.time||'', from:tr.from||'', to:tr.to||'', continuity:c.continuity||'', cast:c.cast||'',
+      location:c.location||'', endState:c.endingState||'', entryState:c.entryState||'',
+      requiredEvents:Array.isArray(c.requiredEvents)?c.requiredEvents:[], forbiddenEvents:Array.isArray(c.forbiddenEvents)?c.forbiddenEvents:[]
+    },{source:'teacherCard',teacherGi:gi});
+  });
+  ss.canon.teacherAt[gi]=ssStamp({teacherVersion:ss.versions.chapterCard||0},{versions:ssVersionSnapshot(),teacherGi:gi});
   return cards;
 }
-function chapterCard(i){ const c=storyState().chapters?.[i]?.card; return c&&ssTeacherVersionsCurrent(c.teacherGi)?c:null; }
+function ensureCurrentTeacherCards(i){
+  const ss=storyState();
+  const cur=ss.chapters?.[i]?.card;
+  if(cur && ssTeacherVersionsCurrent(cur.teacherGi)) return cur;
+  const groups=schoolStageGroups();
+  const g=groups.find(x=>i+1>=x.first && i+1<=x.last);
+  if(!g) return null;
+  const gi=groups.indexOf(g);
+  const sc=scState();
+  // 只允许从“当前有效”的老师成果恢复机器卡；上游重跑导致 tGi 失效时绝不复活旧教案。
+  if(sc.stale && sc.stale['t'+gi]) return null;
+  if(!scDone('t'+gi)) return null;
+  const t=sc.teachers&&sc.teachers[gi];
+  if(!t || !String(t.raw||'').trim()) return null;
+  try{
+    const cards=commitTeacherChapterCards(String(t.raw),g,gi);
+    return cards.find(c=>c.chapter===i+1)||null;
+  }catch(e){ return null; }
+}
+function chapterCard(i){ return ensureCurrentTeacherCards(i); }
 function chapterPlanAuthority(i){ return chapterCard(i)||null; }
 const CHAPTER_AUDIT_SYS=`你是长篇小说“状态审计AI”。你没有创作权，只负责判定正文是否忠实执行机器章节卡、上一章真实状态与世界词典。\n只检查可验证冲突：时间倒退/不可达、地点瞬移、人物生死与身体状态、关系变化、道具持有、世界规则、信息知情边界、章节必做事件缺失、禁项违规、凭空出现会持续存在的新核心实体。正常文学发挥不是错误。\n输出严格JSON：{"status":"PASS|WARN|FAIL","issues":[{"type":"time|location|character|relationship|object|rule|knowledge|event|entity|causal","severity":"warn|fail","evidence":"正文中的明确证据","expected":"应有状态","actual":"实际状态","repair":"最小修复方向"}],"summary":"一句话"}`;
 async function auditChapterState(i,text){
@@ -370,13 +405,15 @@ async function auditChapterState(i,text){
   if(!c||!obs) return null;
   const g=(state.outline&&state.outline.glossary)||{};
   const canon=`人物:${(g.characters||[]).map(x=>x.name).join('、')}\n地点:${(g.places||[]).map(x=>x.name).join('、')}\n专名:${(g.propernouns||[]).map(x=>x.name).join('、')}\n世界规则:${(g._worldRules||[]).map(x=>x.rule).join('；')}`;
-  const user=`【机器章节卡】${JSON.stringify(c)}\n【上一章正文结算】${JSON.stringify(prev||{})}\n【本章正文结算】${JSON.stringify(obs)}\n【词典只读实体】${canon}\n【本章正文】\n${String(text||'').slice(0,50000)}`;
+  const banAudit = stateBanEnabled() ? `\n【用户全书禁则·必须审计】\n禁用姓名：${banListNames().join('、')}\n姓名禁用字：${banListChars().join('、')}\n禁用短语：${(Array.isArray(banListRaw().phrases)?banListRaw().phrases:[]).join('、')}` : '';
+  const user=`【机器章节卡】${JSON.stringify(c)}\n【上一章正文结算】${JSON.stringify(prev||{})}\n【本章正文结算】${JSON.stringify(obs)}\n【词典只读实体】${canon}${banAudit}\n【本章正文】\n${String(text||'').slice(0,50000)}`;
   try{ const raw=unwrapAIResult(await callDeepSeek(CHAPTER_AUDIT_SYS,user,{maxTokens:2200,temperature:0.05,topP:0.1,signal:_abortCtl?.signal,taskKey:'chapterAudit'})); const j=parseJson(raw)||{}; const report={status:['PASS','WARN','FAIL'].includes(j.status)?j.status:'WARN',issues:Array.isArray(j.issues)?j.issues.slice(0,20):[],summary:String(j.summary||'').trim(),ts:Date.now(),chapter:i}; ss.chapters[i].audit=report; persist(); return report; }catch(e){ ss.chapters[i].audit={status:'WARN',issues:[{type:'audit',severity:'warn',evidence:'审计AI不可用',expected:'完成审计',actual:e.message,repair:'稍后重试'}],summary:'审计未完成',ts:Date.now(),chapter:i}; persist(); return ss.chapters[i].audit; }
 }
 const CHAPTER_REPAIR_SYS=`你是长篇小说“局部修复AI”。你没有改写世界和剧情的权力，只能修复审计指出的最小冲突。\n规则：只处理FAIL问题；保持章节卡规定的事件、人物、时间、地点和文学风格；不得新增主线事件；不得整章重写。输出严格JSON：{"replacement":"要替换的最小原文片段","newText":"与原文长度大致相当的修复后片段","reason":"修复说明"}`;
 async function repairChapterByAudit(i,text,report){
   const fails=(report?.issues||[]).filter(x=>x&&x.severity==='fail'); if(!fails.length) return String(text||'');
-  const user=`【章节卡】${JSON.stringify(chapterPlanAuthority(i))}\n【审计FAIL】${JSON.stringify(fails)}\n【正文】\n${String(text||'').slice(0,50000)}\n只修复最小冲突，优先修改1-3个最小连续片段。`;
+  const banRepair = stateBanEnabled() ? `\n【用户全书禁则】禁用姓名：${banListNames().join('、')}；姓名禁用字：${banListChars().join('、')}；禁用短语：${(Array.isArray(banListRaw().phrases)?banListRaw().phrases:[]).join('、')}` : '';
+  const user=`【章节卡】${JSON.stringify(chapterPlanAuthority(i))}\n【审计FAIL】${JSON.stringify(fails)}${banRepair}\n【正文】\n${String(text||'').slice(0,50000)}\n只修复最小冲突，优先修改1-3个最小连续片段。`;
   try{ const raw=unwrapAIResult(await callDeepSeek(CHAPTER_REPAIR_SYS,user,{maxTokens:3500,temperature:0.15,topP:0.2,signal:_abortCtl?.signal,taskKey:'chapterRepair'})); const j=parseJson(raw)||{}; const old=String(j.replacement||'').trim(), neu=String(j.newText||'').trim(); if(!old||!neu) return String(text||''); const idx=String(text||'').indexOf(old); if(idx<0) return String(text||''); return String(text).slice(0,idx)+neu+String(text).slice(idx+old.length); }catch(e){ return String(text||''); }
 }
 async function finalizeChapterState(i,text){
@@ -3222,16 +3259,16 @@ function scHealState(){
   const sc = state.school;
   if(!sc || typeof sc !== 'object') return;
   sc.finished = sc.finished || {};
-  if(sc.principal && sc.principal.raw && String(sc.principal.raw).trim()){
+  sc.stale = sc.stale || {};
+  if(sc.principal && sc.principal.raw && String(sc.principal.raw).trim() && !sc.stale.principal){
     sc.finished.principal = true;
     if(isSchoolFolded() || sc.principal.folded){
-      sc.finished.t0 = true;
-      sc.finished.teacher = true;
+      if(!sc.stale.t0){ sc.finished.t0 = true; sc.finished.teacher = true; }
     }
   }
   if(Array.isArray(sc.teachers)){
     sc.teachers.forEach((t, i)=>{
-      if(t && t.raw && String(t.raw).trim()){
+      if(t && t.raw && String(t.raw).trim() && !sc.stale['t'+i]){
         sc.finished['t'+i] = true;
       }
     });
@@ -3246,6 +3283,7 @@ function scState(){
   state.school.finished = state.school.finished || {};
   state.school.failed   = state.school.failed   || {};
   state.school.retries  = state.school.retries  || {};
+  state.school.stale    = state.school.stale || {};
   state.school.teachers = Array.isArray(state.school.teachers) ? state.school.teachers : [];
   scHealState();
   return state.school;
@@ -3254,7 +3292,7 @@ function scRetry(key){ return scState().retries[key] || 0; }
 function setScRetry(key, n){ scState().retries[key] = Math.max(0, Math.min(SCHOOL_RETRY_MAX, n||0)); persist(); }
 function scDone(key){ const sc = scState(); return !!(sc && sc.finished && sc.finished[key]); }
 function invalidateSchoolDownstream(from){
-  const sc=scState(); const ss=storyState(); ss.pipelineVersion=(Number(ss.pipelineVersion)||0)+1;
+  const sc=scState(); const ss=storyState(); sc.stale=sc.stale||{}; ss.pipelineVersion=(Number(ss.pipelineVersion)||0)+1;
   if(from==='dictMaster') ss.versions.dictMaster=(Number(ss.versions.dictMaster)||0)+1;
   if(from==='dictEnrich') ss.versions.dictEnrich=(Number(ss.versions.dictEnrich)||0)+1;
   if(from==='principal') ss.versions.principal=(Number(ss.versions.principal)||0)+1;
@@ -3266,7 +3304,8 @@ function invalidateSchoolDownstream(from){
   if(from==='dictMaster'||from==='dictEnrich'||from==='principal'){
     const groups=schoolStageGroups(); groups.forEach((g,i)=>reset.push('t'+i));
   }
-  reset.forEach(k=>{ delete sc.finished[k]; delete sc.failed[k]; delete sc.retries[k]; });
+  reset.forEach(k=>{ delete sc.finished[k]; delete sc.failed[k]; delete sc.retries[k]; sc.stale[k]=true; });
+  if(from==='principal') sc.stale.principal=true;
   persist();
 }
 function scFailed(key){ const sc = scState(); return !scDone(key) && !!(sc && sc.failed && sc.failed[key]); }
@@ -3733,8 +3772,12 @@ async function genPrincipal(btn, opts){
         if(folded){
           const lessonRaw = extractSection(txt, '# 逐章教案', '') || extractSection(txt, '逐章教案', '') || txt;
           storyState().canon.principalAt=Date.now(); storyState().versions.principal=Number(storyState().versions.principal||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1;
+          delete sc.stale.principal;
+          delete sc.stale.t0;
           sc.principal = { ts:Date.now(), folded:true, groups: [{ gi:0, stage: groups[0].stage, first: groups[0].first, last: groups[0].last }], raw:String(txt), titles }; storyState().docs=storyState().docs||{}; storyState().docs.schoolPlan={version:storyState().versions.principal,source:'principal',ts:Date.now(),groups:sc.principal.groups,titles};
           sc.teachers = [{ gi:0, ts:Date.now(), raw:String(lessonRaw) }];
+          // 折叠学校模式由校长兼任老师：必须在这里正式落库机器章节卡，否则正文会看到“没有当前版本机器教案卡”。
+          commitTeacherChapterCards(String(lessonRaw), groups[0], 0);
           scMark('principal', true);
           scMark('t0', true);
           markAIDone('principal');
@@ -3743,6 +3786,7 @@ async function genPrincipal(btn, opts){
           toast(`校长兼老师备课完成：守则 + ${titles.length||groups[0].last}章标题（已自动定稿）+ 逐章教案就绪！`);
         } else {
           storyState().canon.principalAt=Date.now(); storyState().versions.principal=Number(storyState().versions.principal||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1;
+          delete sc.stale.principal;
           sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles }; storyState().docs=storyState().docs||{}; storyState().docs.schoolPlan={version:storyState().versions.principal,source:'principal',ts:Date.now(),groups:sc.principal.groups,titles};
           scMark('principal', true);
           markAIDone('principal');
@@ -3885,7 +3929,7 @@ async function genTeacher(btn, gi){
       try{
         const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:temp, maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry(key, attempt); scRefreshBadge(btn,key); throw new Error('老师返回空'); }
-        const sc = scState(); sc.teachers[gi] = { gi, ts:Date.now(), raw:String(txt) };
+        const sc = scState(); delete sc.stale['t'+gi]; sc.teachers[gi] = { gi, ts:Date.now(), raw:String(txt) };
         const cards = commitTeacherChapterCards(String(txt), g, gi);
         persist();
         scMark(key, true); markAIDone(key);
@@ -4836,7 +4880,8 @@ async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
     return txt;
   };
   if(typeof systemOrExtra === 'string'){
-    const txt = _unwrap(await callDeepSeek(systemOrExtra, userOrOpts, Object.assign({}, opts||{}, _tmKey?{taskKey:_tmKey}:{})));
+    const _sysAug = systemOrExtra + globalCreativeConstraintBlock(kind);
+    const txt = _unwrap(await callDeepSeek(_sysAug, userOrOpts, Object.assign({}, opts||{}, _tmKey?{taskKey:_tmKey}:{})));
     const report = validateAIOutput(kind, txt, ctx);
     if(!report.ok){
       throw new Error(`${kind} AI 输出校验失败：${report.code} ${report.details || ''}`);
@@ -4845,7 +4890,7 @@ async function callAIGuarded(kind, systemOrExtra, userOrOpts, ctx, opts){
   }
   const extra = systemOrExtra || {};
   const callOpts = Object.assign({}, userOrOpts||{}, _tmKey?{taskKey:_tmKey}:{});
-  const system = getSystemPrompt(kind, extra);
+  const system = getSystemPrompt(kind, extra) + globalCreativeConstraintBlock(kind);
   const user = buildAIPrompt(kind, extra);
   const busCtx = AIBus.get(kind, extra);
   const txt = _unwrap(await callDeepSeek(system, user, callOpts));
@@ -5048,6 +5093,30 @@ const NARRATIVE_IRON_SOFT = `〔软约束 · 尽力而为、随题材微调〕
 · 生活化细碎细节（真实毛边）应随情节自然分布：只在能推进氛围/塑造人物时出现，禁止为凑数量而每章硬塞、禁止同一种细节反复复用。
 · 语言底色必须随题材稳定贯穿全书，禁止中途漂移：都市/网游/沙雕→贴近生活口语；仙侠/红楼风→适度书面高级感。
 · 快节奏场景必须优先大白话短句，禁止绕弯长句，保证读者一目十行不卡壳。`;
+
+const NARRATIVE_IRON_PLANNING = `【全书叙事铁律·规划层】这是用户对整部小说的长期硬要求，校长、老师、构想规划阶段必须据此设计，不能等正文写完再补救：
+· 禁止把“人物内心独白/情绪解释”当作主要叙事推进手段；人物心理应尽量转化为可观察的行动、选择、对话、停顿、反应与后果。
+· 禁止以全知上帝视角提前替读者解释答案、幕后真相或配角内心；规划时必须保留合理的信息差与侦探权。
+· 禁止设计依赖大段作者广播、百科式背景倾倒才能成立的情节；世界观应能通过角色行动、场景、对话与具体事件自然显露。
+· 禁止把网文模板词、固定开场、重复情绪动作当成章节节奏工具；章节开法、冲突触发方式与场景推进应有变化。
+· 任何“为了显得有深度而增加心理解释/全知旁白”的设计均视为错误设计；优先设计可被拍出来、演出来、说出来的剧情动作。
+· 以上只约束叙事方式与剧情设计，不限制题材、人物、世界观的正常创造，也不剥夺 AI 的创造自由。`;
+
+function globalCreativeConstraintBlock(kind){
+  const creative = ['idea','principal','teacher','chapter','planner','outline'];
+  const banRoles = ['idea','titles','dictmaster','dictEnrich','principal','teacher'];
+  const parts=[];
+  if(banRoles.indexOf(kind)>=0 && stateBanEnabled()){
+    const b=banListRaw();
+    const chars=banListChars(), names=banListNames();
+    if(chars.length) parts.push('【用户禁则清单·全书姓名禁用字】以下字不得用于新人物/地点/专名命名：'+chars.join('、'));
+    if(names.length) parts.push('【用户禁则清单·全书禁用姓名】以下姓名不得被新创作、复用、建议或写入本阶段成果：'+names.join('、'));
+    const rules=Array.isArray(b.rules)?b.rules:[];
+    rules.forEach(r=>{ if(r&&r.text && (!Array.isArray(r.ai)||!r.ai.length || r.ai.indexOf(kind)>=0)) parts.push('【用户禁则·规则】'+String(r.text).trim()); });
+  }
+  if(creative.indexOf(kind)>=0 && kind!=='chapter' && state._narrIron!==false) parts.push(NARRATIVE_IRON_PLANNING);
+  return parts.length ? '\n\n'+parts.join('\n') : '';
+}
 
 function narrativeIronBlock(role, opts){
   const parts = [];
@@ -5785,7 +5854,7 @@ function sizeChapterInjection(){
   return `${total}本章正文目标 ${b.lo.toLocaleString()}—${b.hi.toLocaleString()} 字，硬下限 ${floor.toLocaleString()} 字（一次写完、当场达标，禁止靠事后补字数）。
 【字数铁律 · 首写即达标】
 · 本章必须一次写足到 ≥ ${floor.toLocaleString()} 字才算完成；这是硬性交付标准，禁止写成梗概式短场景、禁止一笔带过、禁止提前收尾。
-· 开写前先按节拍表里每一拍标注的「（约X字）」明确各段分量：**每一拍都要被展开到接近其标注的约X字篇幅**（例如「冲突推进（约800字）」就须写出约800字的正文，而不是150字一带而过），逐拍累加即达本章目标；写正文时把它们自然衔接成一篇连续正文、不拆成独立小节，由上拍剧情引到下拍；某拍在节拍表里素材偏少时，允许在该拍内通过场景铺陈、动作拆解、多轮对话、心理活动与环境氛围的合理扩写来凑足该拍字数；严禁把多个节拍事件挤进一句话带过；每段事件一律用五感细节（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、心理活动与环境氛围写实写足。
+· 开写前先按节拍表里每一拍标注的「（约X字）」明确各段分量：**每一拍都要被展开到接近其标注的约X字篇幅**（例如「冲突推进（约800字）」就须写出约800字的正文，而不是150字一带而过），逐拍累加即达本章目标；写正文时把它们自然衔接成一篇连续正文、不拆成独立小节，由上拍剧情引到下拍；某拍在节拍表里素材偏少时，允许在该拍内通过场景铺陈、动作拆解、多轮对话、人物可观察反应与环境氛围的合理扩写来凑足该拍字数；严禁把多个节拍事件挤进一句话带过；每段事件一律用五感细节（视觉/听觉/触觉/嗅觉/味觉）、连贯动作、人物对话、可观察反应与环境氛围写实写足；不得为了扩写而堆叠直白心理解释。
 · 剧情完整的前提下优先增厚铺垫、交锋与收官，禁止把多个节拍事件挤进一句话带过，也不得堆砌标点/空行凑数。
 · 一边写一边对照：节拍表里每一段事件是否都已写到、是否写足应有的分量；不足必须继续扩写到位，而不是就此了事。
 · 同时设硬顶：成文超过 ${hi.toLocaleString()} 字（上限 ${cap.toLocaleString()} 字）即判超长，达到目标区间就应立即收束本章，禁止无限铺陈、禁止为了"更多字数"再追加内容。
@@ -11351,6 +11420,9 @@ function buildDictEnrichUser(){
   const o = state.outline || {};
   const parts = [];
   parts.push(storyStateCanonBlock());
+  if(stateBanEnabled()){
+    parts.push(`【用户全书禁则·命名红线】词典充实可以大胆创造，但新人物名、地名、专名绝不能使用以下禁用字或禁用姓名。禁用字：${banListChars().join('、')}；禁用姓名：${banListNames().join('、')}。这些是用户对整部小说的长期要求，不受阶段默认范围限制。`);
+  }
 
   // ==========================================
   // 1. 优化构想·用户所选方案完整内容
@@ -14196,9 +14268,9 @@ function renderBanListPanel(){
   const html = `
     <div class="ne-body ne-bl-body">
       <div class="ne-bl-enable">
-        <label class="mini-check"><input type="checkbox" data-bl-enabled ${enabled?'checked':''}> <b>总开关：启用「禁则清单」对四个写作 AI 的注入</b></label>
+        <label class="mini-check"><input type="checkbox" data-bl-enabled ${enabled?'checked':''}> <b>总开关：启用「禁则清单」作为全书长期约束</b></label>
       </div>
-      <div class="bl-note muted">清单为「最高优先」约束，但不得超越输出格式红线（禁标题/json/markdown）与人名/专名一致性红线。</div>
+      <div class="bl-note muted">禁用字/禁用姓名属于全书命名红线：凡会创造或使用名字的 AI 阶段自动执行；附加规则可按阶段指定。清单不得超越输出格式红线与既有事实一致性红线。</div>
       <label class="kv"><span class="k">禁用字</span>
         <input data-bl-chars value="${chars}" placeholder="逗号分隔，如：晚,砚,秋,檐"/>
       </label>
@@ -14210,7 +14282,7 @@ function renderBanListPanel(){
       </label>
       <div class="ne-bl-rules-head">附加规则 <button class="btn small" data-bl-rule-add>＋ 新增规则</button></div>
       ${rules || '<div class="muted">暂无附加规则。</div>'}
-      <div class="ne-bl-scope-head"><b>生效范围（按 AI）</b></div>
+      <div class="ne-bl-scope-head"><b>附加规则生效范围（按 AI）</b></div>
       <div class="ne-bl-scope">
         <label class="mini-check"><input type="checkbox" data-bl-scope="chapter" ${aiScope.chapter?'checked':''}> 正文</label>
         <label class="mini-check"><input type="checkbox" data-bl-scope="planner" ${aiScope.planner?'checked':''}> 规划师</label>
