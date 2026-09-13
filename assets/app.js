@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.333';
+const APP_VERSION = '1.0.334';
 const KEY_CFG = nsKey('cfg');
 
 let _bgTaskCount = 0;
@@ -4669,6 +4669,12 @@ function buildAIPrompt(kind, extra){
 
 function buildIdeaPolishUser(ctx){
   const lines = [`【用户构想】\n${String(ctx.rawIdea || '').trim()}`];
+  const wsItems = wsGroupStyleTags(null);
+  if(wsItems && wsItems.length){
+    const names = wsItems.map(s=>s.name).join(' + ');
+    const details = wsItems.map(s=> `· ${s.name}：${s.note||''}${Array.isArray(s.tips)&&s.tips.length?`（写法：${s.tips.join('；')}）`:''}`).join('\n');
+    lines.push(`【用户已锁定的写作风格（所有方案必须严格服从的最高基准）】\n已选定风格：${names}\n风格核心要求：\n${details}\n【硬性要求】本次生成的全部方案中，「风格」字段及行文基调都必须严格以用户选定的上述写作风格为核心基石；允许且鼓励在此基础上为不同方案做契合的【风格补充】（如针对该方案特色的细节侧重、氛围点缀），但补充的风格必须与用户已选定的主风格完全和谐、绝不冲突违和。`);
+  }
   const bb = currentBookBeatCfg();
   const mb = currentBeatCfg();
   const cc = chapterCountVal();
@@ -4875,7 +4881,7 @@ const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想�
 1. 绝不删减、篡改用户明确表达的内容（题材/元素/风格都须保留），只能在原意上细化；
 2. 不替用户新增故事设定（不凭空加角色/势力/冲突/金手指），只补全"可推导的通用细节"；
 3. 严格按下述【输出格式】的 8 个字段分点输出：固定标签、固定顺序，每字段占一行"标签：内容"，不要新增其它大标题；首项「书名」必须具体可直接用作最终书名（若你更有把握，可在同一行内用 / 另列 2-3 个备选），且须切中本作的题材与核心冲突/主角钩点、避免《重生之xxx》《xxx系统》《xxx的xxx》这类高频套路名；每字段须给出具体、可执行的实质内容，禁止留空、禁止笼统一句话；"核心词"字段必须收列用户在构想里用引号标出的专名与固定短语（无则写"无"）；
-4. 若用户构想含风格基调（轻松/诙谐/深沉/热血等），"风格"字段必须写清基调并给出 2-3 个落地方式；
+4. ★【写作风格继承与和谐补充（核心红线）】：若上方【用户构想】中提供了【用户已锁定的写作风格】，则生成的所有方案（包括多方案的每个候选）中，「风格」字段必须严格以用户选定的该写作风格为主基准/核心，绝不可擅自替换或背离；在此前提下，每一版方案可在该选定风格的基础上进行该方案专属的【风格补充】（如针对该方案题材特性的视点微调、冷峻/温情细节侧重、节奏快慢点缀等），但补充的风格必须与用户选定的主风格高度和谐、融洽自洽、绝不相冲违和；若用户未指定风格，则按构想基调给出契合风格并给出 2-3 个落地方式；
 5. 全报告 180-360 字：除下述 8 个字段外，不要解释、不要引子、不要 markdown 代码块、不要输出 JSON；末尾可附一行以"💡"开头的编辑建议（可选，不计入字段）。
 【输出格式】
 书名（全书标题：1 个主选即可，可用 / 在同行附 2-3 个备选；≤12 字；须切中题材与核心冲突/主角钩点，避免《重生之xxx》《xxx系统》《xxx的xxx》高频套路名；直接可用作最终书名）：…
@@ -4884,7 +4890,7 @@ const IDEA_POLISH_SYS_PRO =  `你是一位深谙网文与影视叙事的构想�
 核心冲突（全书的引擎：谁与什么冲突、为何难解）：…
 结构（全书阶段与大致比例：若上方【用户构想】后已给出【已选叙事结构】（含全书拍子阶段/章节微拍/章节数/【章节↔全书拍子落位】），全书阶段必须严格贴合该落位给出的"第 N—M 章「阶段名」"划分、与该拍子贯通，勿自创一套不相容的分段；未给出则按一般起承转合给出比例）：…
 团队（仅当上方已给出【叙事主体·团队】时必填，否则整行省略：主心骨是谁 + 每位成员的定位/能力担当 + 成员间化学反应与暗流 + "为什么必须组队"即缺一不可的理由）：…
-风格（基调 + 2-3 个落地方式）：…
+风格（用户选定的主写作风格 + 契合该方案特性的和谐风格补充 + 2-3 个具体落地方式）：…
 目标（想带给读者的体验）：…
 核心词（必须原样保留入书名/简介/锚点的专名与固定短语，用引号括起）：…
 【自由发挥区】各字段措辞与补充方向由你把握：若构想含预设外的核心题材（金手指/感情线/谜题/势力格局/无限流/种田等），可在末尾补一个"情节/设定补充：…"字段（≤2 项）承载同类信息，保持 7 字段在前、补充在后，让化报读起来具体、可执行、贴合原意。`;
@@ -4897,6 +4903,8 @@ const POLISH_MULTI_MODE = `\n\n【本次输出模式：多方案】在上述要�
 · 情感人物向——以人物情感、羁绊、成长为核心驱动；卖点是"人"与"情"的浓度。
 · 悬疑智斗向——靠信息差与严密逻辑链制造"颅内高潮"，读者追更想看主角怎么破局；卖点是烧脑解谜。
 · 轻松日常/沙雕向——解压的情绪按摩，靠反差萌与吐槽感让人嘴角上扬；卖点是轻松解压、适合短视频化传播。
+
+★【所有多方案的风格继承与补充要求】：无论 5 个方向方案（稳健商业向/高概念反差向/情感人物向/悬疑智斗向/轻松日常向）各自侧重何种剧情与卖点，所有方案的「风格」字段都必须严格服从并使用用户前面选定的写作风格作为主基石，并在其基础上做不相冲、不违和的风格特色补充（如：主风格为「冷峻硬汉+侦探白描」，稳健向可在其基础上补充「紧凑凌厉的线索切片」，情感向可补充「克制深沉的眼神细节」，轻松向可补充「冷面幽默与黑色反差吐槽」，绝不可直接抛弃主风格去写浮夸甜宠等相悖风格）。
 
 每一版都必须足够具体、可执行，并尽量贴合用户原意。请从这五个方向中，选择与本书题材/构想真正契合的方向各写一版：一般 3~5 版，契合几个就给几版；明显不适配该题材的方向可跳过不给；若确有五个方向都覆盖不了的极契合新方向，允许额外补一版新方向。每个方案用一行分隔符开头：「━━ 方案N：方案名 ━━」，随后是按上述结构的一段条目式构想（必须先以「书名：…」开头给出该版书名，再依次列其余字段），并在方案末尾加一行「推荐理由：…（这个方案给谁、适合什么口味；若该方向偏小众或门槛高——如悬疑智斗极费脑、轻松沙雕易同质——请如实点明其取舍）」。方案之间方向要明显拉开，各版书名务必各不相同、切中该方向；仍不要输出 JSON、不要 markdown 代码块。`;
 
@@ -11048,51 +11056,124 @@ function buildDictEnrichUser(){
 function parseDictEnrichText(txt){
   const res = { characters:[], places:[], propernouns:[], walkons:[] };
   if(!txt) return res;
+  
+  let cleaned = String(txt).trim()
+    .replace(/^```[a-zA-Z]*\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  // 1. JSON Fallback
+  if(cleaned.startsWith('{') || cleaned.startsWith('[')){
+    try {
+      const j = JSON.parse(cleaned);
+      const addChar = c => {
+        if(c && c.name){
+          res.characters.push(completeCharFields({
+            name: String(c.name).trim(),
+            tier: (c.tier === 'main' || c.tier === '主要人物' || c.tier === '主要') ? 'main' : 'support',
+            identity: c.identity || c.身份 || '',
+            age: c.age || c.年龄 || '',
+            gender: c.gender || c.性别 || '',
+            appearance: c.appearance || c.外貌 || '',
+            hobby: c.hobby || c.爱好 || '',
+            relation: c.relation || c.关系 || '',
+            trait: c.trait || c.性格 || '',
+            catchphrase: c.catchphrase || c.口头禅 || ''
+          }));
+        }
+      };
+      (j.characters || j.人物 || []).forEach(addChar);
+      (j.places || j.地名 || []).forEach(p => { if(p && p.name) res.places.push({ name: String(p.name).trim(), type: p.type || p.类型 || '地名', note: p.note || p.说明 || '' }); });
+      (j.propernouns || j.专名 || []).forEach(x => { if(x && x.name) res.propernouns.push({ name: String(x.name).trim(), note: x.note || x.说明 || '' }); });
+      (j.walkons || j.路人 || j.龙套 || []).forEach(w => { if(w && w.name) res.walkons.push({ name: String(w.name).trim(), note: w.note || w.说明 || '', _auto:true, tier:'walkon' }); });
+      if(res.characters.length || res.places.length || res.propernouns.length || res.walkons.length) return res;
+    } catch(e){}
+  }
+
+  // 2. Line-by-line flexible parser
   const parsePairs = detail => {
     const m = {};
-    String(detail||'').split(/[；;]/).forEach(seg=>{
-      const kv = seg.match(/^[ \t]*([\u4e00-\u9fa5A-Za-z0-9]{1,8})[：:]\s*(.+)$/);
-      if(!kv || !kv[1] || !String(kv[2]||'').trim()) return;
+    const segs = String(detail||'').split(/[；;，,\n]/);
+    for(const seg of segs){
+      const s = String(seg||'').trim();
+      if(!s) continue;
+      const kv = s.match(/^[ \t*#-]*([\u4e00-\u9fa5A-Za-z0-9/_\-\—]{1,16})[：:]\s*(.+)$/);
+      if(!kv || !kv[1] || !String(kv[2]||'').trim()) continue;
       m[kv[1].trim()] = kv[2].trim();
-    });
+    }
     return m;
   };
-  const lines = String(txt).split('\n');
+
+  const lines = cleaned.split('\n');
   for(const raw of lines){
-    const ln = String(raw||'').trim(); if(!ln) continue;
-    if(/^【.*】$/.test(ln)) continue;   // 段落头跳过
-    const seg = ln.split('｜'); if(seg.length < 2) continue;
-    const cat  = String(seg[0]||'').trim();
-    const name = String(seg[1]||'').trim(); if(!name) continue;
-    const detail = seg.slice(2).join('｜').trim();
-    if(/路人|龙套|闲人/.test(cat)){ res.walkons.push({ name, note: detail, _auto:true, tier:'walkon' }); continue; }
+    let ln = String(raw||'').trim();
+    if(!ln) continue;
+    // Strip markdown prefixes like #, -, *, 1., >
+    ln = ln.replace(/^[ \t]*[#*>\d.\-—•]+[ \t.]*/, '').trim();
+    if(!ln) continue;
+    if(ln.startsWith('【') && ln.endsWith('】') && /新增|分类|类别|人物|地名|专名|路人|设定/.test(ln)) continue;
+
+    // Split on any vertical bar: fullwidth ｜, halfwidth |, box drawing │, etc.
+    let seg = ln.split(/[｜|│┆丨]/).map(s=>String(s||'').trim()).filter(Boolean);
+    if(seg.length < 2){
+      // Check if line formatted as: 主要人物：李逍遥 身份：...
+      const m_cat = ln.match(/^(主要人物|次要配角|重要角色|配角|地名|专名|路人|龙套|闲人)[：:\s]+([^：:\s|｜]+)[：:\s]*(.*)$/);
+      if(m_cat){
+        seg = [m_cat[1], m_cat[2], m_cat[3]];
+      } else {
+        continue;
+      }
+    }
+
+    let cat = seg[0].replace(/^[【\[\(（]?新增?/, '').replace(/[】\]\)）]?$/, '').trim();
+    let name = seg[1].replace(/[*_\`'\"「」]/g, '').trim();
+    if(!name) continue;
+    const detail = seg.slice(2).join('；').trim();
+
+    if(/路人|龙套|闲人/.test(cat)){
+      res.walkons.push({ name, note: detail, _auto:true, tier:'walkon' });
+      continue;
+    }
     if(/人物|角色|主角|配角/.test(cat)){
       const tier = /主要人物|主角|重要角色/.test(cat) ? 'main' : 'support';
       const m = parsePairs(detail);
-      const app = [m['外貌'], m['长相'], m['描写标签'] ? `[标签:${m['描写标签']}]` : ''].filter(Boolean).join(' ');
+      const appParts = [
+        m['外貌'] || m['外貌特征'] || m['外貌感官特征'] || m['感官特征'] || m['长相'] || '',
+        (m['描写标签'] || m['正文描写标签'] || m['标签']) ? `[标签:${m['描写标签'] || m['正文描写标签'] || m['标签']}]` : ''
+      ].filter(Boolean);
+      const app = appParts.join(' ').trim();
       res.characters.push(completeCharFields({
         name,
         tier,
-        identity: m['身份'] || m['简介'] || '',
+        identity: m['身份'] || m['身份定位'] || m['简介'] || m['定位'] || '',
         age:      m['岁数'] || m['年龄'] || m['岁'] || '',
         gender:   m['性别'] || '',
-        appearance: app || m['外貌'] || m['长相'] || '',
+        appearance: app || m['外貌'] || '',
         hobby:    m['爱好'] || '',
-        relation: m['关系'] || '',
-        trait:    m['性格'] || m['性格要点'] || '',
-        catchphrase: m['口头禅'] || m['台词'] || ''
+        relation: m['关系'] || m['人际关系'] || '',
+        trait:    m['性格'] || m['性格要点'] || m['性格特征'] || m['核心动机'] || '',
+        catchphrase: m['口头禅'] || m['口癖'] || m['台词'] || m['习惯'] || ''
       }));
       continue;
     }
     if(/地名|地点|地方|场景/.test(cat)){
       const m = parsePairs(detail);
-      const noteParts = [m['说明']||m['备注']||detail, m['氛围特征']?`氛围:${m['氛围特征']}`:'', m['描写标签']?`标签:${m['描写标签']}`:''].filter(Boolean);
-      res.places.push({ name, type: m['类型']||m['类别']||'地名', note: noteParts.join('；') });
+      const noteParts = [
+        m['说明'] || m['备注'] || detail,
+        (m['氛围特征'] || m['感官氛围特征'] || m['氛围']) ? `氛围:${m['氛围特征'] || m['感官氛围特征'] || m['氛围']}` : '',
+        (m['描写标签'] || m['正文描写标签'] || m['标签']) ? `标签:${m['描写标签'] || m['正文描写标签'] || m['标签']}` : ''
+      ].filter(Boolean);
+      res.places.push({ name, type: m['类型'] || m['类别'] || '地名', note: noteParts.join('；') });
       continue;
     }
-    if(/专名|术语|名词|物件|势力|组织|功法|宝器|道具/.test(cat)){
+    if(/专名|术语|名词|物件|势力|组织|功法|宝器|道具|法宝/.test(cat)){
       const m = parsePairs(detail);
-      const noteParts = [m['说明']||m['备注']||detail, m['功能特效']?`功能:${m['功能特效']}`:'', m['使用禁忌']?`禁忌:${m['使用禁忌']}`:'', m['描写标签']?`标签:${m['描写标签']}`:''].filter(Boolean);
+      const noteParts = [
+        m['说明'] || m['备注'] || detail,
+        (m['功能特效'] || m['功能'] || m['特效']) ? `功能:${m['功能特效'] || m['功能'] || m['特效']}` : '',
+        (m['使用禁忌'] || m['使用禁忌/限制'] || m['禁忌'] || m['限制']) ? `禁忌:${m['使用禁忌'] || m['使用禁忌/限制'] || m['禁忌'] || m['限制']}` : '',
+        (m['描写标签'] || m['正文描写标签'] || m['标签']) ? `标签:${m['描写标签'] || m['正文描写标签'] || m['标签']}` : ''
+      ].filter(Boolean);
       res.propernouns.push({ name, note: noteParts.join('；') });
       continue;
     }
@@ -11277,7 +11358,8 @@ function mergeDictHarvest(res){
 }
 function dictEnrichGate(opts){
   opts = opts || {};
-  if(!isLong() || !state.outline || !state.outlineConfirmed){ if(!(opts&&opts.silent)) toast('请先完成 ②生成大纲，再充实词典'); return false; }
+  if(!isLong() || !state.outline){ if(!(opts&&opts.silent)) toast('请先完成 ②生成大纲，再充实词典'); return false; }
+  if(state.outline && !state.outlineConfirmed){ state.outlineConfirmed = true; }
   if(!(opts && opts.force) && genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
   return true;
 }
