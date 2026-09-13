@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.335';
+const APP_VERSION = '1.0.336';
 const KEY_CFG = nsKey('cfg');
 
 let _bgTaskCount = 0;
@@ -6388,6 +6388,16 @@ function bindFlowSideNav(){
           }catch(e){
             el.scrollIntoView(true);
           }
+        } else if(l === '正'){
+          const targetCard = el.querySelector('#chaptersWrap') || el.querySelector('.ch-card') || el.querySelector('.card') || el;
+          try{
+            targetCard.scrollIntoView({ behavior:'smooth', block:'center', inline:'nearest' });
+          }catch(e){
+            targetCard.scrollIntoView(true);
+          }
+          targetCard.classList.add('gs-flash');
+          setTimeout(()=> targetCard.classList.remove('gs-flash'), 1600);
+          return;
         } else {
           el.scrollIntoView({ behavior:'smooth', block:'start' });
         }
@@ -11010,6 +11020,29 @@ function bindDictMaster(){
   if(scope) scope.querySelectorAll('.dmt-group summary').forEach(s=>{ s.dataset.base = s.textContent; });
 }
 
+function cleanEntityName(raw){
+  if(!raw) return ['', ''];
+  let s = String(raw).trim();
+  s = s.replace(/^[*_\`'\"「」【】]+|[*_\`'\"「」【】]+$/g, '').trim();
+  s = s.replace(/^[【\[\(（]?(主要人物|次要配角|重要角色|配角|地名|专名|路人|龙套|闲人)[】\]\)）]?[：:·\s|｜│┆丨]+/g, '').trim();
+  s = s.replace(/^[0-9]+[.\-、]\s*/, '').trim();
+
+  let extra = '';
+  const m_paren = s.match(/[(（\[【](.*?)[)）\]】]/);
+  if(m_paren){
+    extra = String(m_paren[1]||'').trim();
+    s = (s.slice(0, m_paren.index) + s.slice(m_paren.index + m_paren[0].length)).trim();
+  }
+  const m_dash = s.match(/[\s:：\-—]+(.+)$/);
+  if(m_dash && s.slice(0, m_dash.index).trim().length >= 1){
+    if(!extra) extra = String(m_dash[1]||'').trim();
+    s = s.slice(0, m_dash.index).trim();
+  }
+  s = s.replace(/^[·•\s]+|[·•\s]+$/g, '').trim();
+  s = s.replace(/^名称[：:]\s*/, '').trim();
+  return [s, extra];
+}
+
 const DICT_ENRICH_SYS = `你是一位资深长篇「词典充实师」（设定细化与描写工坊专家）。你将拿到 ③万物词典（现有人/地/专名，只读参照，不得改动、不得重复新增同名）与章节大纲/时间线/节拍清单。
 你的任务：**在现有词典的硬核骨架之上，为正文写作主动补充更细腻生动的 感官描写特征、场景使用禁忌、正文特色标签 以及 鲜活生动的氛围龙套**——让正文作家在动笔时有取之不尽的具象抓手，彻底避免正文干瘪、抽象与同质化。
 
@@ -11023,6 +11056,7 @@ const DICT_ENRICH_SYS = `你是一位资深长篇「词典充实师」（设定�
 1. 绝对依附已有大纲与世界观，严禁脱离主线过度发散，禁止脑补与世界观相悖的异类设定。
 2. 现有词典已有的人/地/专名不得改动，不得重复新增同名。
 3. 专名与地名严禁收录“马车/街道/普通长剑”等日常泛词，必须具有故事专属性。
+4. 【极其重要·名称格式约束】：名字字段仅填写纯粹的人名/地名/专名（如"林月如"、"锁妖塔"、"七星剑"），绝对不要在名称中夹带括号或简介说明文字（如切勿写成"林月如（林家堡千金）"或"主要人物·林月如"），所有身份、关系、外貌等介绍必须严格写在后续的各个字段中。
 
 【输出格式】严格只输出如下纯文本（不要 JSON、不要解释、不要 markdown 代码块）：
 【新增主要人物】
@@ -11034,7 +11068,7 @@ const DICT_ENRICH_SYS = `你是一位资深长篇「词典充实师」（设定�
 【新增专名】
 专名｜名｜类型：…；功能特效：…；使用禁忌：…；说明：…；描写标签：…
 【新增路人/龙套】
-路人｜名｜身份（如"青石街豆腐摊主"）；登场动作/一句典型台词；描写标签：…
+路人｜名｜身份：…；登场：…；台词：…；描写标签：…
 每条一行，用 '｜'（中文竖线）分隔。`;
 function buildDictEnrichUser(){
   const o = state.outline || {};
@@ -11051,10 +11085,27 @@ function buildDictEnrichUser(){
   const _tb = teamShapeBrief(); if(_tb) parts.push(_tb);
   const g = (o && o.glossary) || {};
   const vis = [];
-  (g.characters||[]).forEach(c=>{ const tierTxt = (c&&c.tier==='support') ? '次要配角' : '主要人物'; vis.push(`${tierTxt}·${String(c&&c.name||'').trim()}${String(c&&c.identity||'').trim()?`（身份：${String(c.identity).trim()}）`:''}${String(c&&c.relation||'').trim()?`；关系：${String(c.relation).trim()}`:''}`); });
-  (g.walkons||[]).forEach(w=> vis.push(`路人龙套·${String(w&&w.name||'').trim()}${String(w&&w.note||'').trim()?`（${String(w.note).trim()}）`:''}`));
-  (g.places||[]).forEach(p=> vis.push(`地名·${String(p&&p.name||'').trim()}${String(p&&p.type||'').trim()?`（类型：${String(p.type).trim()}）`:''}`));
-  (g.propernouns||[]).forEach(x=> vis.push(`专名·${String(x&&x.name||'').trim()}${String(x&&x.note||'').trim()?`（${String(x.note).trim()}）`:''}`));
+  (g.characters||[]).forEach(c=>{
+    const [cName] = cleanEntityName(c&&c.name);
+    if(!cName) return;
+    const tierTxt = (c&&c.tier==='support') ? '次要配角' : '主要人物';
+    vis.push(`- 【${tierTxt}】名称：${cName} | 身份：${String(c.identity||'').trim()} | 关系：${String(c.relation||'').trim()}`);
+  });
+  (g.walkons||[]).forEach(w=>{
+    const [wName] = cleanEntityName(w&&w.name);
+    if(!wName) return;
+    vis.push(`- 【路人龙套】名称：${wName} | 说明：${String(w.note||'').trim()}`);
+  });
+  (g.places||[]).forEach(p=>{
+    const [pName] = cleanEntityName(p&&p.name);
+    if(!pName) return;
+    vis.push(`- 【地名】名称：${pName} | 类型：${String(p.type||'').trim()} | 说明：${String(p.note||'').trim()}`);
+  });
+  (g.propernouns||[]).forEach(x=>{
+    const [xName] = cleanEntityName(x&&x.name);
+    if(!xName) return;
+    vis.push(`- 【专名】名称：${xName} | 说明：${String(x.note||'').trim()}`);
+  });
   parts.push(`【万物词典（现有人/地/专名，只读参照：不得改动、不得重复新增同名）】\n${vis.join('\n')||'（无）'}`);
   return parts.join('\n\n');
 }
@@ -11073,10 +11124,12 @@ function parseDictEnrichText(txt){
       const j = JSON.parse(cleaned);
       const addChar = c => {
         if(c && c.name){
+          const [cleanName, extraNote] = cleanEntityName(c.name);
+          if(!cleanName) return;
           res.characters.push(completeCharFields({
-            name: String(c.name).trim(),
+            name: cleanName,
             tier: (c.tier === 'main' || c.tier === '主要人物' || c.tier === '主要') ? 'main' : 'support',
-            identity: c.identity || c.身份 || '',
+            identity: c.identity || c.身份 || extraNote || '',
             age: c.age || c.年龄 || '',
             gender: c.gender || c.性别 || '',
             appearance: c.appearance || c.外貌 || '',
@@ -11088,9 +11141,24 @@ function parseDictEnrichText(txt){
         }
       };
       (j.characters || j.人物 || []).forEach(addChar);
-      (j.places || j.地名 || []).forEach(p => { if(p && p.name) res.places.push({ name: String(p.name).trim(), type: p.type || p.类型 || '地名', note: p.note || p.说明 || '' }); });
-      (j.propernouns || j.专名 || []).forEach(x => { if(x && x.name) res.propernouns.push({ name: String(x.name).trim(), note: x.note || x.说明 || '' }); });
-      (j.walkons || j.路人 || j.龙套 || []).forEach(w => { if(w && w.name) res.walkons.push({ name: String(w.name).trim(), note: w.note || w.说明 || '', _auto:true, tier:'walkon' }); });
+      (j.places || j.地名 || []).forEach(p => {
+        if(p && p.name){
+          const [cleanName, extraNote] = cleanEntityName(p.name);
+          if(cleanName) res.places.push({ name: cleanName, type: p.type || p.类型 || '地名', note: (extraNote ? extraNote + '；' : '') + (p.note || p.说明 || '') });
+        }
+      });
+      (j.propernouns || j.专名 || []).forEach(x => {
+        if(x && x.name){
+          const [cleanName, extraNote] = cleanEntityName(x.name);
+          if(cleanName) res.propernouns.push({ name: cleanName, note: (extraNote ? extraNote + '；' : '') + (x.note || x.说明 || '') });
+        }
+      });
+      (j.walkons || j.路人 || j.龙套 || []).forEach(w => {
+        if(w && w.name){
+          const [cleanName, extraNote] = cleanEntityName(w.name);
+          if(cleanName) res.walkons.push({ name: cleanName, note: (extraNote ? extraNote + '；' : '') + (w.note || w.说明 || ''), _auto:true, tier:'walkon' });
+        }
+      });
       if(res.characters.length || res.places.length || res.propernouns.length || res.walkons.length) return res;
     } catch(e){}
   }
@@ -11098,7 +11166,7 @@ function parseDictEnrichText(txt){
   // 2. Line-by-line flexible parser
   const parsePairs = detail => {
     const m = {};
-    const segs = String(detail||'').split(/[；;，,\n]/);
+    const segs = String(detail||'').split(/[；;，,\n|｜]/);
     for(const seg of segs){
       const s = String(seg||'').trim();
       if(!s) continue;
@@ -11118,22 +11186,55 @@ function parseDictEnrichText(txt){
     if(!ln) continue;
     if(ln.startsWith('【') && ln.endsWith('】') && /新增|分类|类别|人物|地名|专名|路人|设定/.test(ln)) continue;
 
-    // Split on any vertical bar: fullwidth ｜, halfwidth |, box drawing │, etc.
-    let seg = ln.split(/[｜|│┆丨]/).map(s=>String(s||'').trim()).filter(Boolean);
-    if(seg.length < 2){
-      // Check if line formatted as: 主要人物：李逍遥 身份：...
-      const m_cat = ln.match(/^(主要人物|次要配角|重要角色|配角|地名|专名|路人|龙套|闲人)[：:\s]+([^：:\s|｜]+)[：:\s]*(.*)$/);
-      if(m_cat){
-        seg = [m_cat[1], m_cat[2], m_cat[3]];
+    let cat = '';
+    const m_cat_prefix = ln.match(/^[【\[\(（]?(主要人物|次要配角|重要角色|配角|地名|专名|路人|龙套|闲人)[】\]\)）]?[：:·\s|｜│┆丨]+(.*)$/);
+    let rest = ln;
+    if(m_cat_prefix){
+      cat = m_cat_prefix[1];
+      rest = m_cat_prefix[2].trim();
+    }
+
+    let seg = rest.split(/[｜|│┆丨]/).map(s=>String(s||'').trim()).filter(Boolean);
+    if(!cat){
+      if(seg.length && /^(主要人物|次要配角|重要角色|配角|地名|专名|路人|龙套|闲人)$/.test(seg[0])){
+        cat = seg[0];
+        seg = seg.slice(1);
       } else {
-        continue;
+        cat = '次要配角';
       }
     }
 
-    let cat = seg[0].replace(/^[【\[\(（]?新增?/, '').replace(/[】\]\)）]?$/, '').trim();
-    let name = seg[1].replace(/[*_\`'\"「」]/g, '').trim();
+    if(!seg.length) continue;
+
+    let rawName = seg[0];
+    let detail = '';
+
+    if(seg.length >= 2){
+      const [cleanN, extraN] = cleanEntityName(rawName);
+      rawName = cleanN;
+      detail = seg.slice(1).join('；');
+      if(extraN) detail = (extraN + '；' + detail).replace(/^；+|；+$/g, '');
+    } else {
+      const m_attr = rest.match(/[\s\-—]+(身份|关系|外貌|性格|口头禅|口癖|描写标签|类型|说明|氛围|氛围特征|功能|功能特效|使用禁忌|备注|登场|台词)[：:]/);
+      if(m_attr && m_attr.index != null){
+        const namePart = rest.slice(0, m_attr.index).trim();
+        const detailPart = rest.slice(m_attr.index).trim().replace(/^[\s\-—]+/, '');
+        const [cleanN, extraN] = cleanEntityName(namePart);
+        rawName = cleanN;
+        detail = detailPart;
+        if(extraN) detail = (extraN + '；' + detail).replace(/^；+|；+$/g, '');
+      } else {
+        const [cleanN, extraN] = cleanEntityName(rawName);
+        rawName = cleanN;
+        detail = extraN;
+      }
+    }
+
+    const [name, extraFromClean] = cleanEntityName(rawName);
     if(!name) continue;
-    const detail = seg.slice(2).join('；').trim();
+    if(extraFromClean && !detail.includes(extraFromClean)){
+      detail = (extraFromClean + '；' + detail).replace(/^；+|；+$/g, '');
+    }
 
     if(/路人|龙套|闲人/.test(cat)){
       res.walkons.push({ name, note: detail, _auto:true, tier:'walkon' });
@@ -11150,7 +11251,7 @@ function parseDictEnrichText(txt){
       res.characters.push(completeCharFields({
         name,
         tier,
-        identity: m['身份'] || m['身份定位'] || m['简介'] || m['定位'] || '',
+        identity: m['身份'] || m['身份定位'] || m['简介'] || m['定位'] || (Object.keys(m).length === 0 ? detail : ''),
         age:      m['岁数'] || m['年龄'] || m['岁'] || '',
         gender:   m['性别'] || '',
         appearance: app || m['外貌'] || '',
@@ -11164,7 +11265,7 @@ function parseDictEnrichText(txt){
     if(/地名|地点|地方|场景/.test(cat)){
       const m = parsePairs(detail);
       const noteParts = [
-        m['说明'] || m['备注'] || detail,
+        m['说明'] || m['备注'] || (Object.keys(m).length === 0 ? detail : ''),
         (m['氛围特征'] || m['感官氛围特征'] || m['氛围']) ? `氛围:${m['氛围特征'] || m['感官氛围特征'] || m['氛围']}` : '',
         (m['描写标签'] || m['正文描写标签'] || m['标签']) ? `标签:${m['描写标签'] || m['正文描写标签'] || m['标签']}` : ''
       ].filter(Boolean);
@@ -11174,7 +11275,7 @@ function parseDictEnrichText(txt){
     if(/专名|术语|名词|物件|势力|组织|功法|宝器|道具|法宝/.test(cat)){
       const m = parsePairs(detail);
       const noteParts = [
-        m['说明'] || m['备注'] || detail,
+        m['说明'] || m['备注'] || (Object.keys(m).length === 0 ? detail : ''),
         (m['功能特效'] || m['功能'] || m['特效']) ? `功能:${m['功能特效'] || m['功能'] || m['特效']}` : '',
         (m['使用禁忌'] || m['使用禁忌/限制'] || m['禁忌'] || m['限制']) ? `禁忌:${m['使用禁忌'] || m['使用禁忌/限制'] || m['禁忌'] || m['限制']}` : '',
         (m['描写标签'] || m['正文描写标签'] || m['标签']) ? `标签:${m['描写标签'] || m['正文描写标签'] || m['标签']}` : ''
@@ -11183,6 +11284,27 @@ function parseDictEnrichText(txt){
       continue;
     }
   }
+
+  // 3. Ultra-resilient fallback if strict line matching produced 0 entries
+  if(!(res.characters.length || res.places.length || res.propernouns.length || res.walkons.length)){
+    for(const raw of lines){
+      let ln = String(raw||'').trim();
+      if(!ln || (ln.startsWith('【') && ln.endsWith('】'))) continue;
+      ln = ln.replace(/^[ \t]*[#*>\d.\-—•]+[ \t.]*/, '').trim();
+      const m = ln.match(/^([^\s：:（(—\-]{1,16})[\s：:（(—\-]+(.*)$/);
+      if(m){
+        const [nClean, nExtra] = cleanEntityName(m[1]);
+        if(nClean && nClean.length >= 2 && !/^(小说|章节|大纲|简介|标题|节拍|时间线)$/.test(nClean)){
+          res.characters.push(completeCharFields({
+            name: nClean,
+            tier: 'support',
+            identity: (nExtra ? nExtra + '；' : '') + m[2].trim()
+          }));
+        }
+      }
+    }
+  }
+
   return res;
 }
 function mergeDictEnrich(res){
@@ -11191,15 +11313,85 @@ function mergeDictEnrich(res){
   if(!Array.isArray(o.glossary.walkons)) o.glossary.walkons = [];
   const g = o.glossary;
   const n = { c:0, w:0, p:0, k:0, main:0, support:0 };
-  const have = list => new Set((list||[]).map(x=>String(x&&x.name||'').trim()).filter(Boolean));
-  const hi = have(g.characters);
-  (res.characters||[]).forEach(it=>{ const nm=it.name; if(!nm||hi.has(nm)) return; if(it.tier!=='main'&&it.tier!=='support') it.tier='support'; it._enrich=true; it._srcHow='词典充实'; it._srcTs=Date.now(); g.characters.push(it); hi.add(nm); n.c++; if(it.tier==='main') n.main++; else n.support++; });
-  const hp = have(g.places);
-  (res.places||[]).forEach(it=>{ const nm=it.name; if(!nm||hp.has(nm)) return; it._enrich=true; it._srcTs=Date.now(); g.places.push(it); hp.add(nm); n.p++; });
-  const hk = have(g.propernouns);
-  (res.propernouns||[]).forEach(it=>{ const nm=it.name; if(!nm||hk.has(nm)) return; it._enrich=true; it._srcTs=Date.now(); g.propernouns.push(it); hk.add(nm); n.k++; });
-  const hw = have(g.walkons);
-  (res.walkons||[]).forEach(it=>{ const nm=it.name; if(!nm||hw.has(nm)) return; it._enrich=true; it._srcTs=Date.now(); g.walkons.push(it); hw.add(nm); n.w++; });
+  const findExisting = (list, targetName) => {
+    const cleanT = cleanEntityName(targetName)[0];
+    return (list||[]).find(x => {
+      const cleanX = cleanEntityName(x && x.name)[0];
+      return cleanX && cleanX === cleanT;
+    });
+  };
+
+  (res.characters||[]).forEach(it=>{
+    const [nm, extra] = cleanEntityName(it.name);
+    if(!nm) return;
+    it.name = nm;
+    if(extra && !it.identity) it.identity = extra;
+    const existing = findExisting(g.characters, nm);
+    if(existing){
+      // Enrich missing fields in existing character
+      ['identity','age','gender','appearance','hobby','relation','trait','catchphrase'].forEach(f=>{
+        if(!existing[f] && it[f]) existing[f] = it[f];
+      });
+      existing._enrich = true;
+      existing._srcTs = Date.now();
+      return;
+    }
+    if(it.tier!=='main'&&it.tier!=='support') it.tier='support';
+    it._enrich=true; it._srcHow='词典充实'; it._srcTs=Date.now();
+    g.characters.push(it);
+    n.c++;
+    if(it.tier==='main') n.main++; else n.support++;
+  });
+
+  (res.places||[]).forEach(it=>{
+    const [nm, extra] = cleanEntityName(it.name);
+    if(!nm) return;
+    it.name = nm;
+    if(extra && !it.note) it.note = extra;
+    const existing = findExisting(g.places, nm);
+    if(existing){
+      if(!existing.type && it.type) existing.type = it.type;
+      if(!existing.note && it.note) existing.note = it.note;
+      existing._enrich = true; existing._srcTs = Date.now();
+      return;
+    }
+    it._enrich=true; it._srcTs=Date.now();
+    g.places.push(it);
+    n.p++;
+  });
+
+  (res.propernouns||[]).forEach(it=>{
+    const [nm, extra] = cleanEntityName(it.name);
+    if(!nm) return;
+    it.name = nm;
+    if(extra && !it.note) it.note = extra;
+    const existing = findExisting(g.propernouns, nm);
+    if(existing){
+      if(!existing.note && it.note) existing.note = it.note;
+      existing._enrich = true; existing._srcTs = Date.now();
+      return;
+    }
+    it._enrich=true; it._srcTs=Date.now();
+    g.propernouns.push(it);
+    n.k++;
+  });
+
+  (res.walkons||[]).forEach(it=>{
+    const [nm, extra] = cleanEntityName(it.name);
+    if(!nm) return;
+    it.name = nm;
+    if(extra && !it.note) it.note = extra;
+    const existing = findExisting(g.walkons, nm);
+    if(existing){
+      if(!existing.note && it.note) existing.note = it.note;
+      existing._enrich = true; existing._srcTs = Date.now();
+      return;
+    }
+    it._enrich=true; it._srcTs=Date.now();
+    g.walkons.push(it);
+    n.w++;
+  });
+
   n.total = n.c + n.w + n.p + n.k;
   return n;
 }
