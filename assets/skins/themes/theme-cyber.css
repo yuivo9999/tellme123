@@ -1,0 +1,2 @@
+/* Compatibility entrypoint: canonical theme remains in assets/theme-cyber.css for now. */
+@import url('../../theme-cyber.css');

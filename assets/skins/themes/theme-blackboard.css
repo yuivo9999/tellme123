@@ -1,0 +1,2 @@
+/* Compatibility entrypoint: canonical theme remains in assets/theme-blackboard.css for now. */
+@import url('../../theme-blackboard.css');
