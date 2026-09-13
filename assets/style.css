@@ -890,18 +890,37 @@ body.reader-lock{overflow:hidden}
 .school-zone-head em{font-style:normal;font-size:10.5px;font-weight:400;color:var(--muted)}
 .school-steps{display:flex;flex-wrap:wrap;gap:6px}
 .school-teachers{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;padding-top:8px;border-top:1px dashed color-mix(in srgb, var(--accent) 25%, var(--line))}
-.sc-step{position:relative;display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:11.5px;font-weight:600;line-height:1.4;cursor:pointer;transition:all .2s;font-family:inherit}
-.sc-step:hover{background:var(--panel);border-color:color-mix(in srgb, var(--accent) 55%, var(--line))}
-.sc-step.done{border-color:rgba(74,222,128,.45);background:color-mix(in srgb, #22c55e 14%, var(--panel2));color:color-mix(in srgb, #4ade80 55%, var(--txt))}
+/* 一键开学与学校四步按钮状态颜色（默认蓝色，进行中绿色，完成金黄色，出错红色） */
+.sc-step{position:relative;display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:9px;border:1px solid rgba(59,130,246,0.45);background:color-mix(in srgb, #3b82f6 12%, var(--panel2));color:#2563eb;font-size:11.5px;font-weight:650;line-height:1.4;cursor:pointer;transition:all .2s;font-family:inherit}
+.sc-step:hover{background:color-mix(in srgb, #3b82f6 20%, var(--panel2));border-color:#3b82f6;color:#1d4ed8}
+[data-theme="dark"] .sc-step{border-color:rgba(96,165,250,0.45);background:color-mix(in srgb, #3b82f6 18%, var(--panel2));color:#93c5fd}
+[data-theme="dark"] .sc-step:hover{background:color-mix(in srgb, #3b82f6 28%, var(--panel2));border-color:#60a5fa;color:#bfdbfe}
+/* 1. 进行中状态：绿色 */
+.sc-step.running{border-color:#22c55e !important;background:color-mix(in srgb, #22c55e 20%, var(--panel2)) !important;color:#15803d !important;font-weight:750 !important;animation:scPulseGreen 1.5s ease-in-out infinite;box-shadow:0 0 12px rgba(34,197,94,0.35) !important;cursor:wait;opacity:1}
+[data-theme="dark"] .sc-step.running{border-color:#4ade80 !important;background:color-mix(in srgb, #22c55e 26%, var(--panel2)) !important;color:#86efac !important;box-shadow:0 0 14px rgba(74,222,128,0.4) !important}
+@keyframes scPulseGreen{0%,100%{box-shadow:0 0 4px rgba(34,197,94,0.25);transform:scale(1)}50%{box-shadow:0 0 14px rgba(34,197,94,0.5);transform:scale(1.02)}}
+/* 2. 结束完成状态：金黄色 */
+.sc-step.done{border-color:rgba(245,158,11,0.75) !important;background:color-mix(in srgb, #f59e0b 20%, var(--panel2)) !important;color:#b45309 !important;font-weight:750 !important;box-shadow:0 1px 4px rgba(245,158,11,0.18) !important}
+.sc-step.done:hover{border-color:#f59e0b !important;background:color-mix(in srgb, #f59e0b 28%, var(--panel2)) !important;color:#92400e !important;box-shadow:0 2px 8px rgba(245,158,11,0.28) !important}
+[data-theme="dark"] .sc-step.done{border-color:rgba(251,191,36,0.75) !important;background:color-mix(in srgb, #f59e0b 26%, var(--panel2)) !important;color:#fde68a !important;box-shadow:0 1px 6px rgba(245,158,11,0.25) !important}
+[data-theme="dark"] .sc-step.done:hover{border-color:#fbbf24 !important;background:color-mix(in srgb, #f59e0b 34%, var(--panel2)) !important;color:#fef08a !important}
+/* 3. 出错没完成状态：红色 */
+.sc-step.failed,.sc-step.sc-failed{border-color:rgba(239,68,68,0.8) !important;background:color-mix(in srgb, #ef4444 18%, var(--panel2)) !important;color:#dc2626 !important;font-weight:750 !important;box-shadow:0 1px 4px rgba(239,68,68,0.2) !important}
+.sc-step.failed:hover,.sc-step.sc-failed:hover{border-color:#ef4444 !important;background:color-mix(in srgb, #ef4444 26%, var(--panel2)) !important;color:#b91c1c !important;box-shadow:0 2px 8px rgba(239,68,68,0.3) !important}
+[data-theme="dark"] .sc-step.failed,[data-theme="dark"] .sc-step.sc-failed{border-color:rgba(248,113,113,0.85) !important;background:color-mix(in srgb, #ef4444 24%, var(--panel2)) !important;color:#fca5a5 !important;box-shadow:0 1px 6px rgba(239,68,68,0.25) !important}
+[data-theme="dark"] .sc-step.failed:hover,[data-theme="dark"] .sc-step.sc-failed:hover{border-color:#f87171 !important;background:color-mix(in srgb, #ef4444 32%, var(--panel2)) !important;color:#fecaca !important}
 .sc-step .sc-tick{font-style:normal;font-size:11px;font-weight:800}
-.sc-step.sc-failed{border-color:rgba(239,68,68,.55);background:color-mix(in srgb, #ef4444 12%, var(--panel2));color:color-mix(in srgb, #f87171 60%, var(--txt))}
+.sc-step.done .sc-tick{color:#d97706 !important}
+[data-theme="dark"] .sc-step.done .sc-tick{color:#fbbf24 !important}
+.sc-step.failed .sc-tick,.sc-step.sc-failed .sc-tick{color:#ef4444 !important}
+.sc-step.running .sc-tick{color:#16a34a !important}
+[data-theme="dark"] .sc-step.running .sc-tick{color:#4ade80 !important}
 .sc-step.sc-runall{background:linear-gradient(135deg,#f59e0b 0%,#d97706 100%);border:none;color:#fff;font-weight:700;box-shadow:0 2px 8px rgba(245,158,11,.35)}
 .sc-step.sc-runall:hover{background:linear-gradient(135deg,#fbbf24 0%,#f59e0b 100%)}
 .sc-step.sc-runall.running{opacity:.7;cursor:wait}
 .sc-step.sc-teacher .sc-range{color:var(--muted);font-size:10px;font-weight:400;margin-left:2px}
 .sc-step.sc-teacher.done .sc-range{color:inherit}
 .sc-step .sc-retry-badge{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;margin-left:2px;border-radius:20px;background:#ef4444;color:#fff;font-size:10px;font-weight:800;line-height:1;font-style:normal;animation:gvtPop .2s ease}
-.sc-step.running{opacity:.75;cursor:wait}
 /* v1.0.30x：老师卡单元格（生成按钮 + 教案按钮纵排）与 教案阅读器 modal */
 .sc-teacher-cell{display:inline-flex;flex-direction:column;align-items:stretch;gap:3px}
 .sc-plan-btn{display:inline-flex;align-items:center;justify-content:center;padding:2px 9px;border-radius:7px;border:1px solid color-mix(in srgb, var(--accent) 40%, var(--line));background:color-mix(in srgb, var(--accent) 8%, var(--panel2));color:var(--accent);font-size:10.5px;font-weight:700;line-height:1.5;cursor:pointer;transition:all .18s;font-family:inherit}
