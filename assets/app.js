@@ -1,6 +1,6 @@
 'use strict';
 
-const APP_VERSION = '1.0.334';
+const APP_VERSION = '1.0.335';
 const KEY_CFG = nsKey('cfg');
 
 let _bgTaskCount = 0;
@@ -6327,12 +6327,13 @@ function closeStyleLibReader(){ const p=$('#wsLibReader'); if(p) p.remove(); }
 const FLOW_NAV = [
   ['风','[data-flow="1"]'],     // 用户写作风格：表达层最高权威
   ['基','[data-flow="2"]'],     // 章节数/全书四七十二十五拍/叙事主体：优化前置决策
-  ['构','[data-flow="3"]'],     // 原始构想 + 优化构想：AI建议层
+  ['构','[data-flow="3"], [data-flow="2"]'],     // 原始构想 + 优化构想：AI建议层
   ['配方','.ai-recipe-card, [data-flow="4"], [data-flow="3"]', 'recipe'],     // 写作配方：把已锁定风格转成可执行规则
   ['节','[data-flow="5"], [data-flow="4"]'],     // 全书节拍成果
   ['典','[data-flow="6"], [data-flow="5"]'],     // 词典达人：建设者
   ['充','[data-flow="7"], [data-flow="6"]'],     // 词典充实：深化者
   ['校','[data-flow="8"], [data-flow="7"]'],     // 校长/学校统筹
+  ['词','[data-flow="7.5"], [data-flow="8.5"], .card-theme-glossary, .gs-card'],     // 万物词典：全书共享事实数据库
   ['正','[data-flow="9"], [data-flow="8"]']      // 正文作家 · 章节创作
 ];
 function flowNavItems(){
@@ -7073,6 +7074,10 @@ ${longNovelMemoryRepoHtml()}
       ${ microBeatBlock() }
       ${ schoolZoneBlock() }
     </section>
+<section class="flow-sec flow-info-sec" data-flow="7.5">
+  <div class="flow-sec-head"><span class="fs-no">📇</span><span class="fs-name">万物词典</span><span class="fs-note">全书共享事实数据库 · 正文的设定唯一基准</span></div>
+  ${ safeCard(()=>glossaryCardHtml()) }
+</section>
 ${longNovelMemoryRepoHtml()}
 <section class="flow-sec" data-flow="8">
       <div class="flow-sec-head"><span class="fs-no">8</span><span class="fs-name">正文作家 · 章节创作</span><span class="fs-note">专注文学变现 · 双注入连贯撰写</span></div>
