@@ -2262,7 +2262,7 @@ function aiRecipePrompt(userDesc){
 }
 function aiRecipeCard(){
   const lib = writeStyleLib();
-  const collapsed = getCfg().aiRecipeCollapsed !== false;
+  const collapsed = getCfg().aiRecipeCollapsed === true;
   return `<div class="card ai-recipe-card card-theme-recipe${collapsed?' collapsed':''}">
     <div class="ai-recipe-head card-head-bar" data-ai-recipe-fold role="button" tabindex="0" title="展开/收起">
       <div class="ch-left">
@@ -6320,30 +6320,72 @@ const FLOW_NAV = [
   ['风','[data-flow="1"]'],     // 用户写作风格：表达层最高权威
   ['基','[data-flow="2"]'],     // 章节数/全书四七十二十五拍/叙事主体：优化前置决策
   ['构','[data-flow="3"]'],     // 原始构想 + 优化构想：AI建议层
-  ['配','[data-flow="4"]'],     // 写作配方：把已锁定风格转成可执行规则
-  ['节','[data-flow="5"]'],     // 全书节拍成果
-  ['典','[data-flow="6"]'],     // 词典达人：建设者
-  ['充','[data-flow="7"]'],     // 词典充实：深化者
-  ['校','[data-flow="8"]'],     // 校长/学校统筹
-  ['正','[data-flow="9"]']      // 正文作家 · 章节创作
+  ['配方','.ai-recipe-card, [data-flow="4"], [data-flow="3"]', 'recipe'],     // 写作配方：把已锁定风格转成可执行规则
+  ['节','[data-flow="5"], [data-flow="4"]'],     // 全书节拍成果
+  ['典','[data-flow="6"], [data-flow="5"]'],     // 词典达人：建设者
+  ['充','[data-flow="7"], [data-flow="6"]'],     // 词典充实：深化者
+  ['校','[data-flow="8"], [data-flow="7"]'],     // 校长/学校统筹
+  ['正','[data-flow="9"], [data-flow="8"]']      // 正文作家 · 章节创作
 ];
 function flowNavItems(){
-  return FLOW_NAV.filter(([,sel])=>{ try{ return !!(document && document.querySelector(sel)); }catch(e){ return false; } });
+  return FLOW_NAV.filter(([l, sel, key])=>{
+    try{
+      if(l === '配方' || key === 'recipe') return !!(document && (document.querySelector('.ai-recipe-card') || document.querySelector(sel)));
+      return !!(document && document.querySelector(sel));
+    }catch(e){ return false; }
+  });
 }
 function flowNavHtml(){
   const items = flowNavItems();
-  return `<div class="flow-sidenav">${items.map(([l])=>`<button type="button" class="fsd-btn" title="跳到「${l}」">${l}</button>`).join('')}</div>`;
+  return `<div class="flow-sidenav">${items.map(([l, sel, key])=>{
+    const isRecipe = (l === '配方' || key === 'recipe');
+    return `<button type="button" class="fsd-btn${isRecipe?' fsd-btn-recipe':''}" ${isRecipe?'data-nav-key="recipe"':''} title="跳到「${l}」">${l}</button>`;
+  }).join('')}</div>`;
 }
 function bindFlowSideNav(){
   const old = document.querySelector('.flow-sidenav'); if(old && old.parentNode) old.parentNode.removeChild(old);
   const items = flowNavItems(); if(!items.length) return;
   const nav = document.createElement('div');
   nav.className = 'flow-sidenav';
-  items.forEach(([l, sel])=>{
+  items.forEach(([l, sel, key])=>{
     const b = document.createElement('button');
-    b.type = 'button'; b.className = 'fsd-btn'; b.dataset.navSel = sel;
-    b.title = '跳到「'+l+'」'; b.textContent = l;
-    b.onclick = ()=>{ const el = document.querySelector(sel); if(el) el.scrollIntoView({behavior:'smooth', block:'start'}); };
+    b.type = 'button';
+    const isRecipe = (l === '配方' || key === 'recipe');
+    b.className = 'fsd-btn' + (isRecipe ? ' fsd-btn-recipe' : '');
+    b.dataset.navSel = sel;
+    if(isRecipe) b.dataset.navKey = 'recipe';
+    b.title = '跳到「'+l+'」';
+    b.textContent = l;
+    b.onclick = ()=>{
+      let el = null;
+      if(isRecipe){
+        el = document.querySelector('.ai-recipe-card') || document.querySelector('[data-ai-recipe-fold]') || document.querySelector(sel);
+      } else {
+        el = document.querySelector(sel);
+      }
+      if(el){
+        if(isRecipe){
+          const card = el.closest ? (el.closest('.ai-recipe-card') || el) : el;
+          if(card && card.classList && card.classList.contains('collapsed')){
+            card.classList.remove('collapsed');
+            const ico = card.querySelector('.sc-fold-ico');
+            if(ico) ico.textContent = '▾';
+            const cfg = getCfg();
+            cfg.aiRecipeCollapsed = false;
+            saveCfg(cfg);
+          }
+          try{
+            el.scrollIntoView({ behavior:'smooth', block:'center', inline:'nearest' });
+          }catch(e){
+            el.scrollIntoView(true);
+          }
+        } else {
+          el.scrollIntoView({ behavior:'smooth', block:'start' });
+        }
+        el.classList.add('gs-flash');
+        setTimeout(()=> el.classList.remove('gs-flash'), 1600);
+      }
+    };
     nav.appendChild(b);
   });
   ((document.getElementById('view') ? document.getElementById('view').parentElement : document.body) || document.body).appendChild(nav);

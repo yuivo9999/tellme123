@@ -268,6 +268,8 @@ label.field>span{display:block;font-size:12px;color:var(--sub);margin-bottom:6px
   .flow-sec > .flow-sec-head .fs-note{display:none}
   .flow-sidenav{right:4px;padding:6px 4px;opacity:.92}
   .flow-sidenav .fsd-btn{width:24px;height:24px;line-height:24px;font-size:11.5px}
+  .flow-sidenav .fsd-btn.fsd-btn-recipe,
+  .flow-sidenav .fsd-btn[data-nav-key="recipe"]{min-width:28px;height:24px;line-height:22px;font-size:10px;padding:0 1px;border-radius:12px}
   .card{padding:clamp(8px,3vw,12px)}
   .pol-cand-body{max-height:min(46vh,260px)}
 }
@@ -1940,10 +1942,39 @@ textarea[readonly]::selection{ background:color-mix(in srgb, var(--accent2) 45%,
 .flow-sec .card:last-child{margin-bottom:8px}
 /* 右侧页码侧边条 */
 .flow-sidenav{position:fixed;right:10px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:8px;z-index:50;background:color-mix(in srgb, var(--panel) 86%, transparent);border:1px solid var(--line);border-radius:12px;padding:8px 6px;backdrop-filter:blur(6px);box-shadow:0 4px 14px rgba(0,0,0,.18)}
-.flow-sidenav .fsd-btn{width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:13px;font-weight:700;cursor:pointer;transition:background .15s,color .15s,transform .15s}
+.flow-sidenav .fsd-btn{width:30px;height:30px;line-height:30px;text-align:center;border-radius:50%;border:1px solid var(--line);background:var(--panel2);color:var(--txt);font-size:13px;font-weight:700;cursor:pointer;transition:background .15s,color .15s,transform .15s,box-shadow .15s;padding:0;box-sizing:border-box}
 .flow-sidenav .fsd-btn:hover{background:color-mix(in srgb, var(--accent2) 22%, var(--panel2));transform:scale(1.08)}
 .flow-sidenav .fsd-btn.cur{background:var(--accent2);color:var(--on-accent,#fff);border-color:var(--accent2)}
-@media (max-width:720px){ .flow-sidenav{right:6px;padding:6px 4px} .flow-sidenav .fsd-btn{width:26px;height:26px;line-height:26px;font-size:12px} }
+/* 配方侧边栏专属：醒目红色背景、纯白文字、高对比光晕、适配双字"配方" */
+.flow-sidenav .fsd-btn.fsd-btn-recipe,
+.flow-sidenav .fsd-btn[data-nav-key="recipe"]{
+  min-width:34px;
+  width:auto;
+  height:30px;
+  line-height:28px;
+  padding:0 4px;
+  border-radius:15px;
+  background:linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+  color:#ffffff !important;
+  border:1px solid #b91c1c !important;
+  box-shadow:0 2px 8px rgba(220, 38, 38, 0.45) !important;
+  font-size:11px !important;
+  font-weight:800 !important;
+  letter-spacing:-0.5px;
+  text-shadow:0 1px 2px rgba(0,0,0,0.25);
+}
+.flow-sidenav .fsd-btn.fsd-btn-recipe:hover,
+.flow-sidenav .fsd-btn[data-nav-key="recipe"]:hover{
+  background:linear-gradient(135deg, #f87171 0%, #ef4444 100%) !important;
+  box-shadow:0 4px 14px rgba(239, 68, 68, 0.65) !important;
+  transform:scale(1.12);
+}
+@media (max-width:720px){
+  .flow-sidenav{right:6px;padding:6px 4px}
+  .flow-sidenav .fsd-btn{width:26px;height:26px;line-height:26px;font-size:12px}
+  .flow-sidenav .fsd-btn.fsd-btn-recipe,
+  .flow-sidenav .fsd-btn[data-nav-key="recipe"]{min-width:30px;height:26px;line-height:24px;font-size:10.5px;padding:0 2px;border-radius:13px}
+}
 /* 词典达人占位（v1.0.201 阶段1排版占位，阶段3接真实能力） */
 .dict-master-placeholder{border:1px dashed var(--line);border-radius:12px;padding:16px;color:var(--muted);font-size:13px;line-height:1.7;background:color-mix(in srgb, var(--panel2) 50%, transparent)}
 /* 一致性自检（v1.0.204 阶段4/CD-4） */
