@@ -226,7 +226,8 @@ function normalizeOutline(o){
   if(o._mainlineLedger) delete o._mainlineLedger;   // 主线进度账随主线简述一并移除（旧存档静默清理）
   if(o._beatsHist) delete o._beatsHist;
   // v3：正式区分“已定稿世界”“章节计划”“正文观测”。AI可以创造，但下游不得越权改写。
-  o._storyState = o._storyState || { schema:1, canon:{dictmasterAt:0,dictEnrichAt:0,principalAt:0,teacherAt:{}}, chapters:{}, current:{chapter:-1,time:'',location:'',characters:{},endingState:'',openThreads:[]} };
+  o._storyState = o._storyState || { schema:2, canon:{dictmasterAt:0,dictEnrichAt:0,principalAt:0,teacherAt:{},masterSnapshot:null}, chapters:{}, current:{chapter:-1,time:'',location:'',characters:{},endingState:'',openThreads:[]}, versions:{dictMaster:0,dictEnrich:0,principal:0,chapterCard:0}, pipelineVersion:0 };
+  o._storyState.schema=2; o._storyState.versions=o._storyState.versions||{dictMaster:0,dictEnrich:0,principal:0,chapterCard:0}; o._storyState.canon=o._storyState.canon||{dictmasterAt:0,dictEnrichAt:0,principalAt:0,teacherAt:{},masterSnapshot:null}; o._storyState.canon.teacherAt=o._storyState.canon.teacherAt||{};
   o._storyState.canon = o._storyState.canon || {dictmasterAt:0,dictEnrichAt:0,principalAt:0,teacherAt:{}};
   o._storyState.chapters = o._storyState.chapters || {};
   o._storyState.current = o._storyState.current || {chapter:-1,time:'',location:'',characters:{},endingState:'',openThreads:[]};
@@ -276,6 +277,118 @@ function commitPlannedChapterState(i, plan, source){
 }
 const CHAPTER_STATE_SYS = `你是长篇小说“正文状态结算器”，不是作者、不是编辑。只从已经写完的正文提取实际发生的状态，供下一章承接。
 规则：只记录正文明确发生/明确说出/直接可观察的事实；不确定就留空；不得脑补；不得修改教案、时间线、词典或剧情计划；只记录实际写成了什么。输出严格JSON：{"time":"","location":"","characters":{"人物":"章末状态"},"endingState":"","openThreads":[],"newFacts":[]}`;
+
+/* ===================== v4 小说创作状态引擎 ===================== */
+function ssNextVersion(kind){
+  const ss=storyState(); ss.versions=ss.versions||{}; ss.versions[kind]=(Number(ss.versions[kind])||0)+1; return ss.versions[kind];
+}
+function ssVersionSnapshot(){
+  const ss=storyState(); const v=ss.versions||{};
+  return { pipeline:Number(ss.pipelineVersion)||0, dictMaster:Number(v.dictMaster)||0, dictEnrich:Number(v.dictEnrich)||0, principal:Number(v.principal)||0 };
+}
+function ssStamp(obj, extra){ return Object.assign({versions:ssVersionSnapshot(),ts:Date.now()}, extra||{}, obj||{}); }
+function ssEntityId(prefix,name){
+  const raw=String(name||'').trim(); let h=0; for(let i=0;i<raw.length;i++) h=((h<<5)-h+raw.charCodeAt(i))|0;
+  return `${prefix}_${Math.abs(h).toString(36)}`;
+}
+function ssEnsureCanonEntities(){
+  const g=(state.outline&&state.outline.glossary)||{};
+  [['characters','ch'],['places','pl'],['propernouns','pn']].forEach(([k,p])=>{
+    (g[k]||[]).forEach(x=>{ if(!x||!String(x.name||'').trim()) return; x.id=x.id||ssEntityId(p,x.name); x.source=x.source|| (x._dictmaster?'dictmaster':x._enrich?'dictEnrich':'legacy'); x.createdBy=x.createdBy||x.source; x.createdAt=x.createdAt||x._srcTs||Date.now(); });
+  });
+}
+function ssCaptureMasterSnapshot(){
+  const g=(state.outline&&state.outline.glossary)||{}; const ss=storyState();
+  const pick=(k,fields)=> (g[k]||[]).filter(Boolean).map(x=>{const o={}; fields.forEach(f=>o[f]=x[f]==null?'':x[f]); o.id=x.id||ssEntityId(k.slice(0,2),x.name); return o;});
+  ss.canon=ss.canon||{};
+  ss.canon.masterSnapshot={
+    characters:pick('characters',['id','name','identity','age','gender','appearance','hobby','relation','trait','catchphrase']),
+    places:pick('places',['id','name','type','note']),
+    propernouns:pick('propernouns',['id','name','note']),
+    relationshipTable:(g._relationshipTable||[]).map(x=>({...x})), placeContacts:(g._placeContacts||[]).map(x=>({...x})), properContacts:(g._properContacts||[]).map(x=>({...x})), worldRules:(g._worldRules||[]).map(x=>({...x}))
+  };
+}
+function ssProtectMasterCanon(){
+  const ss=storyState(), snap=ss.canon&&ss.canon.masterSnapshot; const g=(state.outline&&state.outline.glossary); if(!snap||!g) return;
+  const restore=(k,fields)=>{
+    const by=new Map((snap[k]||[]).map(x=>[x.name,x]));
+    (g[k]||[]).forEach(x=>{const old=by.get(x&&x.name); if(!old) return; fields.forEach(f=>x[f]=old[f]); x.id=old.id; x._dictmaster=true; x.source='dictmaster'; x.createdBy='dictmaster'; x.createdAt=x.createdAt||Date.now();});
+  };
+  restore('characters',['name','identity','age','gender','appearance','hobby','relation','trait','catchphrase']);
+  restore('places',['name','type','note']); restore('propernouns',['name','note']);
+  g._relationshipTable=snap.relationshipTable.map(x=>({...x}));
+  g._placeContacts=snap.placeContacts.map(x=>({...x})); g._properContacts=snap.properContacts.map(x=>({...x})); g._worldRules=snap.worldRules.map(x=>({...x}));
+  ssEnsureCanonEntities();
+}
+function ssTeacherVersionsCurrent(gi){
+  const t=storyState().canon&&storyState().canon.teacherAt&&storyState().canon.teacherAt[gi];
+  return !!t && t.versions && t.versions.dictMaster===Number(storyState().versions?.dictMaster||0) && t.versions.dictEnrich===Number(storyState().versions?.dictEnrich||0) && t.versions.principal===Number(storyState().versions?.principal||0);
+}
+function parseTeacherChapterCards(raw, g, gi){
+  const lines=String(raw||'').replace(/\r\n?/g,'\n').split('\n'); const starts=[];
+  const head=/^\s*(?:#{1,6}\s*)?第\s*(\d+)\s*章(?:\s+.*|\s*(?:《[^》]*》|\([^)]*\)|（[^）]*）|[:：、.．\-–—].*))?\s*$/;
+  for(let i=0;i<lines.length;i++){const m=lines[i].match(head); if(m) starts.push({line:i,ch:+m[1]});}
+  const cards=[];
+  for(let z=0;z<starts.length;z++){
+    const a=starts[z], b=starts[z+1]?.line??lines.length; if(a.ch<g.first||a.ch>g.last) continue;
+    const block=lines.slice(a.line,b).join('\n').trim();
+    const field=(labels)=>{const re=new RegExp(`(?:^|\\n)\\s*[-*]?\\s*(?:${labels.map(x=>escapeRegExp(x)).join('|')})\\s*[：:]\\s*([^\\n]+)`,'m'); const m=block.match(re); return m&&m[1]!=null?m[1].trim():'';};
+    const section=(label)=>{const re=new RegExp(`(?:^|\\n)\\s*[-*]?\\s*${escapeRegExp(label)}\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*[-*]?\\s*(?:本章风格施工指令|功能与位置|剧情时间落点|主要地点|章末状态|本章推进骨架|情绪走向与突出点|连续性|本章出场名单)\\s*[：:]|$)`,'m'); const m=block.match(re); return m?m[1].trim():'';};
+    const title=(lines[a.line].match(/《([^》]+)》/)||[])[1]||`第${a.ch}章`;
+    const beats=section('本章推进骨架');
+    const cast=field(['本章出场名单']);
+    const card={chapter:a.ch,title,style:field(['本章风格施工指令']),function:field(['功能与位置']),time:field(['剧情时间落点']),location:field(['主要地点','场景地点','主要场景']),beats,emotion:field(['情绪走向与突出点']),continuity:section('连续性'),cast,raw:block,requiredEvents:[],forbiddenEvents:[],entryState:'',endingState:field(['章末状态','收束状态'])};
+    card.entryState=(card.continuity.match(/承接物理态[】）)）]?\s*[：:]?\s*([^\n]+)/)||[])[1]||'';
+    card.endingState=field(['章末状态','收束状态']) || (card.continuity.match(/(?:章末|收束)[^：:]*[：:]\s*([^\n]+)/)||[])[1]||'';
+    // 从骨架中提取“不得/禁止/严禁”作为机器禁项，避免把所有细节强行结构化。
+    card.forbiddenEvents=(block.match(/[^\n。]{0,80}(?:不得|禁止|严禁)[^\n。]{0,120}/g)||[]).slice(0,12).map(x=>x.trim());
+    card.requiredEvents=(beats.match(/(?:①|②|③|④|⑤|⑥|⑦|⑧)[\s\S]*?(?=(?:①|②|③|④|⑤|⑥|⑦|⑧)|$)/g)||[]).map(x=>x.replace(/^\s*[①-⑧]\s*/,'').trim()).filter(Boolean);
+    cards.push(card);
+  }
+  return cards;
+}
+function validateChapterCard(card){
+  if(!card) return '章节卡为空';
+  const miss=[]; if(!card.title) miss.push('标题'); if(!card.beats) miss.push('推进骨架'); if(!card.continuity) miss.push('连续性'); if(!card.cast) miss.push('出场名单');
+  if(miss.length) return '缺少：'+miss.join('、');
+  return '';
+}
+function commitTeacherChapterCards(raw,g,gi){
+  const ss=storyState(), cards=parseTeacherChapterCards(raw,g,gi), need=[];
+  for(let n=g.first;n<=g.last;n++){const c=cards.find(x=>x.chapter===n); const err=validateChapterCard(c); if(err) need.push(`第${n}章 ${err}`);}
+  if(need.length) throw new Error(`老师教案未形成完整机器章节卡：${need.join('；')}`);
+  ss.chapters=ss.chapters||{};
+  cards.forEach(c=>{const i=c.chapter-1; ss.chapters[i]=ss.chapters[i]||{}; ss.chapters[i].card=ssStamp(c,{teacherGi:gi,chapterVersion:ssNextVersion('chapterCard')}); ss.chapters[i].planned=ssStamp({time:c.time,from:_extractPlanTimeRange(c.time).from,to:_extractPlanTimeRange(c.time).to,continuity:c.continuity,cast:c.cast,location:'',endState:c.endingState,requiredEvents:c.requiredEvents,forbiddenEvents:c.forbiddenEvents},{source:'teacherCard'});});
+  ss.canon.teacherAt[gi]=ssStamp({teacherVersion:ss.versions.chapterCard||0},{versions:ssVersionSnapshot()});
+  return cards;
+}
+function chapterCard(i){ const c=storyState().chapters?.[i]?.card; return c&&ssTeacherVersionsCurrent(c.teacherGi)?c:null; }
+function chapterPlanAuthority(i){ return chapterCard(i)||null; }
+const CHAPTER_AUDIT_SYS=`你是长篇小说“状态审计AI”。你没有创作权，只负责判定正文是否忠实执行机器章节卡、上一章真实状态与世界词典。\n只检查可验证冲突：时间倒退/不可达、地点瞬移、人物生死与身体状态、关系变化、道具持有、世界规则、信息知情边界、章节必做事件缺失、禁项违规、凭空出现会持续存在的新核心实体。正常文学发挥不是错误。\n输出严格JSON：{"status":"PASS|WARN|FAIL","issues":[{"type":"time|location|character|relationship|object|rule|knowledge|event|entity|causal","severity":"warn|fail","evidence":"正文中的明确证据","expected":"应有状态","actual":"实际状态","repair":"最小修复方向"}],"summary":"一句话"}`;
+async function auditChapterState(i,text){
+  if(!isLong()) return null; const ss=storyState(), c=chapterPlanAuthority(i), prev=ss.chapters?.[i-1]?.observed||null, obs=ss.chapters?.[i]?.observed||null;
+  if(!c||!obs) return null;
+  const g=(state.outline&&state.outline.glossary)||{};
+  const canon=`人物:${(g.characters||[]).map(x=>x.name).join('、')}\n地点:${(g.places||[]).map(x=>x.name).join('、')}\n专名:${(g.propernouns||[]).map(x=>x.name).join('、')}\n世界规则:${(g._worldRules||[]).map(x=>x.rule).join('；')}`;
+  const user=`【机器章节卡】${JSON.stringify(c)}\n【上一章正文结算】${JSON.stringify(prev||{})}\n【本章正文结算】${JSON.stringify(obs)}\n【词典只读实体】${canon}\n【本章正文】\n${String(text||'').slice(0,50000)}`;
+  try{ const raw=unwrapAIResult(await callDeepSeek(CHAPTER_AUDIT_SYS,user,{maxTokens:2200,temperature:0.05,topP:0.1,signal:_abortCtl?.signal,taskKey:'chapterAudit'})); const j=parseJson(raw)||{}; const report={status:['PASS','WARN','FAIL'].includes(j.status)?j.status:'WARN',issues:Array.isArray(j.issues)?j.issues.slice(0,20):[],summary:String(j.summary||'').trim(),ts:Date.now(),chapter:i}; ss.chapters[i].audit=report; persist(); return report; }catch(e){ ss.chapters[i].audit={status:'WARN',issues:[{type:'audit',severity:'warn',evidence:'审计AI不可用',expected:'完成审计',actual:e.message,repair:'稍后重试'}],summary:'审计未完成',ts:Date.now(),chapter:i}; persist(); return ss.chapters[i].audit; }
+}
+const CHAPTER_REPAIR_SYS=`你是长篇小说“局部修复AI”。你没有改写世界和剧情的权力，只能修复审计指出的最小冲突。\n规则：只处理FAIL问题；保持章节卡规定的事件、人物、时间、地点和文学风格；不得新增主线事件；不得整章重写。输出严格JSON：{"replacement":"要替换的最小原文片段","newText":"与原文长度大致相当的修复后片段","reason":"修复说明"}`;
+async function repairChapterByAudit(i,text,report){
+  const fails=(report?.issues||[]).filter(x=>x&&x.severity==='fail'); if(!fails.length) return String(text||'');
+  const user=`【章节卡】${JSON.stringify(chapterPlanAuthority(i))}\n【审计FAIL】${JSON.stringify(fails)}\n【正文】\n${String(text||'').slice(0,50000)}\n只修复最小冲突，优先修改1-3个最小连续片段。`;
+  try{ const raw=unwrapAIResult(await callDeepSeek(CHAPTER_REPAIR_SYS,user,{maxTokens:3500,temperature:0.15,topP:0.2,signal:_abortCtl?.signal,taskKey:'chapterRepair'})); const j=parseJson(raw)||{}; const old=String(j.replacement||'').trim(), neu=String(j.newText||'').trim(); if(!old||!neu) return String(text||''); const idx=String(text||'').indexOf(old); if(idx<0) return String(text||''); return String(text).slice(0,idx)+neu+String(text).slice(idx+old.length); }catch(e){ return String(text||''); }
+}
+async function finalizeChapterState(i,text){
+  const obs=await commitChapterObservedState(i,text); if(!obs) return {observed:null,audit:null,content:String(text||'')};
+  let audit=await auditChapterState(i,text), content=String(text||'');
+  if(audit&&audit.status==='FAIL'){
+    const repaired=await repairChapterByAudit(i,content,audit);
+    if(repaired!==content){ content=repaired; const o=state.outline; o.chapters[i].content=content; updateFactCardFromChapter(i,content); await commitChapterObservedState(i,content); audit=await auditChapterState(i,content); audit.repaired=true; audit.repairedAt=Date.now(); storyState().chapters[i].audit=audit; persist(); }
+  }
+  return {observed:storyState().chapters[i]?.observed||obs,audit,content};
+}
+
 async function commitChapterObservedState(i,text){
   if(!isLong()||!String(text||'').trim()) return null;
   const o=state.outline||{}, plan=(o.chapterPlans||[])[i]||{}, ss=storyState();
@@ -3082,6 +3195,7 @@ function chapterOfPlan(ci){
   return -1;
 }
 function teacherChapterPlan(ci){
+  const cc=chapterPlanAuthority(ci); if(cc&&cc.raw) return cc.raw;
   const gi = chapterOfPlan(ci); if(gi < 0) return '';
   const t = state.school.teachers && state.school.teachers[gi]; if(!t || !t.raw) return '';
 
@@ -3140,7 +3254,10 @@ function scRetry(key){ return scState().retries[key] || 0; }
 function setScRetry(key, n){ scState().retries[key] = Math.max(0, Math.min(SCHOOL_RETRY_MAX, n||0)); persist(); }
 function scDone(key){ const sc = scState(); return !!(sc && sc.finished && sc.finished[key]); }
 function invalidateSchoolDownstream(from){
-  const sc=scState();
+  const sc=scState(); const ss=storyState(); ss.pipelineVersion=(Number(ss.pipelineVersion)||0)+1;
+  if(from==='dictMaster') ss.versions.dictMaster=(Number(ss.versions.dictMaster)||0)+1;
+  if(from==='dictEnrich') ss.versions.dictEnrich=(Number(ss.versions.dictEnrich)||0)+1;
+  if(from==='principal') ss.versions.principal=(Number(ss.versions.principal)||0)+1;
   const order=['dictMaster','dictEnrich','principal'];
   const idx=order.indexOf(from);
   const reset=[];
@@ -3615,8 +3732,8 @@ async function genPrincipal(btn, opts){
         }
         if(folded){
           const lessonRaw = extractSection(txt, '# 逐章教案', '') || extractSection(txt, '逐章教案', '') || txt;
-          storyState().canon.principalAt=Date.now();
-          sc.principal = { ts:Date.now(), folded:true, groups: [{ gi:0, stage: groups[0].stage, first: groups[0].first, last: groups[0].last }], raw:String(txt), titles };
+          storyState().canon.principalAt=Date.now(); storyState().versions.principal=Number(storyState().versions.principal||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1;
+          sc.principal = { ts:Date.now(), folded:true, groups: [{ gi:0, stage: groups[0].stage, first: groups[0].first, last: groups[0].last }], raw:String(txt), titles }; storyState().docs=storyState().docs||{}; storyState().docs.schoolPlan={version:storyState().versions.principal,source:'principal',ts:Date.now(),groups:sc.principal.groups,titles};
           sc.teachers = [{ gi:0, ts:Date.now(), raw:String(lessonRaw) }];
           scMark('principal', true);
           scMark('t0', true);
@@ -3625,8 +3742,8 @@ async function genPrincipal(btn, opts){
           render();
           toast(`校长兼老师备课完成：守则 + ${titles.length||groups[0].last}章标题（已自动定稿）+ 逐章教案就绪！`);
         } else {
-          storyState().canon.principalAt=Date.now();
-          sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles };
+          storyState().canon.principalAt=Date.now(); storyState().versions.principal=Number(storyState().versions.principal||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1;
+          sc.principal = { ts:Date.now(), folded:false, groups: groups.map((g,gi)=>({ gi, stage:g.stage, first:g.first, last:g.last })), raw:String(txt), titles }; storyState().docs=storyState().docs||{}; storyState().docs.schoolPlan={version:storyState().versions.principal,source:'principal',ts:Date.now(),groups:sc.principal.groups,titles};
           scMark('principal', true);
           markAIDone('principal');
           render();
@@ -3684,6 +3801,8 @@ const TEACHER_SYS = `你是一位长篇小说「老师」（任课教师），�
 - 本章风格施工指令：…
 - 功能与位置：…
 - 剧情时间落点：…
+- 主要地点：…
+- 章末状态：…
 - 本章推进骨架：①… → ②… → ③… → ④… → ⑤… → ⑥… → ⑦… → ⑧…
 - 情绪走向与突出点：…
 - 连续性：…
@@ -3767,7 +3886,8 @@ async function genTeacher(btn, gi){
         const txt = await callAIGuarded('teacher', TEACHER_SYS, buildTeacherUser(g, gi), {}, { temperature:temp, maxTokens:16384, signal:_abortCtl?.signal });
         if(!txt || !String(txt||'').trim()){ setScRetry(key, attempt); scRefreshBadge(btn,key); throw new Error('老师返回空'); }
         const sc = scState(); sc.teachers[gi] = { gi, ts:Date.now(), raw:String(txt) };
-        const plans = Array.isArray(state.outline.chapterPlans)?state.outline.chapterPlans:[]; for(let ci=g.first-1; ci<g.last; ci++){ if(plans[ci]) commitPlannedChapterState(ci, plans[ci], 'teacher'); } storyState().canon.teacherAt[gi]=Date.now(); persist();
+        const cards = commitTeacherChapterCards(String(txt), g, gi);
+        persist();
         scMark(key, true); markAIDone(key);
         render();
         toast(`老师${gi+1}备课完成：第 ${g.first}-${g.last} 章共 ${g.last-g.first+1} 份教案已就绪`);
@@ -7392,6 +7512,7 @@ function factCardHtml(){
         <div class="fc-meta">第${Number(obs.chapter)>=0?Number(obs.chapter)+1:'—'}章 · 时间：${esc(obs.time||'—')} · 地点：${esc(obs.location||'—')}</div>
         <div class="fc-meta">章末：${esc(obs.endingState||'—')}</div>
         <div class="fc-meta">人物：${obsChars}</div>
+        ${(()=>{ const au=ss.chapters&&Number(obs.chapter)>=0?ss.chapters[Number(obs.chapter)]?.audit:null; if(!au) return '<div class="fc-meta">一致性审计：尚未完成</div>'; const cls=au.status==='FAIL'?'err':au.status==='WARN'?'warn':'ok'; return `<div class="fc-meta ${cls}">一致性审计：${esc(au.status)} · ${esc(au.summary||'')}</div>`; })()}
       </div>
       <label class="fc-field"><span>最新场景</span><input type="text" id="fcLastScene" value="${esc(fc.lastScene||'')}" placeholder="最后一章结束时的场景/环境"></label>
       <p class="muted" style="font-size:11px">看板内容可由正文 AI 生成后自动更新，也可手动修正。</p>
@@ -11012,7 +11133,7 @@ async function genDictMaster(btn){
     state.dictmasterHistory.unshift(result);
     if(state.dictmasterHistory.length > 6) state.dictmasterHistory = state.dictmasterHistory.slice(0, 6);   // 第 7 次最旧被挤出
     state.dictmasterRan = true;
-    storyState().canon.dictmasterAt=Date.now();
+    storyState().canon.dictmasterAt=Date.now(); ssEnsureCanonEntities(); ssCaptureMasterSnapshot(); storyState().versions.dictMaster=Number(storyState().versions.dictMaster||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1; storyState().docs=storyState().docs||{}; storyState().docs.worldCanon={version:storyState().versions.dictMaster,source:'dictmaster',ts:Date.now(),counts:{characters:(o.glossary.characters||[]).length,places:(o.glossary.places||[]).length,propernouns:(o.glossary.propernouns||[]).length,worldRules:(o.glossary._worldRules||[]).length}};
     persist(); render();
     markAIDone('dictmaster');
     toast(`万物词典已生成：人物 ${result.nChar} 位 · 地名 ${result.nPlace} · 专名 ${result.nProp} · 关系表 ${result.nRel} 条 · 世界观规则 ${result.nWR} 条（已并入万物词典）`);
@@ -11788,6 +11909,7 @@ function mergeDictHarvest(res){
 function dictEnrichGate(opts){
   opts = opts || {};
   if(!isLong() || !state.outline){ if(!(opts&&opts.silent)) toast('请先完成 ②生成大纲，再充实词典'); return false; }
+  if(!scDone('dictMaster')){ if(!(opts&&opts.silent)) toast('词典充实必须建立在词典达人定稿之后，请先完成词典达人'); return false; }
   if(state.outline && !state.outlineConfirmed){ state.outlineConfirmed = true; }
   if(!(opts && opts.force) && genBusy()){ if(!(opts&&opts.silent)) toast('已有生成任务进行中，请稍候'); return false; }
   return true;
@@ -11816,10 +11938,9 @@ async function genDictEnrich(btn, opts){
     if(!txt) throw new Error('未返回词典充实内容');
     const parsed = parseDictEnrichText(txt);
     if(!(parsed.characters.length || parsed.walkons.length || parsed.places.length || parsed.propernouns.length)) throw new Error('未识别到有效条目（人物/路人/地名/专名），请重试');
-    const n = mergeDictEnrich(parsed);
+    const n = mergeDictEnrich(parsed); ssProtectMasterCanon(); storyState().canon.dictEnrichAt=Date.now(); storyState().versions.dictEnrich=Number(storyState().versions.dictEnrich||0)+1; storyState().pipelineVersion=(Number(storyState().pipelineVersion)||0)+1; storyState().docs=storyState().docs||{}; storyState().docs.worldExpansion={version:storyState().versions.dictEnrich,source:'dictEnrich',ts:Date.now(),added:n};
     state.outline._dictEnrichText = txt;   // 仅存档（导入/导出时仍保留原文兜底），UI 不再直接渲染
     state.outline._dictEnrichSummary = buildDictEnrichSummary(parsed);
-    storyState().canon.dictEnrichAt=Date.now();
     state.dictEnrichCounts = { c:n.c, w:n.w, p:n.p, k:n.k, main:n.main||0, support:n.support||0, ts:Date.now() };
     persist(); render(); markAIDone('dictEnrich');
     if(stream) stream.style.display='none';
@@ -12258,7 +12379,8 @@ function buildChapterUser(i, opt={}){
   const parts = [];
   const _opening = openingStrategyBrief(); if(_opening) parts.push(_opening);
   if(i===0){ const _openingTask = principalOpeningTaskExcerpt() || openingStrategyExecutionCard(0); if(_openingTask) parts.push(_openingTask); }
-  const _lesson = teacherChapterPlan(i);
+  const _card=chapterPlanAuthority(i);
+  const _lesson = _card?.raw || teacherChapterPlan(i);
   const _closed = !!_lesson;   // 有本章教案 → 开启三层递进闭环上下文箱
 
   if(_closed){
@@ -12354,8 +12476,9 @@ ${_tail}
     parts.push(`【本章任务】第 ${curN} 章${hasT ? `《${chap.title}》` : ''}`);
   }
 
-  if(isLong()){ commitPlannedChapterState(i, (state.outline&&state.outline.chapterPlans||[])[i]||{}, 'teacher-plan'); const _ssb=storyStateChapterBlock(i); if(_ssb) parts.push(`【小说状态链｜上一章实际结算 + 本章计划】\n${_ssb}`); }
+  if(isLong()){ if(!_card) commitPlannedChapterState(i, (state.outline&&state.outline.chapterPlans||[])[i]||{}, 'legacy-plan'); const _ssb=storyStateChapterBlock(i); if(_ssb) parts.push(`【小说状态链｜上一章实际结算 + 本章计划】\n${_ssb}`); }
   parts.push(`【事件可达性硬门】写每个重大事件前，内部快速核对：前置状态是否已成立？触发线索是否存在？人物为什么会采取这一步？信息/道具/能力从哪里来？地点与时间是否可达？本事件是否会让前后因果断裂？若任一关键项缺失，不得用“突然/恰好/偶然”直接补过去。`);
+  if(isLong() && !chapterPlanAuthority(i)){ throw new Error('当前章节教案版本已失效：请重新完成对应老师备课后再写正文。'); }
   parts.push(USER_PRIO_BILL);
   if(opt.advice) parts.push(`【人工干预要求（用户指定 · 第二优先）】\n${opt.advice}`);
 
@@ -13073,7 +13196,7 @@ function openComparePanel(i, a, b){
 function closeComparePanel(){ const p=$('#cmpPanel'); if(p) p.remove(); }
 
 async function genOneChapter(i, btn, opt={}){
-  if(isLong()){ const pp=(state.outline&&state.outline.chapterPlans||[])[i]||{}; const ps=commitPlannedChapterState(i,pp,'teacher-plan'); if(ps&&state.outline._storyState.chapters[i]&&state.outline._storyState.chapters[i].boundaryAudit?.rewind){ toast(state.outline._storyState.chapters[i].boundaryAudit.note+'；已阻止生成，请先修正教案时间。'); return false; } }
+  if(isLong()){ const cc=chapterPlanAuthority(i); if(!cc){ toast('第'+(i+1)+'章没有当前版本的机器教案卡，请重新完成对应老师备课。'); return false; } const ps=commitPlannedChapterState(i,cc,'teacher-card'); if(ps&&state.outline._storyState.chapters[i]&&state.outline._storyState.chapters[i].boundaryAudit?.rewind){ toast(state.outline._storyState.chapters[i].boundaryAudit.note+'；已阻止生成，请先修正教案时间。'); return false; } }
   chState[i] = 'generating'; state.generating = true; patchChapter(i);
   if(btn) busy(btn,true,'生成中…');
   const stopParent = btn && btn.closest('.btn-row') ? btn.closest('.btn-row') : null;
@@ -13114,7 +13237,7 @@ async function genOneChapter(i, btn, opt={}){
     snapshotChapterVersion(i);
     state.chapters[i].content = txt;
     updateFactCardFromChapter(i, txt);
-    if(isLong()) await commitChapterObservedState(i, txt);
+    if(isLong()){ const fin=await finalizeChapterState(i, txt); if(fin.content!==txt){ txt=fin.content; state.chapters[i].content=txt; snapshotChapterVersion(i); persist(); } }
     invalidateChapterMemory(i);
     chState[i] = 'done';
     if(!isLong()) state.chapters[i].confirmed = false;
@@ -13145,7 +13268,7 @@ async function genTwoChapters(pairStart){
     const txt = await writeOneChapterContent(idx, buildChapterUser(idx), null, onStream);
     snapshotChapterVersion(idx);
     state.chapters[idx].content = txt;
-    updateFactCardFromChapter(idx, txt); if(isLong()) await commitChapterObservedState(idx, txt);
+    updateFactCardFromChapter(idx, txt); if(isLong()){ const fin=await finalizeChapterState(idx, txt); if(fin.content!==txt){ txt=fin.content; state.chapters[idx].content=txt; snapshotChapterVersion(idx); } }
     invalidateChapterMemory(idx);
   }
   generateRollingSummaries().catch(()=>{});
@@ -13157,7 +13280,7 @@ async function genNChapters(start, n){
   try{
   for(let k=0; k<n; k++){
     const idx = start + k;
-    if(isLong()){ const pp=(state.outline&&state.outline.chapterPlans||[])[idx]||{}; const ps=commitPlannedChapterState(idx,pp,'teacher-plan'); if(ps&&state.outline._storyState.chapters[idx]&&state.outline._storyState.chapters[idx].boundaryAudit?.rewind) throw new Error(state.outline._storyState.chapters[idx].boundaryAudit.note+'；请修正教案时间'); }
+    if(isLong()){ const cc=chapterPlanAuthority(idx); if(!cc) throw new Error('第'+(idx+1)+'章没有当前版本的机器教案卡，请重新完成对应老师备课'); const ps=commitPlannedChapterState(idx,cc,'teacher-card'); if(ps&&state.outline._storyState.chapters[idx]&&state.outline._storyState.chapters[idx].boundaryAudit?.rewind) throw new Error(state.outline._storyState.chapters[idx].boundaryAudit.note+'；请修正教案时间'); }
     if(!isLong() && state.chapters[idx] && state.chapters[idx].content && String(state.chapters[idx].content).trim() && state.chapters[idx].confirmed) continue;
     let attempt = 0;
     let txt = '', finishReason = '';
@@ -13202,7 +13325,7 @@ async function genNChapters(start, n){
         state._chapterRetryFix = '';
         persist();
         updateFactCardFromChapter(idx, content);
-        if(isLong()) await commitChapterObservedState(idx, content);
+        if(isLong()){ const fin=await finalizeChapterState(idx, content); if(fin.content!==content){ content=fin.content; state.chapters[idx].content=content; snapshotChapterVersion(idx); persist(); } }
         invalidateChapterMemory(idx);
         chState[idx] = 'done';
         patchChapter(idx);
