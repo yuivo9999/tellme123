@@ -1,0 +1,195 @@
+/* =========================================================
+ * 白天（浅色）主题 · 参考：浅色、高留白、白底卡片、扁平
+ * 思路：统一覆盖 style.css :root 里的核心 CSS 变量，无需改动任何组件。
+ * 生效：html[data-theme="light"]
+ * ========================================================= */
+
+[data-theme="light"] {
+  --bg:#f5f6f8; --panel:#ffffff; --panel2:#f3f4f6; --line:#e5e7eb;
+  --txt:#111827; --sub:#374151; --muted:#64748b;
+  --accent:#ea580c; --accent2:#1d4ed8; --ok:#15803d; --warn:#b45309; --on-accent:#fff;
+  --radius:14px;
+  --shadow:0 1px 3px rgba(16,24,40,0.06), 0 1px 2px rgba(16,24,40,0.05);
+}
+
+[data-theme="light"] body{
+  background:var(--bg); color:var(--txt);
+}
+[data-theme="light"] .topbar{
+  background:rgba(255,255,255,0.9);
+}
+[data-theme="light"] .card{
+  background:var(--panel); border:1px solid var(--line);
+  box-shadow:var(--shadow);
+}
+/* 输入 / 复选 / 卡片在浅色下统一更清爽 */
+[data-theme="light"] textarea,
+[data-theme="light"] input,
+[data-theme="light"] select{
+  background:#fff; border-color:var(--line);
+}
+[data-theme="light"] .recipe{
+  background:#fff;
+}
+[data-theme="light"] .recipe.active .r-points,
+[data-theme="light"] .poly-grid .r-points span{
+  color:var(--sub);
+}
+/* 强调色按钮在浅色下用实际色（.primary 橙 / .blue 蓝），文字仍白 */
+[data-theme="light"] .btn.primary{color:#fff}
+[data-theme="light"] .btn.blue{color:#fff}
+/* 模态 / 浮层背景在浅色下 */
+[data-theme="light"] .gs-overlay{background:rgba(15,17,21,0.4)}
+[data-theme="light"] .reader{background:rgba(245,246,248,0.96)}
+[data-theme="light"] .reader-panel{background:#fff;color:var(--txt)}
+/* 顶部胶囊导航（机甲主题外通用） */
+[data-theme="light"] .chip{background:var(--panel2);color:var(--sub)}
+[data-theme="light"] .chip.active{background:var(--accent);color:#fff}
+/* 白天主题：写作风格卡片适配白底，文字改为深色 */
+[data-theme="light"] .ws-card {
+  background: var(--panel);
+  border-color: var(--line);
+}
+[data-theme="light"] .ws-head h3 {
+  color: var(--txt);
+}
+[data-theme="light"] .ws-sum {
+  color: var(--sub);
+}
+[data-theme="light"] .ws-group-t {
+  color: var(--txt);
+}
+[data-theme="light"] .ws-manage-btn {
+  color: var(--sub);
+  border-color: var(--line);
+  background: var(--panel2);
+}
+[data-theme="light"] .ws-manage-btn:hover {
+  background: var(--line);
+  color: var(--txt);
+}
+[data-theme="light"] .ws-chip {
+  color: var(--txt);
+  border-color: var(--line);
+  background: var(--panel2);
+}
+[data-theme="light"] .ws-chip:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+}
+[data-theme="light"] .ws-chip.on {
+  background: var(--accent2);
+  border-color: var(--accent2);
+  color: #fff;
+}
+[data-theme="light"] .ws-subcat-t {
+  color: var(--sub);
+}
+[data-theme="light"] .ws-opt {
+  border-color: var(--line);
+  background: var(--panel2);
+}
+[data-theme="light"] .ws-opt:hover {
+  border-color: var(--accent);
+}
+[data-theme="light"] .ws-opt-name {
+  color: var(--txt);
+}
+[data-theme="light"] .ws-opt-note {
+  color: var(--sub);
+}
+[data-theme="light"] .ws-opt.on {
+  border-color: var(--accent2);
+  background: color-mix(in srgb, var(--accent2) 12%, var(--panel));
+  box-shadow: inset 3px 0 0 var(--accent2);
+}
+[data-theme="light"] .ws-opt.on .ws-opt-name {
+  color: var(--accent2);
+}
+[data-theme="light"] .ws-opt.on .ws-opt-note {
+  color: var(--txt);
+}
+
+/* 白天主题：主线简述卡片适配白底 */
+[data-theme="light"] .cp-card {
+  background: var(--panel);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+[data-theme="light"] .cp-head {
+  background: linear-gradient(135deg, #c2410c 0%, #9a3412 100%);
+}
+[data-theme="light"] .cp-head h3 {
+  color: #fff;
+}
+[data-theme="light"] .cp-head-sub {
+  color: rgba(255,255,255,0.92);
+}
+[data-theme="light"] .cp-head-row.action-row .btn {
+  background: rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.45);
+  color: #fff;
+}
+[data-theme="light"] .cp-head-row.action-row .btn:hover {
+  background: rgba(255,255,255,0.32);
+  color: #fff;
+}
+[data-theme="light"] .cp-body {
+  background: var(--panel);
+}
+[data-theme="light"] .cp-body .sub {
+  color: var(--sub);
+}
+[data-theme="light"] .cp-item {
+  background: var(--panel2);
+  border-color: var(--line);
+}
+[data-theme="light"] .cp-no {
+  background: var(--accent2);
+  color: #fff;
+  border-color: transparent;
+}
+[data-theme="light"] .cp-input {
+  background: #fff;
+  border-color: var(--line);
+  color: var(--txt);
+}
+[data-theme="light"] .cp-input:focus {
+  border-color: var(--accent2);
+  box-shadow: 0 0 0 2px rgba(29,78,216,0.18);
+}
+[data-theme="light"] .cp-wc {
+  color: var(--sub);
+}
+[data-theme="light"] .cp-body .muted {
+  color: var(--sub);
+}
+
+/* v10.56 章节标题卡片标题行：浅色清晰边框 + 主题色标签 */
+[data-theme="light"] .ct-head {
+  background: #f8fafc;
+  color: var(--txt);
+  border: 1px solid #e2e8f0;
+  border-left: 4px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+[data-theme="light"] .ct-head b {
+  font-size: 14px;
+  color: #0f172a;
+  font-weight: 700;
+  text-shadow: none;
+}
+[data-theme="light"] .ct-fold-ico { color: var(--accent); }
+[data-theme="light"] .ct-head .ct-tools .btn {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #0f172a;
+  text-shadow: none;
+}
+[data-theme="light"] .ct-head .ct-tools .btn:hover {
+  background: #f1f5f9;
+  border-color: var(--accent);
+  color: var(--accent);
+}
