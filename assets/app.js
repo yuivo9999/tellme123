@@ -4491,7 +4491,7 @@ function renderSchoolPrincipalBody(ov, raw){
       </div>
     </div>`;
   }
-  
+
   html += `
   <div class="sc-pr-card">
     <div class="sc-pr-card-h" style="display:flex;align-items:center;justify-content:space-between">
@@ -6882,7 +6882,6 @@ function getDeckStepStatus(){
   const total = chs.length || chapterCountVal() || 0;
   const written = writtenChapterCount();
   const groups = schoolStageGroups();
-
   const s1_done = !!(state.chapterStyle && state.chapterStyle.tags && state.chapterStyle.tags.length);
   const s2_done = !!(state.polishAdopted || (state.idea && state.idea.trim()));
   const s3_done = !!(state.outlineConfirmed && o && chs.length > 0);
